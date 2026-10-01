@@ -1,8 +1,6 @@
 package com.example.audio
 
-import android.Manifest
-import android.content.Context
-import android.content.pm.PackageManager
+import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -11,23 +9,34 @@ import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import android.util.Log
-import androidx.core.content.ContextCompat
 import com.example.data.AppLogRepository
 import com.example.data.DiagnosticSource
 import com.example.data.DiagnosticType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.sqrt
 
+sealed class AudioRecorderState {
+    object Idle : AudioRecorderState()
+    object Starting : AudioRecorderState()
+    object Recording : AudioRecorderState()
+    object Stopping : AudioRecorderState()
+    data class Error(val message: String) : AudioRecorderState()
+}
+
 class AudioRecorder(
-    private val context: Context,
     private val onChunkReady: (ByteArray) -> Unit,
     private val onAmplitudeChanged: (Float) -> Unit,
     private val onError: (String) -> Unit
@@ -45,8 +54,11 @@ class AudioRecorder(
     private var acousticEchoCanceler: AcousticEchoCanceler? = null
     private var noiseSuppressor: NoiseSuppressor? = null
     private var automaticGainControl: AutomaticGainControl? = null
-    private var recordingJob: Job? = null
+    @Volatile private var recordingJob: Job? = null
     private val isRecording = AtomicBoolean(false)
+
+    private val _state = MutableStateFlow<AudioRecorderState>(AudioRecorderState.Idle)
+    val state: StateFlow<AudioRecorderState> = _state.asStateFlow()
 
     // Real-time 120Hz IIR High-Pass Filter: cuts fan rumble and sub-bass background noise
     private val highPassFilter = HighPassFilter(cutoffHz = 120f, sampleRate = SAMPLE_RATE.toFloat())
@@ -57,22 +69,21 @@ class AudioRecorder(
     private var sessionAmplitudeSum = 0.0
     private var sessionElevatedNoiseCount = 0
 
+    fun isFullyReleased(): Boolean = _state.value is AudioRecorderState.Idle && !isRecording.get()
+
+    @SuppressLint("MissingPermission")
     fun start(
         scope: CoroutineScope,
         aecEnabled: Boolean = true,
         noiseSuppressorEnabled: Boolean = true,
         source: DiagnosticSource = DiagnosticSource.APP
     ) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            onError("Microphone permission not granted. Cannot start recording.")
-            return
-        }
-
         if (isRecording.getAndSet(true)) {
-            Log.w(TAG, "Recording already in progress")
+            Log.w(TAG, "Recording already in progress, ignoring start request")
             return
         }
 
+        _state.value = AudioRecorderState.Starting
         currentSource = source
         sessionSampleCount = 0
         sessionAmplitudeSum = 0.0
@@ -90,7 +101,9 @@ class AudioRecorder(
             )
 
             if (minBufferSize == AudioRecord.ERROR || minBufferSize == AudioRecord.ERROR_BAD_VALUE) {
-                onError("AudioRecord buffer error: Invalid minBufferSize ($minBufferSize) for 16kHz mono 16-bit PCM")
+                val err = "AudioRecord buffer error: Invalid minBufferSize ($minBufferSize) for 16kHz mono 16-bit PCM"
+                _state.value = AudioRecorderState.Error(err)
+                onError(err)
                 isRecording.set(false)
                 return@launch
             }
@@ -131,7 +144,9 @@ class AudioRecorder(
                 }
 
                 if (rec == null || rec.state != AudioRecord.STATE_INITIALIZED) {
-                    onError("Microphone initialization failed. Please check microphone permission or hardware.")
+                    val err = "Microphone initialization failed. Please check microphone permission or hardware."
+                    _state.value = AudioRecorderState.Error(err)
+                    onError(err)
                     isRecording.set(false)
                     rec?.release()
                     audioRecord = null
@@ -140,7 +155,7 @@ class AudioRecorder(
 
                 audioRecord = rec
 
-                val sessionId = audioRecord?.audioSessionId ?: 0
+                val sessionId = rec.audioSessionId
                 if (sessionId != 0) {
                     // 1. Acoustic Echo Canceler
                     if (aecEnabled) {
@@ -158,7 +173,7 @@ class AudioRecorder(
                         }
                     }
 
-                    // 2. Noise Suppressor (Verify actual engagement & log warning if unavailable/failed)
+                    // 2. Noise Suppressor
                     if (noiseSuppressorEnabled) {
                         val nsAvailable = try {
                             NoiseSuppressor.isAvailable()
@@ -191,7 +206,7 @@ class AudioRecorder(
                         }
                     }
 
-                    // 3. Automatic Gain Control (Normalizes speech level relative to background noise)
+                    // 3. Automatic Gain Control
                     try {
                         val agcAvailable = try {
                             AutomaticGainControl.isAvailable()
@@ -214,7 +229,8 @@ class AudioRecorder(
                     }
                 }
 
-                audioRecord?.startRecording()
+                rec.startRecording()
+                _state.value = AudioRecorderState.Recording
                 Log.d(TAG, "AudioRecord started recording at 16000Hz PCM 16-bit (HighPass=120Hz, AGC, NS, AEC active)")
 
                 val chunkBuffer = ByteArray(CHUNK_SIZE_BYTES)
@@ -223,11 +239,11 @@ class AudioRecorder(
 
                 while (isActive && isRecording.get()) {
                     val bytesToRead = minOf(sliceSizeBytes, CHUNK_SIZE_BYTES - bytesReadTotal)
-                    val readResult = audioRecord?.read(
+                    val readResult = rec.read(
                         chunkBuffer,
                         bytesReadTotal,
                         bytesToRead
-                    ) ?: -1
+                    )
 
                     if (readResult < 0) {
                         val errorName = when (readResult) {
@@ -266,7 +282,11 @@ class AudioRecorder(
                         bytesReadTotal = 0
 
                         // Save processed PCM chunk to WAV file
-                        com.example.data.AudioRecordingRepository.appendAudioChunk(readyChunk)
+                        try {
+                            com.example.data.AudioRecordingRepository.appendAudioChunk(readyChunk)
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "AudioRecordingRepository append error: ${t.message}")
+                        }
 
                         // Deliver filtered 100ms PCM chunk to WebSocket / Gemini
                         onChunkReady(readyChunk)
@@ -276,16 +296,37 @@ class AudioRecorder(
                 Log.e(TAG, "Error in AudioRecord loop", e)
                 onError("Microphone error: ${e.message ?: e.javaClass.simpleName}")
             } finally {
-                cleanUp()
+                withContext(NonCancellable) {
+                    cleanUpInternal()
+                }
             }
         }
     }
 
+    /**
+     * Non-blocking stop signal. Signals the recording loop to terminate.
+     * The recording coroutine will exit cleanly and run cleanUpInternal() in its finally block.
+     */
     fun stop() {
-        if (!isRecording.getAndSet(false)) return
-        CoroutineScope(Dispatchers.IO).launch {
-            cleanUp()
+        isRecording.set(false)
+        _state.value = AudioRecorderState.Stopping
+    }
+
+    /**
+     * Suspending stop that signals the loop to exit and awaits the definitive completion
+     * of native AudioRecord and audio effect release.
+     */
+    suspend fun stopAndJoin() {
+        isRecording.set(false)
+        _state.value = AudioRecorderState.Stopping
+        val job = recordingJob
+        if (job != null && job.isActive) {
+            try {
+                job.join()
+            } catch (_: Exception) {}
         }
+        recordingJob = null
+        _state.value = AudioRecorderState.Idle
     }
 
     private fun checkAndLogNoiseConditions() {
@@ -293,7 +334,6 @@ class AudioRecorder(
         if (count >= 40) { // At least ~800ms of audio recorded
             val avgAmp = (sessionAmplitudeSum / count).toFloat()
             val elevatedRatio = sessionElevatedNoiseCount.toFloat() / count
-            // High sustained ambient floor heuristic (e.g. fan or AC continuously elevated)
             if (avgAmp > 0.26f && elevatedRatio > 0.40f) {
                 val pct = (elevatedRatio * 100).toInt()
                 val warn = "Noisy environment detected (avg amplitude: ${String.format(Locale.US, "%.2f", avgAmp)}, $pct% elevated baseline noise). High-pass 120Hz & noise suppression applied."
@@ -306,9 +346,16 @@ class AudioRecorder(
         sessionElevatedNoiseCount = 0
     }
 
-    private fun cleanUp() {
+    /**
+     * Internal cleanup strictly invoked on the recording thread inside the coroutine's finally block.
+     * This guarantees that read() has finished before release() is called, preventing HAL deadlocks.
+     */
+    private fun cleanUpInternal() {
+        isRecording.set(false)
         checkAndLogNoiseConditions()
-        com.example.data.AudioRecordingRepository.stopRecordingSession()
+        try {
+            com.example.data.AudioRecordingRepository.stopRecordingSession()
+        } catch (_: Exception) {}
 
         try {
             acousticEchoCanceler?.apply {
@@ -354,8 +401,7 @@ class AudioRecorder(
             Log.e(TAG, "Error releasing AudioRecord", e)
         } finally {
             audioRecord = null
-            recordingJob?.cancel()
-            recordingJob = null
+            _state.value = AudioRecorderState.Idle
             onAmplitudeChanged(0f)
         }
     }
@@ -377,16 +423,13 @@ class AudioRecorder(
 
         val rms = sqrt(sumSquares / sampleCount)
 
-        // Lower noise floor so quieter speech still moves the wave and glow
         val noiseFloor = 8.0
         val effectiveRms = (rms - noiseFloor).coerceAtLeast(0.0)
         if (effectiveRms <= 0.0) return 0f
 
-        // More aggressive scaling for the visualizer only
         val normalizedLinear = (effectiveRms / 900.0).coerceIn(0.0, 1.0)
         val boosted = sqrt(normalizedLinear).toFloat()
 
-        // Extra visual boost (does NOT affect the PCM sent to Gemini)
         return (boosted * 1.55f).coerceIn(0f, 1f)
     }
 }

@@ -215,10 +215,9 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     private var appWakeLock: android.os.PowerManager.WakeLock? = null
 
     private val audioRecorder = AudioRecorder(
-        context = application,
         onChunkReady = { chunk ->
             if (_isRecording.value) {
-                // If setup is already complete, send directly; otherwise queue in memory
+                // If setup is already complete, send directly; otherwise queue in bounded memory
                 if (webSocketClient.setupComplete) {
                     val sent = webSocketClient.sendAudioChunk(chunk)
                     if (sent) {
@@ -229,14 +228,10 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                             )
                         }
                     } else {
-                        // Socket might be busy, buffer chunk
-                        audioQueue.add(chunk)
-                        _stats.update { it.copy(chunksBuffered = it.chunksBuffered + 1) }
+                        enqueueAudioChunk(chunk)
                     }
                 } else {
-                    // Pre-setup phase: buffer chunks in-memory so early speech isn't clipped
-                    audioQueue.add(chunk)
-                    _stats.update { it.copy(chunksBuffered = it.chunksBuffered + 1) }
+                    enqueueAudioChunk(chunk)
                 }
             }
         },
@@ -248,6 +243,15 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             _stats.update { it.copy(lastError = err) }
         }
     )
+
+    private fun enqueueAudioChunk(chunk: ByteArray) {
+        // Cap pre-connection audio queue to max 20 chunks (2.0 seconds) to avoid buffer overflow
+        while (audioQueue.size >= 20) {
+            audioQueue.poll()
+        }
+        audioQueue.add(chunk)
+        _stats.update { it.copy(chunksBuffered = audioQueue.size) }
+    }
 
     val effectiveApiKey: String
         get() {
@@ -380,20 +384,18 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
         addLog(LogLevel.INFO, TAG, "Stopping recording session ($endedReason)...")
 
-        // 1. Stop mic capture
-        audioRecorder.stop()
-        _audioAmplitude.value = 0f
-
         val wl = appWakeLock
         appWakeLock = null
 
-        // 2. Signal stream completion & close WS
+        // 1. Stop mic capture and signal WS completion
         viewModelScope.launch(Dispatchers.IO) {
             val durationAtEnd = _stats.value.durationSeconds
             val chunksAtEnd = _stats.value.chunksSent
             val bytesAtEnd = _stats.value.bytesSent
 
             try {
+                audioRecorder.stopAndJoin()
+                _audioAmplitude.value = 0f
                 // Drain any remainder in queue
                 drainAudioQueue()
                 // Step D: Send audioStreamEnd
@@ -436,6 +438,9 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                             bytesSent = it.bytesSent + chunk.size,
                             chunksBuffered = maxOf(0, it.chunksBuffered - 1)
                         )
+                    }
+                    if (audioQueue.isNotEmpty()) {
+                        delay(25) // Smooth 25ms pace so server is not flooded
                     }
                 } else {
                     // Socket not writable, put chunk back or delay

@@ -4,13 +4,11 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Base64
 import android.util.Log
-import com.example.config.VoxStreamConfig
 import com.example.data.AppLogRepository
 import com.example.data.ConnectionState
 import com.example.data.DiagnosticSource
 import com.example.data.DiagnosticType
 import com.example.data.LogLevel
-import okhttp3.CertificatePinner
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -45,34 +43,28 @@ class GeminiLiveWebSocketClient(
 ) {
     companion object {
         private const val TAG = "GeminiLiveWS"
-        val DEFAULT_MODEL = VoxStreamConfig.DEFAULT_LIVE_MODEL
+        const val DEFAULT_MODEL = "models/gemini-2.0-flash-exp"
         const val WS_BASE_URL =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-        val MAX_RECONNECT_ATTEMPTS = VoxStreamConfig.MAX_RECONNECT_ATTEMPTS
-
-        val DEFAULT_CERTIFICATE_PINNER: CertificatePinner = CertificatePinner.Builder()
-            .add("generativelanguage.googleapis.com", "sha256/kIdpMS077tAh+gS+4V74k/Xy49qJ2q69PzVvj/vF1+Q=")
-            .add("generativelanguage.googleapis.com", "sha256/mEflZT5enoR1FuXLgYYGqnVEoZvMF9c2bVB9esBcW5g=")
-            .add("generativelanguage.googleapis.com", "sha256/hxqRlPTuQrg9q2yBoMuMvGzOUMtPF0Ces3w0PC+BCMQ=")
-            .build()
+        private const val MAX_RECONNECT_ATTEMPTS = 3
 
         fun buildWebSocketRequest(apiKey: String): Request {
-            if (VoxStreamConfig.isPlaceholderApiKey(apiKey)) {
+            val trimmedKey = apiKey.trim()
+            if (trimmedKey.isEmpty() || trimmedKey.equals("MY_GEMINI_API_KEY", ignoreCase = true)) {
                 throw IllegalArgumentException("Gemini API Key is missing or placeholder. Please provide a valid key in Secrets or Settings.")
             }
             return Request.Builder()
                 .url(WS_BASE_URL)
-                .addHeader("x-goog-api-key", apiKey.trim())
+                .addHeader("x-goog-api-key", trimmedKey)
                 .build()
         }
     }
 
     private val client: OkHttpClient = okHttpClient ?: OkHttpClient.Builder()
-        .certificatePinner(DEFAULT_CERTIFICATE_PINNER)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS) // Indefinite read timeout for persistent WebSocket
         .writeTimeout(30, TimeUnit.SECONDS)
-        .pingInterval(VoxStreamConfig.PING_INTERVAL_SECONDS, TimeUnit.SECONDS) // Tolerant 45s ping interval to prevent aggressive dropouts
+        .pingInterval(45, TimeUnit.SECONDS) // Tolerant 45s ping interval to prevent aggressive dropouts
         .retryOnConnectionFailure(true)
         .build()
 
@@ -86,6 +78,7 @@ class GeminiLiveWebSocketClient(
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingReconnectRunnable: Runnable? = null
+    private val activeTurnText = StringBuilder()
 
     val setupComplete: Boolean
         get() = isSetupComplete.get()
@@ -112,14 +105,14 @@ class GeminiLiveWebSocketClient(
         smartMode: Boolean = false,
         customVocabulary: List<String> = emptyList()
     ) {
-        if (VoxStreamConfig.isPlaceholderApiKey(apiKey)) {
+        val trimmedKey = apiKey.trim()
+        if (trimmedKey.isEmpty() || trimmedKey.equals("MY_GEMINI_API_KEY", ignoreCase = true)) {
             val errMsg = "Gemini API Key is missing or placeholder. Please provide a valid key in Secrets or Settings."
             onLog(LogLevel.ERROR, TAG, errMsg, null)
             notifyError(errMsg, GeminiLiveError.MissingApiKey(errMsg))
             notifyStateChanged(ConnectionState.Error(errMsg))
             throw IllegalArgumentException(errMsg)
         }
-        val trimmedKey = apiKey.trim()
 
         // Concurrency guard: atomic check-and-set prevents duplicate or overlapping connections
         if (!isConnectingGuard.compareAndSet(false, true)) {
@@ -133,12 +126,14 @@ class GeminiLiveWebSocketClient(
         // Ensure only one WebSocket session can exist at a time by closing any existing socket
         closeExistingWebSocket()
 
-        lastApiKey = trimmedKey
-        activeModel = if (model.isBlank() || model.contains("3.5-transcribe-live")) {
-            VoxStreamConfig.DEFAULT_LIVE_MODEL
+        val resolvedModel = if (model.isBlank() || model.contains("3.5-transcribe-live", ignoreCase = true)) {
+            DEFAULT_MODEL
         } else {
             model.trim()
         }
+
+        lastApiKey = trimmedKey
+        activeModel = resolvedModel
         isSmartMode = smartMode
         customVocabularyList = customVocabulary
         isExplicitlyClosed.set(false)
@@ -186,6 +181,7 @@ class GeminiLiveWebSocketClient(
                     return
                 }
 
+                activeTurnText.clear()
                 Log.d(TAG, "WebSocket connection opened. Sending Step A initial setup JSON ($modeLabel, vocab=$vocabCount)...")
                 onLog(LogLevel.INFO, TAG, "WebSocket opened. Sending initial setup payload ($modeLabel, vocab=$vocabCount)...", null)
                 notifyStateChanged(ConnectionState.ConnectedWaitingSetup)
@@ -208,7 +204,7 @@ class GeminiLiveWebSocketClient(
                 }
 
                 val systemPromptText = buildString {
-                    append("You are a precise real-time voice typing engine. Ignore continuous background noise such as ceiling fans, air conditioning, road noise, television audio, and distant chatter. Focus exclusively on the primary speaker's voice. Produce clean, punctuated text and remove filler words (um, uh, like) and self-corrections.")
+                    append("You are a real-time speech-to-text dictation engine. Transcribe the user's spoken audio directly into text as they speak. Output only the transcribed words with proper capitalization and punctuation. Do not reply conversationally, do not answer questions, and do not add commentary—only output the verbatim transcription of what was said.")
                     if (customVocabularyList.isNotEmpty()) {
                         val termsStr = customVocabularyList.filter { it.isNotBlank() }.joinToString(", ")
                         if (termsStr.isNotBlank()) {
@@ -235,10 +231,10 @@ class GeminiLiveWebSocketClient(
                         put("inputAudioTranscription", transcriptionConfig)
                         put("realtimeInputConfig", JSONObject().apply {
                             put("automaticActivityDetection", JSONObject().apply {
-                                put("startOfSpeechSensitivity", "START_SENSITIVITY_LOW")
-                                put("endOfSpeechSensitivity", "END_SENSITIVITY_LOW")
-                                put("prefixPaddingMs", 300)
-                                put("silenceDurationMs", 2000)
+                                put("startOfSpeechSensitivity", "START_SENSITIVITY_HIGH")
+                                put("endOfSpeechSensitivity", "END_SENSITIVITY_HIGH")
+                                put("prefixPaddingMs", 100)
+                                put("silenceDurationMs", 350)
                             })
                         })
                     }
@@ -396,16 +392,6 @@ class GeminiLiveWebSocketClient(
                 val code = errorObj?.optInt("code", 0) ?: 0
                 val status = errorObj?.optString("status") ?: ""
                 val errMsg = errorObj?.optString("message") ?: json.optString("error")
-
-                // Fallback to default live model if model was not found/invalid
-                if ((code == 404 || errMsg.contains("not found", ignoreCase = true) || errMsg.contains("model", ignoreCase = true)) && activeModel != VoxStreamConfig.DEFAULT_LIVE_MODEL) {
-                    Log.w(TAG, "Model '$activeModel' rejected by Gemini Live server. Falling back to '${VoxStreamConfig.DEFAULT_LIVE_MODEL}'")
-                    activeModel = VoxStreamConfig.DEFAULT_LIVE_MODEL
-                    closeExistingWebSocket()
-                    connectInternal()
-                    return
-                }
-
                 val detailedError = buildString {
                     append("Gemini Live server error")
                     if (code != 0) append(" (code $code)")
@@ -422,7 +408,25 @@ class GeminiLiveWebSocketClient(
             // Step C & frame text extraction
             val serverContent = json.optJSONObject("serverContent")
             if (serverContent != null) {
-                // Interim hypothesis (updates fast, partial text)
+                // 1. Model text response parts (from live model turn)
+                val modelTurn = serverContent.optJSONObject("modelTurn")
+                val parts = modelTurn?.optJSONArray("parts")
+                if (parts != null && parts.length() > 0) {
+                    for (i in 0 until parts.length()) {
+                        val part = parts.optJSONObject(i)
+                        val text = part?.optString("text")
+                        if (!text.isNullOrEmpty()) {
+                            activeTurnText.append(text)
+                        }
+                    }
+                    val currentTurn = activeTurnText.toString()
+                    if (currentTurn.isNotEmpty()) {
+                        onLog(LogLevel.RECEIVED, TAG, "Live Text: \"$currentTurn\"", null)
+                        notifyInterimTranscription(currentTurn)
+                    }
+                }
+
+                // 2. Interim hypothesis (updates fast, partial text)
                 val interimObj = serverContent.optJSONObject("interimInputTranscription")
                 if (interimObj != null && interimObj.has("text")) {
                     val interimText = interimObj.optString("text")
@@ -432,7 +436,7 @@ class GeminiLiveWebSocketClient(
                     }
                 }
 
-                // Finalized transcription (once a segment completes)
+                // 3. Finalized transcription (once a segment completes)
                 val finalizedObj = serverContent.optJSONObject("inputTranscription")
                 if (finalizedObj != null && finalizedObj.has("text")) {
                     val finalizedText = finalizedObj.optString("text")
@@ -442,8 +446,13 @@ class GeminiLiveWebSocketClient(
                     }
                 }
 
-                if (serverContent.optBoolean("turnComplete", false)) {
-                    onLog(LogLevel.INFO, TAG, "Turn completed by server", null)
+                if (serverContent.optBoolean("turnComplete", false) || serverContent.optBoolean("interrupted", false)) {
+                    val completedText = activeTurnText.toString().trim()
+                    activeTurnText.clear()
+                    if (completedText.isNotEmpty()) {
+                        onLog(LogLevel.INFO, TAG, "Turn completed: \"$completedText\"", null)
+                        notifyFinalizedTranscription(completedText)
+                    }
                 }
             } else {
                 onLog(LogLevel.RECEIVED, TAG, "Server message: ${rawJson.take(120)}...", rawJson)
@@ -457,7 +466,7 @@ class GeminiLiveWebSocketClient(
     }
 
     /**
-     * Step C: Send 100ms PCM chunk Base64-encoded via realtimeInput.audio
+     * Step C: Send 100ms PCM chunk Base64-encoded via realtimeInput.mediaChunks
      * CRITICAL: Must only be called once isSetupComplete is true.
      */
     fun sendAudioChunk(pcmChunk: ByteArray): Boolean {
@@ -470,10 +479,13 @@ class GeminiLiveWebSocketClient(
             val base64Data = Base64.encodeToString(pcmChunk, Base64.NO_WRAP)
             val chunkJson = JSONObject().apply {
                 put("realtimeInput", JSONObject().apply {
-                    put("audio", JSONObject().apply {
-                        put("data", base64Data)
-                        put("mimeType", "audio/pcm;rate=16000")
-                    })
+                    val mediaChunksArray = org.json.JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("mimeType", "audio/pcm;rate=16000")
+                            put("data", base64Data)
+                        })
+                    }
+                    put("mediaChunks", mediaChunksArray)
                 })
             }
             ws.send(chunkJson.toString())
@@ -489,7 +501,7 @@ class GeminiLiveWebSocketClient(
      * to keep WebSocket VAD state continuously alive without dropouts.
      */
     fun sendZeroPaddingChunk(): Boolean {
-        val zeroBuffer = ByteArray(VoxStreamConfig.AUDIO_CHUNK_SIZE) // 100ms at 16kHz mono 16-bit PCM
+        val zeroBuffer = ByteArray(3200) // 100ms at 16kHz mono 16-bit PCM = 3200 bytes
         return sendAudioChunk(zeroBuffer)
     }
 

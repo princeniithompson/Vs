@@ -82,7 +82,6 @@ class FloatingBubbleService : Service() {
 
         overlayWindowManager = FloatingOverlayWindowManager(this)
         sessionManager = FloatingDictationSessionManager(
-            context = this,
             onTranscriptUpdated = { fullText ->
                 overlayWindowManager.overlayTranscript.value = fullText
                 FloatingBubbleManager.updateSmartDefaultPolishMode(fullText)
@@ -270,19 +269,22 @@ class FloatingBubbleService : Service() {
         overlayWindowManager.overlayRecording.value = false
         overlayWindowManager.resetInactivityTimer()
 
+        sessionManager.stopSession(serviceScope, endedReason)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            try {
-                startForeground(
-                    FloatingNotificationManager.NOTIFICATION_ID,
-                    FloatingNotificationManager.buildNotification(this, "Floating voice bubble is active"),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                )
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not revert FGS to specialUse: ${e.message}")
+            serviceScope.launch {
+                delay(450L) // Ensure audio recorder has cleanly released native handle before demoting FGS type
+                try {
+                    startForeground(
+                        FloatingNotificationManager.NOTIFICATION_ID,
+                        FloatingNotificationManager.buildNotification(this@FloatingBubbleService, "Floating voice bubble is active"),
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not revert FGS to specialUse: ${e.message}")
+                }
             }
         }
-
-        sessionManager.stopSession(serviceScope, endedReason)
     }
 
     private fun onConfirmClicked() {

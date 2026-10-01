@@ -43,6 +43,11 @@ object AudioRecordingRepository {
     private const val MAX_TOTAL_SIZE_BYTES = 500 * 1024 * 1024L // 500 MB
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val recordingWriter = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "AudioRecordingWriter").apply {
+            isDaemon = true
+        }
+    }
 
     @Volatile
     private var appContext: Context? = null
@@ -69,7 +74,7 @@ object AudioRecordingRepository {
         prefs = sp
         _isSaveRecordingsEnabled.value = sp.getBoolean(KEY_SAVE_RECORDINGS, true)
 
-        scope.launch {
+        recordingWriter.execute {
             val dir = getRecordingsDir(appCtx)
             repairIncompleteWavFiles(dir)
             enforceCleanupRules(appCtx)
@@ -86,7 +91,7 @@ object AudioRecordingRepository {
         if (!_isSaveRecordingsEnabled.value) return
         val context = appContext ?: return
 
-        scope.launch {
+        recordingWriter.execute {
             try {
                 // Ensure previous session is finalized
                 finalizeActiveSessionInternal()
@@ -118,11 +123,10 @@ object AudioRecordingRepository {
 
     fun appendAudioChunk(chunk: ByteArray) {
         if (!_isSaveRecordingsEnabled.value) return
-        val fos = currentOutputStream ?: return
 
-        scope.launch {
+        recordingWriter.execute {
             try {
-                fos.write(chunk)
+                currentOutputStream?.write(chunk)
                 currentDataBytesWritten += chunk.size
             } catch (e: Exception) {
                 Log.e(TAG, "Error writing audio chunk to WAV file", e)
@@ -131,7 +135,7 @@ object AudioRecordingRepository {
     }
 
     fun stopRecordingSession() {
-        scope.launch {
+        recordingWriter.execute {
             finalizeActiveSessionInternal()
             val context = appContext
             if (context != null) {

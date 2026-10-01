@@ -19,7 +19,6 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentLinkedQueue
 
 class FloatingDictationSessionManager(
-    private val context: Context,
     private val onTranscriptUpdated: (fullText: String) -> Unit,
     private val onInterimReceived: (interim: String) -> Unit,
     private val onFinalSegmentReceived: (segment: String) -> Unit,
@@ -52,20 +51,19 @@ class FloatingDictationSessionManager(
     private var interimTranscript = ""
 
     private val audioRecorder = AudioRecorder(
-        context = context,
         onChunkReady = { chunk ->
             if (isRecording) {
-                audioQueue.offer(chunk)
                 val ws = webSocketClient
                 if (ws != null && ws.setupComplete) {
-                    while (audioQueue.isNotEmpty()) {
-                        val c = audioQueue.poll() ?: break
-                        val sent = ws.sendAudioChunk(c)
-                        if (sent) {
-                            sessionChunksSent++
-                            sessionBytesSent += c.size
-                        }
+                    val sent = ws.sendAudioChunk(chunk)
+                    if (sent) {
+                        sessionChunksSent++
+                        sessionBytesSent += chunk.size
+                    } else {
+                        enqueueAudioChunk(chunk)
                     }
+                } else {
+                    enqueueAudioChunk(chunk)
                 }
             }
         },
@@ -85,6 +83,13 @@ class FloatingDictationSessionManager(
             )
         }
     )
+
+    private fun enqueueAudioChunk(chunk: ByteArray) {
+        while (audioQueue.size >= 20) {
+            audioQueue.poll()
+        }
+        audioQueue.offer(chunk)
+    }
 
     fun startSession(
         context: Context,
@@ -141,8 +146,18 @@ class FloatingDictationSessionManager(
             onSetupComplete = {
                 val ws = webSocketClient
                 if (ws != null && ws.setupComplete) {
-                    while (audioQueue.isNotEmpty()) {
-                        audioQueue.poll()?.let { ws.sendAudioChunk(it) }
+                    scope.launch(Dispatchers.IO) {
+                        while (isActive && ws.setupComplete && audioQueue.isNotEmpty()) {
+                            val chunk = audioQueue.poll() ?: break
+                            val sent = ws.sendAudioChunk(chunk)
+                            if (sent) {
+                                sessionChunksSent++
+                                sessionBytesSent += chunk.size
+                                if (audioQueue.isNotEmpty()) {
+                                    delay(25)
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -215,7 +230,7 @@ class FloatingDictationSessionManager(
 
         scope.launch(Dispatchers.IO) {
             try {
-                audioRecorder.stop()
+                audioRecorder.stopAndJoin()
                 ws?.signalStreamEnd()
                 delay(400)
                 ws?.disconnect()
