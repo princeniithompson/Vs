@@ -1,6 +1,8 @@
 package com.example.audio
 
-import android.annotation.SuppressLint
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -9,6 +11,7 @@ import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.example.data.AppLogRepository
 import com.example.data.DiagnosticSource
 import com.example.data.DiagnosticType
@@ -24,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.sqrt
 
 class AudioRecorder(
+    private val context: Context,
     private val onChunkReady: (ByteArray) -> Unit,
     private val onAmplitudeChanged: (Float) -> Unit,
     private val onError: (String) -> Unit
@@ -53,13 +57,17 @@ class AudioRecorder(
     private var sessionAmplitudeSum = 0.0
     private var sessionElevatedNoiseCount = 0
 
-    @SuppressLint("MissingPermission")
     fun start(
         scope: CoroutineScope,
         aecEnabled: Boolean = true,
         noiseSuppressorEnabled: Boolean = true,
         source: DiagnosticSource = DiagnosticSource.APP
     ) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            onError("Microphone permission not granted. Cannot start recording.")
+            return
+        }
+
         if (isRecording.getAndSet(true)) {
             Log.w(TAG, "Recording already in progress")
             return
