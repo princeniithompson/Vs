@@ -230,7 +230,7 @@ class GeminiLiveWebSocketClient(
                                 put("startOfSpeechSensitivity", "START_SENSITIVITY_LOW")
                                 put("endOfSpeechSensitivity", "END_SENSITIVITY_LOW")
                                 put("prefixPaddingMs", 200)
-                                put("silenceDurationMs", 800)
+                                put("silenceDurationMs", 1600)
                             })
                         })
                     }
