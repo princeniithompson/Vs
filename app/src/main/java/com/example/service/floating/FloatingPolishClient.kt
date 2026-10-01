@@ -1,6 +1,7 @@
 package com.example.service.floating
 
 import android.util.Log
+import com.example.config.VoxStreamConfig
 import com.example.data.AppLogRepository
 import com.example.data.LogLevel
 import com.example.service.AppCategory
@@ -19,7 +20,7 @@ object FloatingPolishClient {
     private const val TAG = "FloatingPolishClient"
 
     @Volatile
-    private var lastSuccessfulPolishModel: String = "gemini-3.5-flash-lite"
+    private var lastSuccessfulPolishModel: String = VoxStreamConfig.GEMINI_MODEL_FALLBACKS.first()
 
     private const val BASE_SYSTEM_INSTRUCTION = """You are Flow, an AI transcript cleaner. Input: a raw spoken transcript. Output: ONLY the cleaned final text — nothing else.
 
@@ -57,17 +58,12 @@ Output: I need 6 chairs for the event."""
         aiPolishMode: AiPolishMode? = null,
         conversationContext: String? = null
     ): PolishResult {
-        val trimmedKey = apiKey.trim()
-        if (trimmedKey.isEmpty() || trimmedKey.equals("MY_GEMINI_API_KEY", ignoreCase = true)) {
+        if (VoxStreamConfig.isPlaceholderApiKey(apiKey)) {
             throw IllegalArgumentException("Gemini API Key is missing or placeholder. Please provide a valid key in Settings.")
         }
+        val trimmedKey = apiKey.trim()
 
-        val baseModels = listOf(
-            "gemini-3.5-flash-lite",
-            "gemini-3.1-flash-lite",
-            "gemini-2.5-flash-lite",
-            "gemini-2.5-flash"
-        )
+        val baseModels = VoxStreamConfig.GEMINI_MODEL_FALLBACKS
         val modelsToTry = listOf(lastSuccessfulPolishModel) + baseModels.filter { it != lastSuccessfulPolishModel }
 
         val isAiApp = category == AppCategory.AI

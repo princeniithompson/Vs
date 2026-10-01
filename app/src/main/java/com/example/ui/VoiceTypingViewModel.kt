@@ -215,6 +215,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     private var appWakeLock: android.os.PowerManager.WakeLock? = null
 
     private val audioRecorder = AudioRecorder(
+        context = application,
         onChunkReady = { chunk ->
             if (_isRecording.value) {
                 // If setup is already complete, send directly; otherwise queue in memory

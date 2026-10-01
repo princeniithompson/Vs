@@ -1,6 +1,7 @@
 package com.example.service
 
 import android.util.Log
+import com.example.config.VoxStreamConfig
 import com.example.data.AppLogRepository
 import com.example.data.HistoryItem
 import com.example.data.LogLevel
@@ -23,22 +24,17 @@ data class SmartVocabularySuggestion(
 object SmartVocabularyService {
     private const val TAG = "SmartVocabService"
 
-    private val candidateModels = listOf(
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite-preview",
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-flash"
-    )
+    private val candidateModels = VoxStreamConfig.GEMINI_MODEL_FALLBACKS
 
     suspend fun analyzeWeeklyTranscripts(
         apiKey: String,
         transcripts: List<HistoryItem>,
         existingVocabulary: List<String>
     ): Result<List<SmartVocabularySuggestion>> = withContext(Dispatchers.IO) {
-        val trimmedKey = apiKey.trim()
-        if (trimmedKey.isEmpty() || trimmedKey.equals("MY_GEMINI_API_KEY", ignoreCase = true)) {
+        if (VoxStreamConfig.isPlaceholderApiKey(apiKey)) {
             return@withContext Result.failure(IllegalArgumentException("Gemini API key is missing or placeholder. Please provide a valid key in Settings."))
         }
+        val trimmedKey = apiKey.trim()
         if (transcripts.isEmpty()) {
             return@withContext Result.success(emptyList())
         }
