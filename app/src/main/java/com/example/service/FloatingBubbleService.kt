@@ -449,6 +449,7 @@ class FloatingBubbleService : Service() {
                     val isAiApp = category == AppCategory.AI
                     val aiMode = if (isAiApp) FloatingBubbleManager.selectedAiPolishMode.value else null
                     val contextSnippet = if (isAiApp) VoxStreamAccessibilityService.instance?.extractRecentConversationContext() else null
+                    val capturedScreenContext = com.example.data.ScreenContextRepository.capturedContext.value
 
                     withContext(Dispatchers.IO) {
                         result = FloatingPolishClient.polishTranscript(
@@ -457,8 +458,14 @@ class FloatingBubbleService : Service() {
                             category = category,
                             appName = appName,
                             aiPolishMode = aiMode,
-                            conversationContext = contextSnippet
+                            conversationContext = contextSnippet,
+                            screenContext = capturedScreenContext
                         )
+                    }
+
+                    // Clear context after it has been consumed for polish
+                    if (capturedScreenContext != null) {
+                        com.example.data.ScreenContextRepository.clearContext()
                     }
                 }
 

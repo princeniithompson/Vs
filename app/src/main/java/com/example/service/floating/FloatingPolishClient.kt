@@ -56,7 +56,8 @@ Output: I need 6 chairs for the event."""
         category: AppCategory = AppCategory.OTHER,
         appName: String = "App",
         aiPolishMode: AiPolishMode? = null,
-        conversationContext: String? = null
+        conversationContext: String? = null,
+        screenContext: com.example.data.CapturedScreenContext? = null
     ): PolishResult {
         if (VoxStreamConfig.isPlaceholderApiKey(apiKey)) {
             throw IllegalArgumentException("Gemini API Key is missing or placeholder. Please provide a valid key in Settings.")
@@ -66,11 +67,37 @@ Output: I need 6 chairs for the event."""
         val baseModels = VoxStreamConfig.GEMINI_MODEL_FALLBACKS
         val modelsToTry = listOf(lastSuccessfulPolishModel) + baseModels.filter { it != lastSuccessfulPolishModel }
 
-        val isAiApp = category == AppCategory.AI
+        val isAiApp = category == AppCategory.AI || screenContext != null
         val fullSystemInstruction: String
         val userContentText: String
 
-        if (isAiApp && aiPolishMode == AiPolishMode.OPTIMIZE_PROMPT) {
+        if (screenContext != null) {
+            // Captured AI-app Screen Context Mode
+            AppLogRepository.addLog(
+                LogLevel.INFO,
+                "PolishClient",
+                "Injected captured screen context from ${screenContext.appName} (${screenContext.conversationSnippets.size} msgs) into polish prompt"
+            )
+
+            fullSystemInstruction = """
+You are helping the user write a message inside an AI chat application (${screenContext.appName}).
+
+Here is the current screen context that the user is looking at:
+
+${screenContext.toPromptContext()}
+
+Instructions:
+- Use the screen context above to make the response highly relevant.
+- Match the tone, style, and role visible in the conversation.
+- If the user is asking to reply, continue, or refine something, base it on the visible history.
+- Output ONLY the final polished text that the user can send. No explanations, no introductory chatter, no commentary, no surrounding quotes.
+""".trimIndent()
+
+            userContentText = """
+User's raw voice transcript / request:
+$rawTranscript
+""".trimIndent()
+        } else if (isAiApp && aiPolishMode == AiPolishMode.OPTIMIZE_PROMPT) {
             // Lyra-style Structured Prompt Optimization
             fullSystemInstruction = """
 You are Lyra, a master-level AI prompt optimization engine.
