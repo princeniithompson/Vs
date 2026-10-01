@@ -4,7 +4,6 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Base64
 import android.util.Log
-import com.example.config.VoxStreamConfig
 import com.example.data.AppLogRepository
 import com.example.data.ConnectionState
 import com.example.data.DiagnosticSource
@@ -45,10 +44,10 @@ class GeminiLiveWebSocketClient(
 ) {
     companion object {
         private const val TAG = "GeminiLiveWS"
-        val DEFAULT_MODEL = VoxStreamConfig.DEFAULT_LIVE_MODEL
+        const val DEFAULT_MODEL = "models/gemini-3.5-transcribe-live"
         const val WS_BASE_URL =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-        val MAX_RECONNECT_ATTEMPTS = VoxStreamConfig.MAX_RECONNECT_ATTEMPTS
+        private const val MAX_RECONNECT_ATTEMPTS = 3
 
         val DEFAULT_CERTIFICATE_PINNER: CertificatePinner = CertificatePinner.Builder()
             .add("generativelanguage.googleapis.com", "sha256/kIdpMS077tAh+gS+4V74k/Xy49qJ2q69PzVvj/vF1+Q=")
@@ -57,12 +56,13 @@ class GeminiLiveWebSocketClient(
             .build()
 
         fun buildWebSocketRequest(apiKey: String): Request {
-            if (VoxStreamConfig.isPlaceholderApiKey(apiKey)) {
+            val trimmedKey = apiKey.trim()
+            if (trimmedKey.isEmpty() || trimmedKey.equals("MY_GEMINI_API_KEY", ignoreCase = true)) {
                 throw IllegalArgumentException("Gemini API Key is missing or placeholder. Please provide a valid key in Secrets or Settings.")
             }
             return Request.Builder()
                 .url(WS_BASE_URL)
-                .addHeader("x-goog-api-key", apiKey.trim())
+                .addHeader("x-goog-api-key", trimmedKey)
                 .build()
         }
     }
@@ -72,7 +72,7 @@ class GeminiLiveWebSocketClient(
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS) // Indefinite read timeout for persistent WebSocket
         .writeTimeout(30, TimeUnit.SECONDS)
-        .pingInterval(VoxStreamConfig.PING_INTERVAL_SECONDS, TimeUnit.SECONDS) // Tolerant 45s ping interval to prevent aggressive dropouts
+        .pingInterval(45, TimeUnit.SECONDS) // Tolerant 45s ping interval to prevent aggressive dropouts
         .retryOnConnectionFailure(true)
         .build()
 
@@ -112,14 +112,14 @@ class GeminiLiveWebSocketClient(
         smartMode: Boolean = false,
         customVocabulary: List<String> = emptyList()
     ) {
-        if (VoxStreamConfig.isPlaceholderApiKey(apiKey)) {
+        val trimmedKey = apiKey.trim()
+        if (trimmedKey.isEmpty() || trimmedKey.equals("MY_GEMINI_API_KEY", ignoreCase = true)) {
             val errMsg = "Gemini API Key is missing or placeholder. Please provide a valid key in Secrets or Settings."
             onLog(LogLevel.ERROR, TAG, errMsg, null)
             notifyError(errMsg, GeminiLiveError.MissingApiKey(errMsg))
             notifyStateChanged(ConnectionState.Error(errMsg))
             throw IllegalArgumentException(errMsg)
         }
-        val trimmedKey = apiKey.trim()
 
         // Concurrency guard: atomic check-and-set prevents duplicate or overlapping connections
         if (!isConnectingGuard.compareAndSet(false, true)) {
@@ -134,11 +134,7 @@ class GeminiLiveWebSocketClient(
         closeExistingWebSocket()
 
         lastApiKey = trimmedKey
-        activeModel = if (model.isBlank() || model.contains("3.5-transcribe-live")) {
-            VoxStreamConfig.DEFAULT_LIVE_MODEL
-        } else {
-            model.trim()
-        }
+        activeModel = model
         isSmartMode = smartMode
         customVocabularyList = customVocabulary
         isExplicitlyClosed.set(false)
@@ -396,16 +392,6 @@ class GeminiLiveWebSocketClient(
                 val code = errorObj?.optInt("code", 0) ?: 0
                 val status = errorObj?.optString("status") ?: ""
                 val errMsg = errorObj?.optString("message") ?: json.optString("error")
-
-                // Fallback to default live model if model was not found/invalid
-                if ((code == 404 || errMsg.contains("not found", ignoreCase = true) || errMsg.contains("model", ignoreCase = true)) && activeModel != VoxStreamConfig.DEFAULT_LIVE_MODEL) {
-                    Log.w(TAG, "Model '$activeModel' rejected by Gemini Live server. Falling back to '${VoxStreamConfig.DEFAULT_LIVE_MODEL}'")
-                    activeModel = VoxStreamConfig.DEFAULT_LIVE_MODEL
-                    closeExistingWebSocket()
-                    connectInternal()
-                    return
-                }
-
                 val detailedError = buildString {
                     append("Gemini Live server error")
                     if (code != 0) append(" (code $code)")
@@ -489,7 +475,7 @@ class GeminiLiveWebSocketClient(
      * to keep WebSocket VAD state continuously alive without dropouts.
      */
     fun sendZeroPaddingChunk(): Boolean {
-        val zeroBuffer = ByteArray(VoxStreamConfig.AUDIO_CHUNK_SIZE) // 100ms at 16kHz mono 16-bit PCM
+        val zeroBuffer = ByteArray(3200) // 100ms at 16kHz mono 16-bit PCM = 3200 bytes
         return sendAudioChunk(zeroBuffer)
     }
 

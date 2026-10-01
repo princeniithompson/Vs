@@ -45,26 +45,9 @@ class VoxStreamAccessibilityService : AccessibilityService() {
                 AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED or
                 AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-
-        // Restrict accessibility monitoring strictly to supported messaging, email, and productivity packages
-        info.packageNames = arrayOf(
-            "com.whatsapp",
-            "com.whatsapp.w4b",
-            "com.google.android.gm",
-            "org.telegram.messenger",
-            "org.telegram.messenger.web",
-            "com.google.android.apps.messaging",
-            "com.google.android.keep",
-            "com.Slack",
-            "notion.id"
-        )
-
-        // FLAG_REPORT_VIEW_IDS: Required to resolve view resource IDs in target editable fields for direct text injection
-        // FLAG_INCLUDE_NOT_IMPORTANT_VIEWS: Required to access nested or custom editor view hierarchies in rich text and messaging inputs
-        var flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+        var flags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                 AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
-
-        // FLAG_INPUT_METHOD_EDITOR: Required on Android 13+ (API 33+) to interface with the Input Method Editor for direct text commitment
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             flags = flags or AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
         }
@@ -118,9 +101,9 @@ class VoxStreamAccessibilityService : AccessibilityService() {
 
     private fun checkAndNotifyKeyboard() {
         val currentWindows = try {
-            getWindows() ?: emptyList()
+            windows ?: emptyList()
         } catch (e: Exception) {
-            Log.w(TAG, "Error querying getWindows()", e)
+            Log.w(TAG, "Error querying windows", e)
             emptyList()
         }
 
@@ -139,15 +122,6 @@ class VoxStreamAccessibilityService : AccessibilityService() {
             windowTypesSeen.append(typeStr)
 
             if (window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
-                isImePresent = true
-            }
-        }
-
-        // Fallback: If getWindows() does not report IME directly without interactive windows flag,
-        // verify if an editable input node currently has focus
-        if (!isImePresent) {
-            val inputFocused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            if (inputFocused != null && isEditableNode(inputFocused)) {
                 isImePresent = true
             }
         }
@@ -450,17 +424,14 @@ class VoxStreamAccessibilityService : AccessibilityService() {
             Log.w(TAG, "Error checking rootInActiveWindow: ${e.message}")
         }
 
-        // 3. Search across getWindows() scoped strictly to the active supported package
+        // 3. Search across all interactive application windows (e.g. Google Keep, WhatsApp, Chrome)
         try {
-            val currentWindows = try { getWindows() } catch (e: Throwable) { null }
+            val currentWindows = windows
             if (!currentWindows.isNullOrEmpty()) {
-                val activePkg = getActivePackageName()
-                // Pass A: Look for focused editable in application windows belonging to active package
+                // Pass A: Look for focused editable in application windows
                 for (w in currentWindows) {
                     if (w.type == AccessibilityWindowInfo.TYPE_APPLICATION) {
                         val wRoot = w.root ?: continue
-                        val pkg = wRoot.packageName?.toString()
-                        if (activePkg != null && pkg != activePkg) continue
                         val inputF = wRoot.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                         if (inputF != null && isEditableNode(inputF)) {
                             Log.d(TAG, "Found target editable in APP window via FOCUS_INPUT")
@@ -478,8 +449,6 @@ class VoxStreamAccessibilityService : AccessibilityService() {
                 for (w in currentWindows) {
                     if (w.type == AccessibilityWindowInfo.TYPE_APPLICATION) {
                         val wRoot = w.root ?: continue
-                        val pkg = wRoot.packageName?.toString()
-                        if (activePkg != null && pkg != activePkg) continue
                         val anyEditable = findBestEditableInTree(wRoot)
                         if (anyEditable != null) {
                             Log.d(TAG, "Found target editable in APP window tree scan (active editable fallback)")
@@ -534,23 +503,16 @@ class VoxStreamAccessibilityService : AccessibilityService() {
     }
 
     fun getActiveApplicationWindow(): AccessibilityWindowInfo? {
-        val currentWindows = try { getWindows() } catch (e: Throwable) { null }
+        val currentWindows = try { windows } catch (e: Throwable) { null }
         if (!currentWindows.isNullOrEmpty()) {
-            val activePkg = getActivePackageName()
             for (window in currentWindows) {
                 if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION && (window.isFocused || window.isActive)) {
-                    val root = window.root
-                    if (activePkg == null || root?.packageName?.toString() == activePkg) {
-                        return window
-                    }
+                    return window
                 }
             }
             for (window in currentWindows) {
                 if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION) {
-                    val root = window.root
-                    if (activePkg == null || root?.packageName?.toString() == activePkg) {
-                        return window
-                    }
+                    return window
                 }
             }
         }
@@ -558,31 +520,8 @@ class VoxStreamAccessibilityService : AccessibilityService() {
     }
 
     fun getActivePackageName(): String? {
-        // 1. Check direct input focus first
-        try {
-            val focusedNode = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            val focusedPkg = focusedNode?.packageName?.toString()
-            if (!focusedPkg.isNullOrEmpty() && !AppContextResolver.isIgnoredPackage(this, focusedPkg)) {
-                return focusedPkg
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error checking focus for active package: ${e.message}")
-        }
-
-        // 2. Check root in active window
-        val rootPkg = rootInActiveWindow?.packageName?.toString()
-        if (!AppContextResolver.isIgnoredPackage(this, rootPkg)) {
-            return rootPkg
-        }
-
-        // 3. Check last focused editable node if it belongs to a valid target app
-        val lastNodePkg = lastFocusedEditableNode?.packageName?.toString()
-        if (!AppContextResolver.isIgnoredPackage(this, lastNodePkg)) {
-            return lastNodePkg
-        }
-
-        // 4. Inspect getWindows() for TYPE_APPLICATION window
-        val currentWindows = try { getWindows() } catch (e: Throwable) { null }
+        // 1. Inspect windows for real TYPE_APPLICATION window
+        val currentWindows = try { windows } catch (e: Throwable) { null }
         if (!currentWindows.isNullOrEmpty()) {
             // Check focused or active application window first
             for (window in currentWindows) {
@@ -602,6 +541,18 @@ class VoxStreamAccessibilityService : AccessibilityService() {
                     }
                 }
             }
+        }
+
+        // 2. Check last focused editable node if it belongs to a valid target app
+        val lastNodePkg = lastFocusedEditableNode?.packageName?.toString()
+        if (!AppContextResolver.isIgnoredPackage(this, lastNodePkg)) {
+            return lastNodePkg
+        }
+
+        // 3. Check root in active window
+        val rootPkg = rootInActiveWindow?.packageName?.toString()
+        if (!AppContextResolver.isIgnoredPackage(this, rootPkg)) {
+            return rootPkg
         }
 
         return null

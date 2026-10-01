@@ -19,7 +19,6 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentLinkedQueue
 
 class FloatingDictationSessionManager(
-    private val context: Context,
     private val onTranscriptUpdated: (fullText: String) -> Unit,
     private val onInterimReceived: (interim: String) -> Unit,
     private val onFinalSegmentReceived: (segment: String) -> Unit,
@@ -52,7 +51,6 @@ class FloatingDictationSessionManager(
     private var interimTranscript = ""
 
     private val audioRecorder = AudioRecorder(
-        context = context,
         onChunkReady = { chunk ->
             if (isRecording) {
                 audioQueue.offer(chunk)

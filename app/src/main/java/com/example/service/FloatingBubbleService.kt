@@ -82,7 +82,6 @@ class FloatingBubbleService : Service() {
 
         overlayWindowManager = FloatingOverlayWindowManager(this)
         sessionManager = FloatingDictationSessionManager(
-            context = this,
             onTranscriptUpdated = { fullText ->
                 overlayWindowManager.overlayTranscript.value = fullText
                 FloatingBubbleManager.updateSmartDefaultPolishMode(fullText)
