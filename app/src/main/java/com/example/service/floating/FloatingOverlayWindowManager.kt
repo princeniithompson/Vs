@@ -76,7 +76,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
         onPolishClick: () -> Unit,
         onCompleteClick: () -> Unit,
         onLongPressBubble: () -> Unit = {},
-        onCircleGesture: () -> Unit = {}
+        onScanTriggered: () -> Unit = {}
     ) {
         lifecycleOwner.onCreate()
         lifecycleOwner.onStart()
@@ -195,7 +195,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
                                 isContextLoaded = isContextLoaded,
                                 onClick = onRingClick,
                                 onLongPress = onLongPressBubble,
-                                onCircleGestureDetected = onCircleGesture,
+                                onScanTriggered = onScanTriggered,
                                 onDragStart = {
                                     FloatingHapticManager.trigger(context, FloatingHapticType.BUBBLE_HOLD)
                                     resetInactivityTimer(keepShrunk = true)

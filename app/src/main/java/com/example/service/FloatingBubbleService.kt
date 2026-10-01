@@ -133,7 +133,7 @@ class FloatingBubbleService : Service() {
                 onPolishClick = { onPolishClicked() },
                 onCompleteClick = { onConfirmClicked() },
                 onLongPressBubble = { onLongPressBubble() },
-                onCircleGesture = { onCircleGestureDetected() }
+                onScanTriggered = { onScanTriggered() }
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing overlay window", e)
@@ -154,7 +154,7 @@ class FloatingBubbleService : Service() {
             AppLogRepository.addLog(
                 LogLevel.INFO,
                 TAG,
-                "Context Scan Mode activated for $appName"
+                "Context Scan Mode activated for $appName (Tap lens to scan)"
             )
         } else {
             FloatingHapticManager.trigger(this, FloatingHapticType.BUBBLE_HOLD)
@@ -166,7 +166,7 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    private fun onCircleGestureDetected() {
+    private fun onScanTriggered() {
         if (!overlayWindowManager.overlayScanMode.value) return
         val accessService = VoxStreamAccessibilityService.instance
         val pkg = accessService?.getActivePackageName() ?: FloatingBubbleManager.currentForegroundPackage.value
