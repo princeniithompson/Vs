@@ -43,7 +43,7 @@ class GeminiLiveWebSocketClient(
 ) {
     companion object {
         private const val TAG = "GeminiLiveWS"
-        const val DEFAULT_MODEL = "models/gemini-2.0-flash-exp"
+        const val DEFAULT_MODEL = "models/gemini-3.5-transcribe-live"
         const val WS_BASE_URL =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
         private const val MAX_RECONNECT_ATTEMPTS = 3
@@ -126,11 +126,7 @@ class GeminiLiveWebSocketClient(
         // Ensure only one WebSocket session can exist at a time by closing any existing socket
         closeExistingWebSocket()
 
-        val resolvedModel = if (model.isBlank() || model.contains("3.5-transcribe-live", ignoreCase = true)) {
-            DEFAULT_MODEL
-        } else {
-            model.trim()
-        }
+        val resolvedModel = model.ifBlank { DEFAULT_MODEL }.trim()
 
         lastApiKey = trimmedKey
         activeModel = resolvedModel
