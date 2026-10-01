@@ -205,6 +205,12 @@ object AppContextResolver {
         return resolved
     }
 
+    fun resolveAppName(context: Context, packageName: String?): String {
+        if (packageName.isNullOrBlank()) return "AI App"
+        val resolved = resolve(context, packageName)
+        return resolved?.appName ?: tokenizeBrandName(packageName)
+    }
+
     private fun isGeminiSession(
         windowInfo: AccessibilityWindowInfo?,
         rootNode: AccessibilityNodeInfo?,
