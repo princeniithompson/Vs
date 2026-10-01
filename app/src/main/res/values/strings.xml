@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">VoxStream</string>
+    <string name="accessibility_service_label">VoxStream Voice Typing Assistant</string>
+    <string name="accessibility_service_desc">Enables VoxStream to detect when you tap text fields across apps (like TikTok, WhatsApp, Messages) to show the floating voice typing bubble and paste transcribed text.</string>
+</resources>

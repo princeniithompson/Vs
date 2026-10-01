@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/bubble_root_container"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@android:color/transparent"
+    android:clipChildren="false"
+    android:clipToPadding="false"
+    android:orientation="vertical"
+    android:padding="8dp">
+
+    <!-- The Tactile Lifebuoy Ring (Floating Button) -->
+    <ImageView
+        android:id="@+id/iv_floating_bubble"
+        android:layout_width="60dp"
+        android:layout_height="60dp"
+        android:layout_gravity="start"
+        android:background="@android:color/transparent"
+        android:contentDescription="VoxStream Floating Voice Typing"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_lifebuoy_ring" />
+
+    <!-- Expanded Transcription & Actions Panel (Visible during recording / confirmation) -->
+    <LinearLayout
+        android:id="@+id/bubble_expanded_panel"
+        android:layout_width="280dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:background="@drawable/bg_floating_bubble_card"
+        android:elevation="8dp"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:visibility="gone">
+
+        <!-- Header: Status indicator and timer -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <View
+                android:id="@+id/status_dot"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:background="@drawable/bg_dot_recording" />
+
+            <TextView
+                android:id="@+id/tv_bubble_status"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="Listening..."
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_bubble_duration"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="00:00"
+                android:textColor="#B0BEC5"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- Live transcript display -->
+        <ScrollView
+            android:id="@+id/scroll_transcript"
+            android:layout_width="match_parent"
+            android:layout_height="95dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp"
+            android:fadeScrollbars="false"
+            android:fillViewport="true"
+            android:isScrollContainer="true"
+            android:scrollbars="vertical">
+
+            <TextView
+                android:id="@+id/tv_bubble_transcript"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Speak now... words appear in real-time"
+                android:lineSpacingExtra="2dp"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#90A4AE"
+                android:textSize="14sp" />
+        </ScrollView>
+
+        <!-- Actions Row: Cancel & Confirm -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:orientation="horizontal">
+
+            <!-- Cancel Button -->
+            <Button
+                android:id="@+id/btn_bubble_cancel"
+                style="@android:style/Widget.Material.Button.Borderless"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:background="@drawable/bg_btn_cancel"
+                android:minHeight="36dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:text="Cancel"
+                android:textAllCaps="false"
+                android:textColor="#FF5252"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <Space
+                android:layout_width="6dp"
+                android:layout_height="1dp" />
+
+            <!-- Polish Button -->
+            <Button
+                android:id="@+id/btn_bubble_polish"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:background="@drawable/bg_btn_polish"
+                android:minHeight="36dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="Polish ✨"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <Space
+                android:layout_width="6dp"
+                android:layout_height="1dp" />
+
+            <!-- Confirm Button -->
+            <Button
+                android:id="@+id/btn_bubble_confirm"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:background="@drawable/bg_btn_confirm"
+                android:minHeight="36dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="Confirm"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+</LinearLayout>

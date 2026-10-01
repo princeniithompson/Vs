@@ -1,0 +1,6 @@
+{
+  "name": "VoxStream",
+  "description": "High-performance live streaming voice typing and real-time audio transcription powered by Gemini Live Transcribe.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

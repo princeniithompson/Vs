@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Explicit monochrome silhouette of the lifebuoy ring for Android 13+ Themed Icons.
+         Uses the exact same geometry (radius 31dp, stroke 17dp, center 54, 54) so the outer area
+         and inner center hole are 100% transparent (alpha=0), avoiding gray center fill. -->
+    <path
+        android:pathData="M 54.0 23.0 A 31.0 31.0 0 1 1 53.99 23.0 Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="17"
+        android:strokeLineCap="butt" />
+
+</vector>
