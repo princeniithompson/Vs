@@ -255,11 +255,12 @@ fun FloatingActionRow(
             }
         }
 
-        // Context Status (e.g. "AI · VoxStream")
+        // Context Status (e.g. "AI · Google AI Studio", "AI · Gemini")
         val sessionContext by FloatingBubbleManager.lockedSessionContext.collectAsState()
+        val currentAppContext by FloatingBubbleManager.currentResolvedAppContext.collectAsState()
         val currentPkg by FloatingBubbleManager.currentForegroundPackage.collectAsState()
         val context = LocalContext.current
-        val displayContext = sessionContext ?: remember(currentPkg) {
+        val displayContext = sessionContext ?: currentAppContext?.formatted ?: remember(currentPkg) {
             AppContextResolver.resolve(context, currentPkg)?.formatted
         }
 

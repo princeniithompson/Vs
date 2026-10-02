@@ -7,7 +7,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.example.service.FloatingBubbleManager
 import com.example.ui.VoiceTypingScreen
 import com.example.ui.VoiceTypingViewModel
 import com.example.ui.theme.MyApplicationTheme
@@ -22,9 +25,16 @@ class MainActivity : ComponentActivity() {
         com.example.data.AudioRecordingRepository.init(this)
         com.example.data.CustomVocabularyRepository.init(this)
         com.example.data.HistoryRepository.init(this)
+        FloatingBubbleManager.init(this)
         enableEdgeToEdge()
         setContent {
-            MyApplicationTheme {
+            val isAppDynamicColor by FloatingBubbleManager.isAppDynamicColorEnabled.collectAsState()
+            val selectedTone by FloatingBubbleManager.selectedColorTone.collectAsState()
+
+            MyApplicationTheme(
+                dynamicColor = isAppDynamicColor,
+                toneId = selectedTone
+            ) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     VoiceTypingScreen(viewModel = viewModel)
                 }

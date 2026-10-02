@@ -47,6 +47,58 @@ object AppLogRepository {
     private val _liveFrames = MutableStateFlow<List<LogEntry>>(emptyList())
     val logs: StateFlow<List<LogEntry>> = _liveFrames.asStateFlow()
 
+    // Unified live protocol stats & connection state updated from both in-app and bubble dictation
+    private val _liveStats = MutableStateFlow(LiveStats())
+    val liveStats: StateFlow<LiveStats> = _liveStats.asStateFlow()
+
+    private val _liveConnectionState = MutableStateFlow<ConnectionState>(ConnectionState.Idle)
+    val liveConnectionState: StateFlow<ConnectionState> = _liveConnectionState.asStateFlow()
+
+    fun updateLiveStats(stats: LiveStats) {
+        _liveStats.value = stats
+    }
+
+    fun updateLiveStats(transform: (LiveStats) -> LiveStats) {
+        _liveStats.update(transform)
+    }
+
+    fun updateConnectionState(state: ConnectionState, source: DiagnosticSource = DiagnosticSource.APP) {
+        _liveConnectionState.value = state
+        _liveStats.update { it.copy(source = source) }
+    }
+
+    fun recordInjectionResult(
+        durationMs: Long,
+        wordCount: Int,
+        targetApp: String,
+        transcriptText: String,
+        source: DiagnosticSource
+    ) {
+        _liveStats.update {
+            it.copy(
+                source = source,
+                lastInjectionDurationMs = durationMs,
+                lastInjectionWordCount = wordCount,
+                lastInjectionTargetApp = targetApp,
+                lastTranscriptSummary = transcriptText,
+                totalWordsSpoken = it.totalWordsSpoken + wordCount
+            )
+        }
+        val secStr = String.format(Locale.US, "%.1f", maxOf(0.2f, durationMs / 1000f))
+        logEvent(
+            source = source,
+            type = DiagnosticType.SESSION_END,
+            message = "Injected $wordCount words into $targetApp in ${secStr}s"
+        )
+        addLog(
+            level = LogLevel.INFO,
+            tag = "Speed",
+            message = "Finished typing $wordCount words into $targetApp in ${secStr}s",
+            payload = transcriptText,
+            source = source
+        )
+    }
+
     fun init(context: Context) {
         if (isInitialized && appContext != null) return
         appContext = context.applicationContext
@@ -183,8 +235,14 @@ object AppLogRepository {
     /**
      * Real-time socket frame logger for Live tab stream view
      */
-    fun addLog(level: LogLevel, tag: String, message: String, payload: String? = null) {
-        val entry = LogEntry(level = level, tag = tag, message = message, payload = payload)
+    fun addLog(
+        level: LogLevel,
+        tag: String,
+        message: String,
+        payload: String? = null,
+        source: DiagnosticSource = DiagnosticSource.APP
+    ) {
+        val entry = LogEntry(level = level, tag = tag, message = message, payload = payload, source = source)
         _liveFrames.update { current ->
             (current + entry).takeLast(MAX_LIVE_FRAMES)
         }

@@ -79,8 +79,10 @@ class AudioRecorder(
         source: DiagnosticSource = DiagnosticSource.APP
     ) {
         if (isRecording.getAndSet(true)) {
-            Log.w(TAG, "Recording already in progress, ignoring start request")
-            return
+            Log.w(TAG, "Recording already in progress, restarting session cleanly")
+            recordingJob?.cancel()
+            cleanUpInternal()
+            isRecording.set(true)
         }
 
         _state.value = AudioRecorderState.Starting
@@ -113,8 +115,8 @@ class AudioRecorder(
 
             try {
                 val candidateSources = mutableListOf(
-                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
                     MediaRecorder.AudioSource.MIC,
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
                     MediaRecorder.AudioSource.DEFAULT
                 )
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {

@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -39,6 +40,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import com.example.ui.components.overlay.AuroraColorPalette
 import com.example.ui.components.overlay.getDynamicTonePalette
@@ -163,12 +165,66 @@ fun GlowStylesBottomSheet(
                 }
             }
 
-            // Dynamic Color Tone Selector (Premium side-by-side pills without emojis)
+            // Dynamic Color Toggle Card for Application Interface
+            val isAppDynamicColor by FloatingBubbleManager.isAppDynamicColorEnabled.collectAsState()
             val selectedTone by FloatingBubbleManager.selectedColorTone.collectAsState()
-            Column(
+
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isAppDynamicColor) palette.primaryVibrant.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface
+                ),
+                border = BorderStroke(
+                    width = if (isAppDynamicColor) 1.5.dp else 1.dp,
+                    color = if (isAppDynamicColor) palette.primaryVibrant else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                ),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Filled.Palette,
+                                contentDescription = null,
+                                tint = palette.primaryVibrant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Dynamic Color for App Interface",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Blend your phone's 4 wallpaper tones (Luminous, Deep, Muted, Accent) across the entire app interface.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Switch(
+                        checked = isAppDynamicColor,
+                        onCheckedChange = { FloatingBubbleManager.setAppDynamicColorEnabled(context, it) }
+                    )
+                }
+            }
+
+            // Dynamic Color Tone Selector (Luminous, Deep, Muted, Accent)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -176,17 +232,17 @@ fun GlowStylesBottomSheet(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Dynamic Color Tone",
+                        text = "Dynamic Color Blend Tone",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
                         text = when (selectedTone) {
-                            "deep" -> "Deep Keyboard"
-                            "muted" -> "Muted"
-                            "tertiary" -> "Accent"
-                            else -> "Luminous"
+                            "deep" -> "Deep Tone"
+                            "muted" -> "Muted Tone"
+                            "tertiary" -> "Accent (Pink/Complementary)"
+                            else -> "Luminous Tone"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,

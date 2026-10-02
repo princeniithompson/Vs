@@ -8,26 +8,24 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import android.os.SystemClock
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
-import com.example.BuildConfig
 import com.example.MainActivity
+import com.example.core.ApiConfig
 import com.example.data.AppLogRepository
 import com.example.data.ConnectionState
 import com.example.data.CustomVocabularyRepository
 import com.example.data.DiagnosticSource
 import com.example.data.DiagnosticType
 import com.example.data.HistoryRepository
-import com.example.data.LogLevel
 import com.example.service.floating.FloatingDictationSessionManager
 import com.example.service.floating.FloatingHapticManager
 import com.example.service.floating.FloatingHapticType
 import com.example.service.floating.FloatingNotificationManager
 import com.example.service.floating.FloatingOverlayWindowManager
-import com.example.service.floating.FloatingPolishClient
-import com.example.service.floating.PolishResult
+import com.example.service.floating.FloatingPolishCoordinator
+import com.example.service.floating.FloatingTextInjector
 import com.example.websocket.GeminiLiveWebSocketClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,9 +34,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.util.concurrent.atomic.AtomicBoolean
 
+/**
+ * Thin coordinator service for the floating voice bubble overlay.
+ * Coordinates between overlay window management, dictation session recording,
+ * AI polishing, and text injection.
+ */
 class FloatingBubbleService : Service() {
 
     companion object {
@@ -52,13 +53,17 @@ class FloatingBubbleService : Service() {
 
     private lateinit var overlayWindowManager: FloatingOverlayWindowManager
     private lateinit var sessionManager: FloatingDictationSessionManager
+    val polishCoordinator = FloatingPolishCoordinator()
 
-    private val isPolishingInProgress = AtomicBoolean(false)
     @androidx.annotation.VisibleForTesting(otherwise = androidx.annotation.VisibleForTesting.PRIVATE)
-    internal var lastPolishClickTime = 0L
-    private val polishDebounceMs = 800L
+    internal var lastPolishClickTime: Long
+        get() = polishCoordinator.lastPolishClickTime
+        set(value) { polishCoordinator.lastPolishClickTime = value }
+
     @androidx.annotation.VisibleForTesting(otherwise = androidx.annotation.VisibleForTesting.PRIVATE)
-    internal var polishDebounceJob: Job? = null
+    internal var polishDebounceJob: Job?
+        get() = polishCoordinator.polishDebounceJob
+        set(value) { polishCoordinator.polishDebounceJob = value }
 
     @Volatile
     private var isPendingInjectionOnSmartCompletion = false
@@ -131,73 +136,10 @@ class FloatingBubbleService : Service() {
                 onRingClick = { onRingClicked() },
                 onCancelClick = { onCancelClicked() },
                 onPolishClick = { onPolishClicked() },
-                onCompleteClick = { onConfirmClicked() },
-                onLongPressBubble = { onLongPressBubble() },
-                onScanTriggered = { onScanTriggered() }
+                onCompleteClick = { onConfirmClicked() }
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing overlay window", e)
-        }
-    }
-
-    private fun onLongPressBubble() {
-        if (sessionManager.isRecording || overlayWindowManager.overlayExpanded.value) return
-        if (FloatingBubbleManager.isCurrentAppSensitive.value) return
-
-        val accessService = VoxStreamAccessibilityService.instance
-        val pkg = accessService?.getActivePackageName() ?: FloatingBubbleManager.currentForegroundPackage.value
-        val appName = if (pkg != null) AppContextResolver.resolveAppName(this, pkg) else null
-
-        if (AppClassifier.isAiChatApp(pkg, appName)) {
-            FloatingHapticManager.trigger(this, FloatingHapticType.BUBBLE_HOLD)
-            overlayWindowManager.overlayScanMode.value = true
-            AppLogRepository.addLog(
-                LogLevel.INFO,
-                TAG,
-                "Context Scan Mode activated for $appName (Tap lens to scan)"
-            )
-        } else {
-            FloatingHapticManager.trigger(this, FloatingHapticType.BUBBLE_HOLD)
-            Toast.makeText(
-                this,
-                "Screen Context Scan is available in AI chat apps",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
-
-    private fun onScanTriggered() {
-        if (!overlayWindowManager.overlayScanMode.value) return
-        val accessService = VoxStreamAccessibilityService.instance
-        val pkg = accessService?.getActivePackageName() ?: FloatingBubbleManager.currentForegroundPackage.value
-        val appName = if (pkg != null) AppContextResolver.resolveAppName(this, pkg) else "AI App"
-
-        FloatingHapticManager.trigger(this, FloatingHapticType.FINAL_SENTENCE)
-        overlayWindowManager.overlayScanMode.value = false
-
-        overlayWindowManager.showScanAnimation(appName) {
-            serviceScope.launch(Dispatchers.IO) {
-                val context = accessService?.extractAiScreenContext()
-                if (context != null) {
-                    com.example.data.ScreenContextRepository.setContext(context)
-                    withContext(Dispatchers.Main) {
-                        FloatingHapticManager.trigger(this@FloatingBubbleService, FloatingHapticType.FINAL_SENTENCE)
-                        Toast.makeText(
-                            this@FloatingBubbleService,
-                            "Captured ${context.appName} context (${context.conversationSnippets.size} msgs)",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(
-                            this@FloatingBubbleService,
-                            "Could not capture screen context",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                }
-            }
         }
     }
 
@@ -279,7 +221,7 @@ class FloatingBubbleService : Service() {
         }
 
         val apiKey = getEffectiveApiKey()
-        if (apiKey.isBlank() || apiKey.trim().equals("MY_GEMINI_API_KEY", ignoreCase = true)) {
+        if (ApiConfig.isPlaceholder(apiKey)) {
             Toast.makeText(this, "Gemini API key is required. Please set it in VoxStream app first.", Toast.LENGTH_LONG).show()
             return
         }
@@ -336,7 +278,7 @@ class FloatingBubbleService : Service() {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             serviceScope.launch {
-                delay(450L) // Ensure audio recorder has cleanly released native handle before demoting FGS type
+                delay(450L)
                 try {
                     startForeground(
                         FloatingNotificationManager.NOTIFICATION_ID,
@@ -367,7 +309,9 @@ class FloatingBubbleService : Service() {
     }
 
     private fun performInjectionAndClose() {
+        val startInjectTime = android.os.SystemClock.elapsedRealtime()
         val textToInject = sessionManager.getFullTranscriptText()
+        val durationSec = sessionManager.durationSeconds
         if (sessionManager.isRecording) {
             stopVoiceTyping()
         }
@@ -377,134 +321,44 @@ class FloatingBubbleService : Service() {
             HistoryRepository.addHistoryItem(
                 text = textToInject,
                 appContext = lockedCtx,
-                durationSeconds = sessionManager.durationSeconds
+                durationSeconds = durationSec
             )
-            FloatingBubbleManager.injectOrFallbackToClipboard(this, textToInject)
+            FloatingTextInjector.injectOrFallbackToClipboard(this, textToInject)
+
+            val elapsedMs = maxOf(300L, android.os.SystemClock.elapsedRealtime() - startInjectTime)
+            val wordCount = textToInject.trim().split("\\s+".toRegex()).count { it.isNotBlank() }
+            AppLogRepository.recordInjectionResult(
+                durationMs = elapsedMs,
+                wordCount = wordCount,
+                targetApp = lockedCtx,
+                transcriptText = textToInject,
+                source = DiagnosticSource.BUBBLE
+            )
         }
 
         resetAndCollapse()
     }
 
     private fun onPolishClicked() {
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastPolishClickTime < polishDebounceMs) {
-            Log.d(TAG, "Ignoring rapid Polish tap (debounced)")
-            return
-        }
-        lastPolishClickTime = now
-
-        if (!isPolishingInProgress.compareAndSet(false, true)) {
-            Log.d(TAG, "Polish operation already in progress")
-            return
-        }
-
         val rawTranscript = sessionManager.getFullTranscriptText()
-        if (rawTranscript.isBlank()) {
-            Toast.makeText(this, "No text to polish", Toast.LENGTH_SHORT).show()
-            isPolishingInProgress.set(false)
-            resetAndCollapse()
-            return
-        }
-
-        overlayWindowManager.overlayPolishing.value = true
-        val polishStartTime = SystemClock.elapsedRealtime()
-
+        val apiKey = getEffectiveApiKey()
         if (sessionManager.isRecording) {
             stopVoiceTyping()
         }
 
-        polishDebounceJob?.cancel()
-        polishDebounceJob = serviceScope.launch {
-            try {
-                val apiKey = getEffectiveApiKey()
-                var result: PolishResult? = null
-
-                AppLogRepository.addLog(
-                    LogLevel.INFO,
-                    "PolishAPI",
-                    "User tapped Polish ✨ for transcript (${rawTranscript.length} chars)",
-                    rawTranscript
-                )
-                AppLogRepository.logEvent(
-                    DiagnosticSource.BUBBLE,
-                    DiagnosticType.POLISH_CALLED,
-                    "Transcript length: ${rawTranscript.length} chars"
-                )
-
-                if (apiKey.isBlank() || apiKey.trim().equals("MY_GEMINI_API_KEY", ignoreCase = true)) {
-                    val err = "API key is missing or default placeholder. Please set GEMINI_API_KEY in app Settings."
-                    Log.e(TAG, "Polish Error: $err")
-                    AppLogRepository.addLog(LogLevel.ERROR, "PolishAPI", err)
-                    AppLogRepository.logEvent(
-                        DiagnosticSource.BUBBLE,
-                        DiagnosticType.POLISH_FAILED,
-                        err
-                    )
-                    result = PolishResult(null, err)
-                } else {
-                    val currentPkg = FloatingBubbleManager.currentForegroundPackage.value
-                    val appContext = AppContextResolver.resolve(this@FloatingBubbleService, currentPkg)
-                    val category = AppClassifier.classify(currentPkg, appContext?.appName)
-                    val appName = appContext?.appName ?: "App"
-                    val isAiApp = category == AppCategory.AI
-                    val aiMode = if (isAiApp) FloatingBubbleManager.selectedAiPolishMode.value else null
-                    val contextSnippet = if (isAiApp) VoxStreamAccessibilityService.instance?.extractRecentConversationContext() else null
-                    val capturedScreenContext = com.example.data.ScreenContextRepository.capturedContext.value
-
-                    withContext(Dispatchers.IO) {
-                        result = FloatingPolishClient.polishTranscript(
-                            apiKey = apiKey,
-                            rawTranscript = rawTranscript,
-                            category = category,
-                            appName = appName,
-                            aiPolishMode = aiMode,
-                            conversationContext = contextSnippet,
-                            screenContext = capturedScreenContext
-                        )
-                    }
-
-                    // Clear context after it has been consumed for polish
-                    if (capturedScreenContext != null) {
-                        com.example.data.ScreenContextRepository.clearContext()
-                    }
-                }
-
-                val elapsed = SystemClock.elapsedRealtime() - polishStartTime
-                if (elapsed < 1400L) {
-                    delay(1400L - elapsed)
-                }
-
-                val polishedText = result?.text
-                if (!polishedText.isNullOrBlank()) {
-                    AppLogRepository.addLog(LogLevel.INFO, "PolishAPI", "Polish completed successfully!", polishedText)
-                    AppLogRepository.logEvent(
-                        DiagnosticSource.BUBBLE,
-                        DiagnosticType.POLISH_SUCCESS,
-                        "Result: ${polishedText.take(60)}..."
-                    )
-                    FloatingBubbleManager.injectOrFallbackToClipboard(this@FloatingBubbleService, polishedText)
-                    Toast.makeText(this@FloatingBubbleService, "Polished ✨", Toast.LENGTH_SHORT).show()
-                } else {
-                    val fallbackText = sessionManager.getFullTranscriptText()
-                    if (fallbackText.isNotBlank()) {
-                        FloatingBubbleManager.injectOrFallbackToClipboard(this@FloatingBubbleService, fallbackText)
-                    }
-                    val errorMsg = result?.errorDetail ?: "Unknown error"
-                    Log.e(TAG, "Polish failed: $errorMsg")
-                    AppLogRepository.addLog(LogLevel.ERROR, "PolishAPI", "Polish failed completely: $errorMsg")
-                    AppLogRepository.logEvent(
-                        DiagnosticSource.BUBBLE,
-                        DiagnosticType.POLISH_FAILED,
-                        errorMsg
-                    )
-                    Toast.makeText(this@FloatingBubbleService, "Polish failed: $errorMsg", Toast.LENGTH_LONG).show()
-                }
-            } finally {
+        polishCoordinator.handlePolishRequest(
+            context = this,
+            scope = serviceScope,
+            rawTranscript = rawTranscript,
+            apiKey = apiKey,
+            onStartPolish = {
+                overlayWindowManager.overlayPolishing.value = true
+            },
+            onFinishPolish = {
                 overlayWindowManager.overlayPolishing.value = false
-                isPolishingInProgress.set(false)
                 resetAndCollapse()
             }
-        }
+        )
     }
 
     private fun onCancelClicked() {
@@ -533,10 +387,8 @@ class FloatingBubbleService : Service() {
 
     private fun resetAndCollapse() {
         FloatingBubbleManager.unlockSessionContext()
-        com.example.data.ScreenContextRepository.clearContext()
         overlayWindowManager.overlayPendingFinalizing.value = false
         overlayWindowManager.overlayRecording.value = false
-        isPolishingInProgress.set(false)
         isPendingInjectionOnSmartCompletion = false
         pendingCompletionTimeoutJob?.cancel()
         pendingCompletionTimeoutJob = null
@@ -549,7 +401,7 @@ class FloatingBubbleService : Service() {
     fun onKeyboardVisibilityChanged(isVisible: Boolean) {
         val isSessionActive = sessionManager.isRecording ||
                              overlayWindowManager.overlayPendingFinalizing.value ||
-                             isPolishingInProgress.get()
+                             polishCoordinator.isPolishingInProgress.get()
         overlayWindowManager.onKeyboardVisibilityChanged(isVisible, isSessionActive)
     }
 
@@ -564,23 +416,14 @@ class FloatingBubbleService : Service() {
     private fun getEffectiveApiKey(): String {
         val prefs = getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)
         val customKey = prefs.getString("custom_api_key", "")?.trim() ?: ""
-        if (customKey.isNotBlank()) return customKey
-
-        val buildKey = BuildConfig.GEMINI_API_KEY.trim()
-        if (buildKey.isNotBlank() && !buildKey.equals("MY_GEMINI_API_KEY", ignoreCase = true)) return buildKey
-
-        return ""
+        return ApiConfig.getEffectiveKey(customKey)
     }
 
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "FloatingBubbleService onDestroy")
 
-        polishDebounceJob?.cancel()
-        polishDebounceJob = null
-        lastPolishClickTime = 0L
-        isPolishingInProgress.set(false)
-
+        polishCoordinator.cancel()
         isPendingInjectionOnSmartCompletion = false
         pendingCompletionTimeoutJob?.cancel()
         pendingCompletionTimeoutJob = null

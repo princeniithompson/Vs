@@ -176,95 +176,11 @@ class VoxStreamAccessibilityService : AccessibilityService() {
      * ensuring that long text in apps like Chrome or WhatsApp is never identified as a hint and overwritten.
      */
     fun extractGenuineText(node: AccessibilityNodeInfo): String {
-        val rawText = node.text?.toString() ?: ""
-        if (rawText.isBlank()) return ""
-
-        // SAFETY CHECK: When content length exceeds 15 characters, ignore isShowingHintText
-        // and placeholder checks. Long text in Chrome, WhatsApp, etc. is NEVER a hint.
-        if (rawText.length > 15) {
-            return rawText
-        }
-
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            try {
-                if (node.isShowingHintText) return ""
-            } catch (e: Throwable) {}
-            try {
-                val hintText = node.hintText?.toString()
-                if (!hintText.isNullOrBlank() && rawText.trim().equals(hintText.trim(), ignoreCase = true)) return ""
-            } catch (e: Throwable) {}
-        }
-
-        val trimmed = rawText.trim().lowercase()
-        val knownPlaceholders = setOf(
-            "ask gemini", "ask gemini…", "ask gemini...",
-            "ask google", "ask google…", "ask google...",
-            "search", "search…", "search...",
-            "search or type url", "search or type web address",
-            "type a message", "message", "send a message", "write a message",
-            "write a comment…", "write a comment...", "add a comment…", "add a comment...",
-            "take a note", "take a note…", "take a note...", "note", "note…", "note...", "title"
-        )
-        if (knownPlaceholders.contains(trimmed)) return ""
-
-        return rawText
+        return com.example.service.floating.FloatingTextInjector.extractGenuineText(node)
     }
 
-    /**
-     * Injects transcribed text into the target active editable field via direct node editing (ACTION_SET_TEXT):
-     * 1. Uses extractGenuineText to preserve existing user drafts while safely ignoring hints like "Ask Gemini".
-     * 2. Determines cursor position safely without clobbering existing text.
-     * 3. Splices the dictated text into the existing text at cursor.
-     * 4. Performs direct text insertion via ACTION_SET_TEXT (zero clipboard touch).
-     * 5. Updates cursor position to sit immediately after the newly inserted text.
-     */
     fun injectTextSafely(node: AccessibilityNodeInfo, dictatedText: String): Boolean {
-        // Extract genuine user text, safely ignoring isShowingHintText when length > 15 chars
-        val currentText = extractGenuineText(node)
-        val rawText = node.text?.toString() ?: ""
-
-        // Determine current cursor position to insert text correctly
-        var selectionStart = currentText.length
-        var selectionEnd = currentText.length
-
-        val selStart = try { node.textSelectionStart } catch (_: Throwable) { -1 }
-        val selEnd = try { node.textSelectionEnd } catch (_: Throwable) { -1 }
-
-        if (selStart in 0..rawText.length && selEnd in selStart..rawText.length) {
-            // Ensure bounds are safe relative to currentText
-            selectionStart = selStart.coerceIn(0, currentText.length)
-            selectionEnd = selEnd.coerceIn(0, currentText.length)
-        }
-
-        // Splice the dictated text into the existing text at the cursor
-        val beforeCursor = currentText.substring(0, selectionStart)
-        val afterCursor = currentText.substring(selectionEnd)
-
-        // Add a space if needed based on spacing logic
-        val space = if (beforeCursor.isNotEmpty() && !beforeCursor.endsWith(" ") && !beforeCursor.endsWith("\n")) " " else ""
-        val textToInsert = space + dictatedText
-
-        val newText = beforeCursor + textToInsert + afterCursor
-
-        // Perform direct node editing via ACTION_SET_TEXT
-        val arguments = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, newText)
-        }
-        val success = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-        Log.d(TAG, "injectTextSafely ACTION_SET_TEXT result: $success, len=${newText.length}")
-
-        if (success) {
-            // Update the cursor position to sit immediately after the newly inserted text
-            val newCursorPos = selectionStart + textToInsert.length
-            val selectionArgs = Bundle().apply {
-                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, newCursorPos)
-                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, newCursorPos)
-            }
-            node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selectionArgs)
-            return true
-        }
-
-        return false
+        return com.example.service.floating.FloatingTextInjector.injectTextSafely(node, dictatedText)
     }
 
     /**
@@ -300,97 +216,11 @@ class VoxStreamAccessibilityService : AccessibilityService() {
 
             // Fallback: If direct node edit failed on custom editors (e.g. rich text), use paste injection
             if (AppClassifier.isPasteRequired(targetPkg)) {
-                return performPasteInjection(targetNode, newText)
+                return com.example.service.floating.FloatingTextInjector.performPasteInjection(targetNode, newText, this, mainHandler)
             }
         }
 
         return false
-    }
-
-    private fun performPasteInjection(targetNode: AccessibilityNodeInfo, newText: String): Boolean {
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        val originalClip = try {
-            clipboard?.primaryClip
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not read existing clipboard: ${e.message}")
-            null
-        }
-
-        Log.d(TAG, "Executing paste-injection for pkg=${targetNode.packageName}, textLen=${newText.length}")
-
-        // Focus the node FIRST so the target app has input focus before touching clipboard
-        try {
-            targetNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-            targetNode.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-        } catch (e: Exception) {
-            Log.w(TAG, "Notice requesting focus before paste: ${e.message}")
-        }
-
-        val dictationClip = ClipData.newPlainText("VoxStream Dictation", newText)
-        // Mark as sensitive on Android 13+ to prevent clipboard toasts
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            try {
-                val extras = android.os.PersistableBundle().apply { putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true) }
-                dictationClip.description.extras = extras
-            } catch (e: Throwable) {}
-        }
-
-        try {
-            clipboard?.setPrimaryClip(dictationClip)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed setting dictation clip", e)
-            return false
-        }
-
-        // Primary paste attempt
-        val initialPasteResult = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-        Log.d(TAG, "Initial ACTION_PASTE dispatch: $initialPasteResult")
-
-        // Schedule self-clearing / restoration after 150ms:
-        // - If the user had previous/pinned text, it is restored back to the clipboard!
-        // - If the clipboard was empty beforehand, the temporary dictation deletes itself.
-        mainHandler.postDelayed({
-            safeRestoreOriginalClipboard(clipboard, originalClip, newText)
-        }, 150L)
-
-        return true
-    }
-
-    /**
-     * Safely restores the original clipboard ONLY IF the current clipboard is STILL
-     * the temporary dictation clip set by VoxStream.
-     * Prevents race conditions where a user copied new data during the verification window.
-     */
-    private fun safeRestoreOriginalClipboard(clipboard: ClipboardManager?, originalClip: ClipData?, expectedDictationText: String) {
-        try {
-            val currentClip = try { clipboard?.primaryClip } catch (e: Exception) { null }
-
-            val isStillOurDictationClip = if (currentClip != null && currentClip.itemCount > 0) {
-                val currentText = currentClip.getItemAt(0)?.text?.toString() ?: ""
-                val label = currentClip.description?.label?.toString() ?: ""
-                currentText == expectedDictationText || label == "VoxStream Dictation"
-            } else {
-                false
-            }
-
-            if (isStillOurDictationClip) {
-                if (originalClip != null) {
-                    clipboard?.setPrimaryClip(originalClip)
-                    Log.d(TAG, "Restored original user clipboard safely (no collision detected)")
-                } else {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        clipboard?.clearPrimaryClip()
-                    } else {
-                        clipboard?.setPrimaryClip(ClipData.newPlainText("", ""))
-                    }
-                    Log.d(TAG, "Cleared temporary dictation clip from clipboard")
-                }
-            } else {
-                Log.i(TAG, "User or external app copied new data during paste verification window. Preserving user's new clipboard content without overwriting!")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error in safeRestoreOriginalClipboard: ${e.message}")
-        }
     }
 
     private fun getActiveEditableNode(): AccessibilityNodeInfo? {

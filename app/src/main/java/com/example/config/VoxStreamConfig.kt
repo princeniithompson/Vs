@@ -42,9 +42,7 @@ object VoxStreamConfig {
      * Returns true if the key is null, empty, or equals the placeholder string.
      */
     fun isPlaceholderApiKey(apiKey: String?): Boolean {
-        if (apiKey.isNullOrBlank()) return true
-        val trimmed = apiKey.trim()
-        return trimmed.isEmpty() || trimmed.equals(PLACEHOLDER_API_KEY, ignoreCase = true)
+        return com.example.core.ApiConfig.isPlaceholder(apiKey)
     }
 
     /**

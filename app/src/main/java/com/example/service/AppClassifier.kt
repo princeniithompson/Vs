@@ -63,9 +63,33 @@ object AppClassifier {
     }
 
     fun classify(packageName: String?, resolvedAppName: String? = null): AppCategory {
-        if (packageName.isNullOrBlank()) return AppCategory.OTHER
-        val pkgLower = packageName.lowercase()
-        val nameLower = (resolvedAppName ?: "").lowercase()
+        if (packageName.isNullOrBlank() && resolvedAppName.isNullOrBlank()) return AppCategory.OTHER
+
+        // Check AppRegistry native mapping
+        if (!packageName.isNullOrBlank()) {
+            AppRegistry.NATIVE_APP_MAP[packageName]?.let {
+                return when (it.group) {
+                    "AI" -> AppCategory.AI
+                    "Social" -> AppCategory.SOCIAL
+                    "Work" -> AppCategory.WORK
+                    else -> AppCategory.OTHER
+                }
+            }
+        }
+
+        // Check web app heuristics
+        val candidateName = resolvedAppName ?: ""
+        AppRegistry.matchWebApp(candidateName)?.let {
+            return when (it.group) {
+                "AI" -> AppCategory.AI
+                "Social" -> AppCategory.SOCIAL
+                "Work" -> AppCategory.WORK
+                else -> AppCategory.OTHER
+            }
+        }
+
+        val pkgLower = (packageName ?: "").lowercase()
+        val nameLower = candidateName.lowercase()
 
         // 1. AI category
         if (pkgLower.contains("qwen") || pkgLower.contains("tongyi") ||
@@ -78,9 +102,9 @@ object AppClassifier {
             pkgLower.contains("deepseek") ||
             nameLower.contains("ai studio") || nameLower.contains("chatgpt") ||
             nameLower.contains("claude") || nameLower.contains("gemini") ||
-            nameLower.contains("grok") || nameLower.contains("perplexity") ||
-            nameLower.contains("deepseek") || nameLower.contains("copilot") ||
-            nameLower.contains("qwen")
+            nameLower.contains("bard") || nameLower.contains("grok") ||
+            nameLower.contains("perplexity") || nameLower.contains("deepseek") ||
+            nameLower.contains("copilot") || nameLower.contains("qwen")
         ) {
             return AppCategory.AI
         }

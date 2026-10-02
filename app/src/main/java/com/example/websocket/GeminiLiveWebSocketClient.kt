@@ -50,7 +50,7 @@ class GeminiLiveWebSocketClient(
 
         fun buildWebSocketRequest(apiKey: String): Request {
             val trimmedKey = apiKey.trim()
-            if (trimmedKey.isEmpty() || trimmedKey.equals("MY_GEMINI_API_KEY", ignoreCase = true)) {
+            if (com.example.core.ApiConfig.isPlaceholder(trimmedKey)) {
                 throw IllegalArgumentException("Gemini API Key is missing or placeholder. Please provide a valid key in Secrets or Settings.")
             }
             return Request.Builder()
@@ -106,7 +106,7 @@ class GeminiLiveWebSocketClient(
         customVocabulary: List<String> = emptyList()
     ) {
         val trimmedKey = apiKey.trim()
-        if (trimmedKey.isEmpty() || trimmedKey.equals("MY_GEMINI_API_KEY", ignoreCase = true)) {
+        if (com.example.core.ApiConfig.isPlaceholder(trimmedKey)) {
             val errMsg = "Gemini API Key is missing or placeholder. Please provide a valid key in Secrets or Settings."
             onLog(LogLevel.ERROR, TAG, errMsg, null)
             notifyError(errMsg, GeminiLiveError.MissingApiKey(errMsg))

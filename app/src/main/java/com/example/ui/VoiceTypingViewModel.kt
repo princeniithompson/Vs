@@ -139,8 +139,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
-    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Idle)
-    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+    val connectionState: StateFlow<ConnectionState> = com.example.data.AppLogRepository.liveConnectionState
 
     private val _finalizedTranscript = MutableStateFlow("")
     val finalizedTranscript: StateFlow<String> = _finalizedTranscript.asStateFlow()
@@ -151,8 +150,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     private val _audioAmplitude = MutableStateFlow(0f)
     val audioAmplitude: StateFlow<Float> = _audioAmplitude.asStateFlow()
 
-    private val _stats = MutableStateFlow(LiveStats())
-    val stats: StateFlow<LiveStats> = _stats.asStateFlow()
+    val stats: StateFlow<LiveStats> = com.example.data.AppLogRepository.liveStats
 
     val logs: StateFlow<List<LogEntry>> = com.example.data.AppLogRepository.logs
 
@@ -166,12 +164,12 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     private val webSocketClient = GeminiLiveWebSocketClient(
         onSetupComplete = {
             addLog(LogLevel.INFO, TAG, "setupComplete received! Flushing buffered queue & streaming live audio.")
-            _stats.update { it.copy(setupCompleted = true) }
+            com.example.data.AppLogRepository.updateLiveStats { it.copy(source = com.example.data.DiagnosticSource.APP, setupCompleted = true) }
             drainAudioQueue()
         },
         onInterimTranscription = { text ->
             _interimTranscript.value = text
-            _stats.update { it.copy(interimCount = it.interimCount + 1) }
+            com.example.data.AppLogRepository.updateLiveStats { it.copy(source = com.example.data.DiagnosticSource.APP, interimCount = it.interimCount + 1) }
         },
         onFinalizedTranscription = { text ->
             val trimmedNew = text.trim()
@@ -188,10 +186,10 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                 else "$current $trimmedNew"
             }
             _interimTranscript.value = ""
-            _stats.update { it.copy(finalizedCount = it.finalizedCount + 1) }
+            com.example.data.AppLogRepository.updateLiveStats { it.copy(source = com.example.data.DiagnosticSource.APP, finalizedCount = it.finalizedCount + 1) }
         },
         onStateChanged = { newState ->
-            _connectionState.value = newState
+            com.example.data.AppLogRepository.updateConnectionState(newState, com.example.data.DiagnosticSource.APP)
         },
         onLog = { level, tag, msg, payload ->
             addLog(level, tag, msg, payload)
@@ -200,7 +198,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             val isPingTimeout = errorMsg.contains("ping", ignoreCase = true) || errorMsg.contains("pong", ignoreCase = true) || errorMsg.contains("timeout", ignoreCase = true)
             val endedReasonTag = if (isPingTimeout) "ping_timeout" else "connection_drop"
 
-            _stats.update { it.copy(lastError = errorMsg) }
+            com.example.data.AppLogRepository.updateLiveStats { it.copy(source = com.example.data.DiagnosticSource.APP, lastError = errorMsg) }
             com.example.data.AppLogRepository.logEvent(
                 com.example.data.DiagnosticSource.APP,
                 com.example.data.DiagnosticType.ERROR,
@@ -221,10 +219,12 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                 if (webSocketClient.setupComplete) {
                     val sent = webSocketClient.sendAudioChunk(chunk)
                     if (sent) {
-                        _stats.update {
+                        com.example.data.AppLogRepository.updateLiveStats {
                             it.copy(
+                                source = com.example.data.DiagnosticSource.APP,
                                 chunksSent = it.chunksSent + 1,
-                                bytesSent = it.bytesSent + chunk.size
+                                bytesSent = it.bytesSent + chunk.size,
+                                chunksBuffered = audioQueue.size
                             )
                         }
                     } else {
@@ -240,7 +240,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         },
         onError = { err ->
             addLog(LogLevel.ERROR, TAG, "AudioRecorder Error: $err")
-            _stats.update { it.copy(lastError = err) }
+            com.example.data.AppLogRepository.updateLiveStats { it.copy(source = com.example.data.DiagnosticSource.APP, lastError = err) }
         }
     )
 
@@ -250,23 +250,14 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             audioQueue.poll()
         }
         audioQueue.add(chunk)
-        _stats.update { it.copy(chunksBuffered = audioQueue.size) }
+        com.example.data.AppLogRepository.updateLiveStats { it.copy(source = com.example.data.DiagnosticSource.APP, chunksBuffered = audioQueue.size) }
     }
 
     val effectiveApiKey: String
-        get() {
-            val custom = _customApiKey.value.trim()
-            if (custom.isNotEmpty()) return custom
-            return try {
-                BuildConfig.GEMINI_API_KEY
-            } catch (e: Throwable) {
-                ""
-            }
-        }
+        get() = com.example.core.ApiConfig.getEffectiveKey(_customApiKey.value)
 
     fun isApiKeyConfigured(): Boolean {
-        val key = effectiveApiKey.trim()
-        return key.isNotEmpty() && !key.equals("MY_GEMINI_API_KEY", ignoreCase = true)
+        return !com.example.core.ApiConfig.isPlaceholder(effectiveApiKey)
     }
 
     fun setCustomApiKey(key: String) {
@@ -304,7 +295,13 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         _isRecording.value = true
         _interimTranscript.value = ""
         audioQueue.clear()
-        _stats.value = LiveStats(setupCompleted = false)
+        com.example.data.AppLogRepository.updateLiveStats {
+            LiveStats(
+                source = com.example.data.DiagnosticSource.APP,
+                setupCompleted = false
+            )
+        }
+        com.example.data.AppLogRepository.updateConnectionState(ConnectionState.Connecting, com.example.data.DiagnosticSource.APP)
 
         try {
             val powerManager = getApplication<Application>().getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
@@ -356,7 +353,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             while (isActive && _isRecording.value) {
                 delay(500)
                 val elapsedSec = ((System.currentTimeMillis() - start) / 1000).toInt()
-                _stats.update { it.copy(durationSeconds = elapsedSec) }
+                com.example.data.AppLogRepository.updateLiveStats { it.copy(source = com.example.data.DiagnosticSource.APP, durationSeconds = elapsedSec) }
             }
         }
     }
@@ -389,9 +386,9 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
         // 1. Stop mic capture and signal WS completion
         viewModelScope.launch(Dispatchers.IO) {
-            val durationAtEnd = _stats.value.durationSeconds
-            val chunksAtEnd = _stats.value.chunksSent
-            val bytesAtEnd = _stats.value.bytesSent
+            val durationAtEnd = stats.value.durationSeconds
+            val chunksAtEnd = stats.value.chunksSent
+            val bytesAtEnd = stats.value.bytesSent
 
             try {
                 audioRecorder.stopAndJoin()
@@ -405,7 +402,18 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             } catch (e: Exception) {
                 Log.e(TAG, "Error stopping in-app session", e)
             } finally {
-                _connectionState.value = ConnectionState.Idle
+                val fullText = _finalizedTranscript.value.trim()
+                if (fullText.isNotBlank()) {
+                    val words = fullText.split("\\s+".toRegex()).count { it.isNotBlank() }
+                    com.example.data.AppLogRepository.recordInjectionResult(
+                        durationMs = maxOf(400L, durationAtEnd * 1000L),
+                        wordCount = words,
+                        targetApp = "VoxStream",
+                        transcriptText = fullText,
+                        source = com.example.data.DiagnosticSource.APP
+                    )
+                }
+                com.example.data.AppLogRepository.updateConnectionState(ConnectionState.Idle, com.example.data.DiagnosticSource.APP)
                 addLog(LogLevel.INFO, TAG, "Session completed ($endedReason). Total chunks sent: $chunksAtEnd")
                 com.example.data.AppLogRepository.logEvent(
                     com.example.data.DiagnosticSource.APP,
@@ -432,8 +440,9 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                 val sent = webSocketClient.sendAudioChunk(chunk)
                 if (sent) {
                     drainedCount++
-                    _stats.update {
+                    com.example.data.AppLogRepository.updateLiveStats {
                         it.copy(
+                            source = com.example.data.DiagnosticSource.APP,
                             chunksSent = it.chunksSent + 1,
                             bytesSent = it.bytesSent + chunk.size,
                             chunksBuffered = maxOf(0, it.chunksBuffered - 1)

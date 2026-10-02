@@ -90,7 +90,7 @@ fun HomeScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFFF6F8FA)) // Calm clean background
+            .background(MaterialTheme.colorScheme.background)
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -104,7 +104,7 @@ fun HomeScreen(
                             text = "|||| VoxStream",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF1E2430)
+                            color = MaterialTheme.colorScheme.onBackground
                         )
                     },
                     navigationIcon = {
@@ -112,7 +112,7 @@ fun HomeScreen(
                             Icon(
                                 imageVector = Icons.Filled.Menu,
                                 contentDescription = "Open Settings Menu",
-                                tint = Color(0xFF1E2430)
+                                tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
                     },
@@ -320,7 +320,7 @@ private fun TopCarouselSection(viewModel: VoiceTypingViewModel) {
                     label = "dotWidth"
                 )
                 val dotColor by animateColorAsState(
-                    targetValue = if (isSelected) Color(0xFF1E293B) else Color(0xFFCBD5E1),
+                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
                     animationSpec = tween(durationMillis = 350),
                     label = "dotColor"
                 )

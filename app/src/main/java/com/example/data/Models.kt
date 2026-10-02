@@ -60,12 +60,14 @@ data class LogEntry(
     val id: String = java.util.UUID.randomUUID().toString(),
     val timestamp: Long = System.currentTimeMillis(),
     val level: LogLevel,
+    val source: DiagnosticSource = DiagnosticSource.APP,
     val tag: String,
     val message: String,
     val payload: String? = null
 )
 
 data class LiveStats(
+    val source: DiagnosticSource = DiagnosticSource.APP,
     val chunksBuffered: Int = 0,
     val chunksSent: Int = 0,
     val bytesSent: Long = 0L,
@@ -73,5 +75,10 @@ data class LiveStats(
     val setupCompleted: Boolean = false,
     val interimCount: Int = 0,
     val finalizedCount: Int = 0,
-    val lastError: String? = null
+    val lastError: String? = null,
+    val lastInjectionDurationMs: Long = 0L,
+    val lastInjectionWordCount: Int = 0,
+    val lastInjectionTargetApp: String = "",
+    val lastTranscriptSummary: String = "",
+    val totalWordsSpoken: Int = 0
 )

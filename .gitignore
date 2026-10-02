@@ -21,3 +21,9 @@ debug.keystore
 *.jks
 *.keystore
 my-upload-key.jks
+
+# API Secrets and Config
+ApiConfig.kt
+**/core/ApiConfig.kt
+app/src/main/java/com/example/core/ApiConfig.kt
+

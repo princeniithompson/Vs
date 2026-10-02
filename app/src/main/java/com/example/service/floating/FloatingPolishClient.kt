@@ -55,9 +55,7 @@ Output: I need 6 chairs for the event."""
         rawTranscript: String,
         category: AppCategory = AppCategory.OTHER,
         appName: String = "App",
-        aiPolishMode: AiPolishMode? = null,
-        conversationContext: String? = null,
-        screenContext: com.example.data.CapturedScreenContext? = null
+        aiPolishMode: AiPolishMode? = null
     ): PolishResult {
         if (VoxStreamConfig.isPlaceholderApiKey(apiKey)) {
             throw IllegalArgumentException("Gemini API Key is missing or placeholder. Please provide a valid key in Settings.")
@@ -67,61 +65,11 @@ Output: I need 6 chairs for the event."""
         val baseModels = VoxStreamConfig.GEMINI_MODEL_FALLBACKS
         val modelsToTry = listOf(lastSuccessfulPolishModel) + baseModels.filter { it != lastSuccessfulPolishModel }
 
-        val isAiApp = category == AppCategory.AI || screenContext != null
+        val isAiApp = category == AppCategory.AI
         val fullSystemInstruction: String
-        val userContentText: String
 
-        if (screenContext != null) {
-            // Captured AI-app Screen Context Mode
-            AppLogRepository.addLog(
-                LogLevel.INFO,
-                "PolishClient",
-                "Injected captured screen context from ${screenContext.appName} (${screenContext.conversationSnippets.size} msgs) into polish prompt"
-            )
-
-            fullSystemInstruction = """
-You are helping the user write a message inside an AI chat application (${screenContext.appName}).
-
-Here is the current screen context that the user is looking at:
-
-${screenContext.toPromptContext()}
-
-Instructions:
-- Use the screen context above to make the response highly relevant.
-- Match the tone, style, and role visible in the conversation.
-- If the user is asking to reply, continue, or refine something, base it on the visible history.
-- Output ONLY the final polished text that the user can send. No explanations, no introductory chatter, no commentary, no surrounding quotes.
-""".trimIndent()
-
-            userContentText = """
-User's raw voice transcript / request:
-$rawTranscript
-""".trimIndent()
-        } else if (isAiApp && aiPolishMode == AiPolishMode.OPTIMIZE_PROMPT) {
-            // Lyra-style Structured Prompt Optimization
-            fullSystemInstruction = """
-You are Lyra, a master-level AI prompt optimization engine.
-Your sole purpose is to transform the user's rough spoken thoughts into a high-yield, structured prompt suitable for an advanced language model (such as ChatGPT, Claude, Gemini, or DeepSeek).
-
-CRITICAL RULES:
-- Output ONLY the final ready-to-send prompt.
-- NEVER include introductory chatter, greetings, commentary, explanations, or quotes (DO NOT write "Here is your prompt:").
-- NEVER include meta-headers like "Deconstruct:", "Diagnose:", "Develop:", "Deliver:", or "Pro Tip:".
-- Structure the prompt with precision: define a clear Objective, relevant Context, strict Constraints, and expected Output Format when helpful.
-- Keep it sharp, direct, concise, and actionable—avoid robotic bloat or unnecessary length.
-""".trimIndent()
-
-            val contextSnippet = if (!conversationContext.isNullOrBlank()) {
-                "\n\n<recent_conversation_context>\n$conversationContext\n</recent_conversation_context>"
-            } else ""
-
-            userContentText = """
-<raw_input>
-$rawTranscript
-</raw_input>$contextSnippet
-""".trimIndent()
-        } else if (isAiApp) {
-            // Clean Message Mode for conversational follow-ups in AI chats
+        if (isAiApp) {
+            // Clean AI-app mode: simple clean prompt that only polishes the user's text
             fullSystemInstruction = """
 You are a skilled text editor for conversational AI chat ($appName).
 Your sole purpose is to polish the user's input for an ongoing chat message.
@@ -134,16 +82,6 @@ CRITICAL RULES:
 - Never answer questions asked in the transcript.
 - Never include introductory chatter, commentary, or quotes.
 """.trimIndent()
-
-            val contextSnippet = if (!conversationContext.isNullOrBlank()) {
-                "\n\n<recent_conversation_context>\n$conversationContext\n</recent_conversation_context>"
-            } else ""
-
-            userContentText = """
-<raw_input>
-$rawTranscript
-</raw_input>$contextSnippet
-""".trimIndent()
         } else {
             // Standard Polish for non-AI apps (WhatsApp, Gmail, Notes, etc.)
             val categoryGuidelines = AppClassifier.getCategoryPromptGuidelines(category, appName)
@@ -153,8 +91,9 @@ $BASE_SYSTEM_INSTRUCTION
 APP-AWARE CONTEXT GUIDELINES:
 $categoryGuidelines
 """.trimIndent()
-            userContentText = rawTranscript
         }
+
+        val userContentText = rawTranscript
 
         fun buildJsonBody(modelName: String): String {
             return JSONObject().apply {
@@ -168,7 +107,7 @@ $categoryGuidelines
                     }
                 ))
                 put("generationConfig", JSONObject().apply {
-                    put("temperature", if (isAiApp && aiPolishMode == AiPolishMode.OPTIMIZE_PROMPT) 0.3 else 0.1)
+                    put("temperature", 0.1)
                     if (modelName.contains("3.")) {
                         put("thinkingConfig", JSONObject().apply {
                             put("thinkingLevel", "MINIMAL")

@@ -28,12 +28,16 @@ object FloatingBubbleManager {
     private const val KEY_FINISHING_STYLE = "finishing_animation_style"
     private const val KEY_COLOR_TONE = "dynamic_color_tone"
     private const val KEY_SMART_SAFE_MODE = "smart_safe_mode_enabled"
+    private const val KEY_APP_DYNAMIC_COLOR = "app_dynamic_color_enabled"
     const val DEFAULT_GLOW_STYLE_ID = "breathing_horizon"
     const val DEFAULT_FINISHING_STYLE_ID = "pixel_flourish"
     const val DEFAULT_COLOR_TONE = "luminous"
 
     private val _isBubbleEnabled = MutableStateFlow(false)
     val isBubbleEnabled: StateFlow<Boolean> = _isBubbleEnabled.asStateFlow()
+
+    private val _isAppDynamicColorEnabled = MutableStateFlow(true)
+    val isAppDynamicColorEnabled: StateFlow<Boolean> = _isAppDynamicColorEnabled.asStateFlow()
 
     private val _isSmartSafeModeEnabled = MutableStateFlow(true)
     val isSmartSafeModeEnabled: StateFlow<Boolean> = _isSmartSafeModeEnabled.asStateFlow()
@@ -53,6 +57,9 @@ object FloatingBubbleManager {
     // Foreground package tracking & session locking:
     private val _currentForegroundPackage = MutableStateFlow<String?>(null)
     val currentForegroundPackage: StateFlow<String?> = _currentForegroundPackage.asStateFlow()
+
+    private val _currentResolvedAppContext = MutableStateFlow<com.example.util.AppResolutionEngine.AppContext?>(null)
+    val currentResolvedAppContext: StateFlow<com.example.util.AppResolutionEngine.AppContext?> = _currentResolvedAppContext.asStateFlow()
 
     private val _lockedSessionContext = MutableStateFlow<String?>(null)
     val lockedSessionContext: StateFlow<String?> = _lockedSessionContext.asStateFlow()
@@ -95,11 +102,18 @@ object FloatingBubbleManager {
         _selectedFinishingStyleId.value = prefs.getString(KEY_FINISHING_STYLE, DEFAULT_FINISHING_STYLE_ID) ?: DEFAULT_FINISHING_STYLE_ID
         _selectedColorTone.value = prefs.getString(KEY_COLOR_TONE, DEFAULT_COLOR_TONE) ?: DEFAULT_COLOR_TONE
         _isSmartSafeModeEnabled.value = prefs.getBoolean(KEY_SMART_SAFE_MODE, true)
+        _isAppDynamicColorEnabled.value = prefs.getBoolean(KEY_APP_DYNAMIC_COLOR, true)
         initialized = true
 
         if (_isBubbleEnabled.value && canDrawOverlays(context)) {
             startBubbleService(context)
         }
+    }
+
+    fun setAppDynamicColorEnabled(context: Context, enabled: Boolean) {
+        _isAppDynamicColorEnabled.value = enabled
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean(KEY_APP_DYNAMIC_COLOR, enabled).apply()
     }
 
     fun setColorTone(context: Context, toneId: String) {
@@ -205,7 +219,19 @@ object FloatingBubbleManager {
     fun updateCurrentForegroundPackage(pkg: String?, context: Context? = null) {
         if (!AppContextResolver.isIgnoredPackage(context, pkg)) {
             _currentForegroundPackage.value = pkg
-            _isCurrentAppAi.value = AppClassifier.isAiChatApp(pkg)
+            val a11y = VoxStreamAccessibilityService.instance
+            val resolved = if (context != null) {
+                com.example.util.AppResolutionEngine.defaultInstance.resolve(
+                    context = context,
+                    packageName = pkg,
+                    windowInfo = a11y?.getActiveApplicationWindow(),
+                    rootNode = a11y?.rootInActiveWindow
+                )
+            } else null
+
+            _currentResolvedAppContext.value = resolved
+            val isAi = resolved?.isAiApp ?: AppClassifier.isAiChatApp(pkg, resolved?.name)
+            _isCurrentAppAi.value = isAi
 
             val isSensitive = if (_isSmartSafeModeEnabled.value) {
                 SafeModeClassifier.isSensitiveApp(context, pkg)
@@ -258,13 +284,15 @@ object FloatingBubbleManager {
                 ?: _currentForegroundPackage.value
             val activeWindow = a11y?.getActiveApplicationWindow()
             val rootNode = a11y?.rootInActiveWindow
-            val resolved = AppContextResolver.resolve(
+            val resolved = _currentResolvedAppContext.value ?: com.example.util.AppResolutionEngine.defaultInstance.resolve(
                 context = context,
                 packageName = currentPkg,
                 windowInfo = activeWindow,
                 rootNode = rootNode
             )
             _lockedSessionContext.value = resolved?.formatted
+            _currentResolvedAppContext.value = resolved
+            _isCurrentAppAi.value = resolved?.isAiApp ?: false
             Log.d(TAG, "Locked session context: ${resolved?.formatted} for package: $currentPkg")
         }
     }
@@ -282,31 +310,6 @@ object FloatingBubbleManager {
      * If no active text field exists or injection fails, copies text to clipboard with a Toast.
      */
     fun injectOrFallbackToClipboard(context: Context, text: String): Boolean {
-        if (text.isBlank()) return false
-
-        val injected = VoxStreamAccessibilityService.instance?.injectText(text) ?: false
-        val mainHandler = Handler(Looper.getMainLooper())
-
-        if (injected) {
-            mainHandler.post {
-                Toast.makeText(context, "Text inserted into active field!", Toast.LENGTH_SHORT).show()
-            }
-            return true
-        } else {
-            // Fallback to clipboard
-            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            if (clipboard != null) {
-                val clip = ClipData.newPlainText("VoxStream Transcription", text)
-                clipboard.setPrimaryClip(clip)
-            }
-            mainHandler.post {
-                Toast.makeText(
-                    context,
-                    "Copied to clipboard (no active text field found)",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-            return false
-        }
+        return com.example.service.floating.FloatingTextInjector.injectOrFallbackToClipboard(context, text)
     }
 }

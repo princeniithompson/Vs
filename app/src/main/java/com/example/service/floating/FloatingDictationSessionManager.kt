@@ -9,6 +9,7 @@ import com.example.data.ConnectionState
 import com.example.data.CustomVocabularyRepository
 import com.example.data.DiagnosticSource
 import com.example.data.DiagnosticType
+import com.example.data.LiveStats
 import com.example.websocket.GeminiLiveWebSocketClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +60,14 @@ class FloatingDictationSessionManager(
                     if (sent) {
                         sessionChunksSent++
                         sessionBytesSent += chunk.size
+                        AppLogRepository.updateLiveStats {
+                            it.copy(
+                                source = DiagnosticSource.BUBBLE,
+                                chunksSent = sessionChunksSent,
+                                bytesSent = sessionBytesSent,
+                                chunksBuffered = audioQueue.size
+                            )
+                        }
                     } else {
                         enqueueAudioChunk(chunk)
                     }
@@ -89,6 +98,12 @@ class FloatingDictationSessionManager(
             audioQueue.poll()
         }
         audioQueue.offer(chunk)
+        AppLogRepository.updateLiveStats {
+            it.copy(
+                source = DiagnosticSource.BUBBLE,
+                chunksBuffered = audioQueue.size
+            )
+        }
     }
 
     fun startSession(
@@ -116,6 +131,19 @@ class FloatingDictationSessionManager(
             DiagnosticType.SESSION_START,
             "Mode: $modeLabel, Model: $model"
         )
+        AppLogRepository.updateConnectionState(ConnectionState.Connecting, DiagnosticSource.BUBBLE)
+        AppLogRepository.updateLiveStats {
+            LiveStats(
+                source = DiagnosticSource.BUBBLE,
+                chunksBuffered = 0,
+                chunksSent = 0,
+                bytesSent = 0L,
+                setupCompleted = false,
+                interimCount = 0,
+                finalizedCount = 0,
+                lastError = null
+            )
+        }
 
         // Acquire WakeLock for up to 30 min
         try {
@@ -144,6 +172,12 @@ class FloatingDictationSessionManager(
         // Start WebSocket
         webSocketClient = GeminiLiveWebSocketClient(
             onSetupComplete = {
+                AppLogRepository.updateLiveStats {
+                    it.copy(
+                        source = DiagnosticSource.BUBBLE,
+                        setupCompleted = true
+                    )
+                }
                 val ws = webSocketClient
                 if (ws != null && ws.setupComplete) {
                     scope.launch(Dispatchers.IO) {
@@ -153,6 +187,14 @@ class FloatingDictationSessionManager(
                             if (sent) {
                                 sessionChunksSent++
                                 sessionBytesSent += chunk.size
+                                AppLogRepository.updateLiveStats {
+                                    it.copy(
+                                        source = DiagnosticSource.BUBBLE,
+                                        chunksSent = sessionChunksSent,
+                                        bytesSent = sessionBytesSent,
+                                        chunksBuffered = audioQueue.size
+                                    )
+                                }
                                 if (audioQueue.isNotEmpty()) {
                                     delay(25)
                                 }
@@ -165,6 +207,12 @@ class FloatingDictationSessionManager(
                 interimTranscript = text
                 onInterimReceived(text)
                 onTranscriptUpdated(getFullTranscriptText())
+                AppLogRepository.updateLiveStats {
+                    it.copy(
+                        source = DiagnosticSource.BUBBLE,
+                        interimCount = it.interimCount + 1
+                    )
+                }
             },
             onFinalizedTranscription = { text ->
                 val trimmed = text.trim()
@@ -182,13 +230,23 @@ class FloatingDictationSessionManager(
                 interimTranscript = ""
                 onFinalSegmentReceived(text)
                 onTranscriptUpdated(getFullTranscriptText())
+                AppLogRepository.updateLiveStats {
+                    it.copy(
+                        source = DiagnosticSource.BUBBLE,
+                        finalizedCount = it.finalizedCount + 1
+                    )
+                }
             },
             onStateChanged = { state ->
                 onConnectionStateChanged(state)
+                AppLogRepository.updateConnectionState(state, DiagnosticSource.BUBBLE)
             },
-            onLog = { _, _, _, _ -> },
+            onLog = { level, tag, msg, payload ->
+                AppLogRepository.addLog(level, tag, msg, payload, DiagnosticSource.BUBBLE)
+            },
             onError = { err ->
                 Log.e(TAG, "WebSocket error: $err")
+                AppLogRepository.updateLiveStats { it.copy(lastError = err) }
                 onError(err)
             }
         ).apply {
@@ -242,6 +300,7 @@ class FloatingDictationSessionManager(
                     DiagnosticType.SESSION_END,
                     "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB"
                 )
+                AppLogRepository.updateConnectionState(ConnectionState.Idle, DiagnosticSource.BUBBLE)
                 try {
                     if (wl?.isHeld == true) {
                         wl.release()
