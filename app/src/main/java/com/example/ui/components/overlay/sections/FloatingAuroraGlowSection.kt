@@ -17,7 +17,7 @@ import com.example.ui.components.overlay.drawNotchedOverlayBackground
 
 /**
  * Renders the dark frosted-glass container with the dynamic multi-style Aurora Glow bloom
- * tailored to the custom notch path.
+ * tailored to the custom notch path. Strict clipping ensures zero glow/lighting leaks outside the container.
  */
 @Composable
 fun FloatingAuroraGlowSection(
@@ -38,7 +38,7 @@ fun FloatingAuroraGlowSection(
         modifier = modifier
             .fillMaxWidth()
             .padding(top = 22.dp)
-            .clip(notchedShape)
+            .clip(notchedShape) // Strict clipping before drawBehind prevents any glow/aurora from leaking outside
             .drawBehind {
                 val path = createNotchedPath(
                     size = size,
@@ -69,6 +69,7 @@ fun FloatingAuroraGlowSection(
                     waitingLoopProgress = state.waitingLoopProgress
                 )
             }
+            .clip(notchedShape) // Double guarantee clipping
             .padding(top = 16.dp, bottom = 12.dp, start = 16.dp, end = 16.dp),
         content = content
     )

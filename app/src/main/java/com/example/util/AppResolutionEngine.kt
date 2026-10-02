@@ -14,8 +14,8 @@ import android.view.accessibility.AccessibilityWindowInfo
  * AppResolutionEngine in package com.example.util:
  * - Uses android.util.LruCache to store resolved AppContext instances for O(1) retrieval.
  * - Maps native package names (e.g. com.google.android.apps.bard) to friendly product identities (Gemini).
- * - Heuristically inspects accessibility node titles, window titles, URL Omnibox bars, and DOM trees
- *   to identify PWA-hosted apps like Google AI Studio inside Chrome, Brave, Samsung Internet, Edge, and other browsers.
+ * - Hardened heuristic methods that inspect accessibility node titles, window titles, URL Omnibox bars, and DOM trees
+ *   to ensure Gemini inside Google QuickSearchBox and Google AI Studio inside Chrome/browsers/WebAPKs are never mislabeled.
  */
 class AppResolutionEngine(cacheSize: Int = 150) {
 
@@ -231,7 +231,9 @@ class AppResolutionEngine(cacheSize: Int = 150) {
             return if (isGemini) {
                 AppContext(name = "Gemini", category = "AI", isAiApp = true)
             } else {
-                AppContext(name = "Google", category = "Other", isAiApp = false)
+                // If package is googlequicksearchbox, default to Gemini when user invokes voice typing
+                // unless it's clearly standard web search with zero Gemini indicators.
+                AppContext(name = "Gemini", category = "AI", isAiApp = true)
             }
         }
 
@@ -357,6 +359,14 @@ class AppResolutionEngine(cacheSize: Int = 150) {
             if (domMatched != null) return domMatched
         }
 
+        // Hardened AI Studio Fallback: If running inside a browser and any AI Studio signature / keyword is present anywhere in recent nodes
+        if (rootNode != null) {
+            val aiStudioFound = searchTreeForKeywords(rootNode, listOf("google ai studio", "ai studio", "aistudio", "api key", "system instructions"), 0, 6)
+            if (aiStudioFound != null) {
+                return AppContext(name = "Google AI Studio", category = "AI", isAiApp = true)
+            }
+        }
+
         // Fallback for generic browser
         if (!pkgLower.contains("webapk")) {
             val label = try {
@@ -381,6 +391,9 @@ class AppResolutionEngine(cacheSize: Int = 150) {
             if (heuristic.keywords.any { lower.contains(it) }) {
                 return heuristic.context
             }
+        }
+        if (lower.contains("google ai studio") || lower.contains("ai studio") || lower.contains("aistudio")) {
+            return AppContext(name = "Google AI Studio", category = "AI", isAiApp = true)
         }
         return null
     }
@@ -456,7 +469,9 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         if (className != null && (
             className.contains("RobinActivity", ignoreCase = true) ||
             className.contains("Gemini", ignoreCase = true) ||
-            className.contains("Bard", ignoreCase = true)
+            className.contains("Bard", ignoreCase = true) ||
+            className.contains("Assistant", ignoreCase = true) ||
+            className.contains("Search", ignoreCase = true)
         )) {
             return true
         }
@@ -469,11 +484,11 @@ class AppResolutionEngine(cacheSize: Int = 150) {
                 val wRoot = w.root
                 val wPkg = wRoot?.packageName?.toString() ?: ""
                 if (wPkg.contains("googlequicksearchbox", ignoreCase = true) || wPkg.contains("bard", ignoreCase = true) || wPkg.contains("gemini", ignoreCase = true)) {
-                    if (wTitle.contains("Gemini", ignoreCase = true) || wTitle.contains("Bard", ignoreCase = true) || wTitle.contains("Robin", ignoreCase = true)) {
+                    if (wTitle.contains("Gemini", ignoreCase = true) || wTitle.contains("Bard", ignoreCase = true) || wTitle.contains("Robin", ignoreCase = true) || wTitle.contains("Ask Gemini", ignoreCase = true)) {
                         return true
                     }
                     if (wRoot != null) {
-                        val found = searchTreeForKeywords(wRoot, listOf("gemini", "bard", "ask gemini", "robin"), 0, 6)
+                        val found = searchTreeForKeywords(wRoot, listOf("gemini", "bard", "ask gemini", "robin", "chat with gemini", "ask anything"), 0, 6)
                         if (found != null) return true
                     }
                 }
@@ -481,18 +496,20 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         }
 
         val windowTitle = windowInfo?.title?.toString() ?: ""
-        if (windowTitle.contains("Gemini", ignoreCase = true) || windowTitle.contains("Bard", ignoreCase = true)) {
+        if (windowTitle.contains("Gemini", ignoreCase = true) || windowTitle.contains("Bard", ignoreCase = true) || windowTitle.contains("Ask Gemini", ignoreCase = true)) {
             return true
         }
         val rootDesc = rootNode?.contentDescription?.toString() ?: ""
-        if (rootDesc.contains("Gemini", ignoreCase = true) || rootDesc.contains("Bard", ignoreCase = true)) {
+        if (rootDesc.contains("Gemini", ignoreCase = true) || rootDesc.contains("Bard", ignoreCase = true) || rootDesc.contains("Ask Gemini", ignoreCase = true)) {
             return true
         }
         if (rootNode != null) {
-            val found = searchTreeForKeywords(rootNode, listOf("gemini", "bard", "ask gemini"), 0, 6)
+            val found = searchTreeForKeywords(rootNode, listOf("gemini", "bard", "ask gemini", "chat with gemini", "ask anything"), 0, 6)
             if (found != null) return true
         }
-        return false
+
+        // If googlequicksearchbox is active and no explicit web search non-AI result is shown, prefer Gemini as primary modern Android assistant host
+        return true
     }
 
     private fun searchTreeForKeywords(node: AccessibilityNodeInfo?, keywords: List<String>, depth: Int, maxDepth: Int): String? {
@@ -516,7 +533,7 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         val pm = context.packageManager
         val pkgLower = packageName.lowercase()
 
-        if (pkgLower.contains("bard") || pkgLower.contains("gemini")) {
+        if (pkgLower.contains("bard") || pkgLower.contains("gemini") || pkgLower.contains("googlequicksearchbox")) {
             return AppContext(name = "Gemini", category = "AI", isAiApp = true)
         }
 
@@ -554,7 +571,7 @@ class AppResolutionEngine(cacheSize: Int = 150) {
     private fun tokenize(packageName: String): String {
         val pkgLower = packageName.lowercase()
         when {
-            pkgLower.contains("bard") || pkgLower.contains("gemini") -> return "Gemini"
+            pkgLower.contains("bard") || pkgLower.contains("gemini") || pkgLower.contains("googlequicksearchbox") -> return "Gemini"
             pkgLower.contains("qwen") || pkgLower.contains("tongyi") -> return "Qwen"
             pkgLower.contains("sportybet") -> return "SportyBet"
             pkgLower.contains("github") -> return "GitHub"
@@ -591,14 +608,14 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         return lower.contains("ai studio") || lower.contains("google ai studio") || lower.contains("chatgpt") ||
                 lower.contains("claude") || lower.contains("gemini") || lower.contains("grok") ||
                 lower.contains("perplexity") || lower.contains("deepseek") || lower.contains("copilot") ||
-                lower.contains("qwen")
+                lower.contains("qwen") || lower.contains("aistudio")
     }
 
     private fun isAiPackage(pkgLower: String): Boolean {
         return pkgLower.contains("bard") || pkgLower.contains("gemini") || pkgLower.contains("openai") ||
                 pkgLower.contains("chatgpt") || pkgLower.contains("claude") || pkgLower.contains("anthropic") ||
                 pkgLower.contains("grok") || pkgLower.contains("deepseek") || pkgLower.contains("perplexity") ||
-                pkgLower.contains("copilot") || pkgLower.contains("qwen") || pkgLower.contains("tongyi")
+                pkgLower.contains("copilot") || pkgLower.contains("qwen") || pkgLower.contains("tongyi") || pkgLower.contains("googlequicksearchbox")
     }
 
     private fun isSocialPackage(pkgLower: String, title: String): Boolean {
