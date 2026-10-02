@@ -48,13 +48,9 @@ class VoxStreamAccessibilityService : AccessibilityService() {
 
         // FLAG_REPORT_VIEW_IDS: Required to resolve view resource IDs in target editable fields for direct text injection
         // FLAG_INCLUDE_NOT_IMPORTANT_VIEWS: Required to access nested or custom editor view hierarchies in rich text and messaging inputs
-        var flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+        val flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                 AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
 
-        // FLAG_INPUT_METHOD_EDITOR: Required on Android 13+ (API 33+) to interface with the Input Method Editor for direct text commitment
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            flags = flags or AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
-        }
         info.flags = flags
         info.notificationTimeout = 30
         serviceInfo = info
@@ -288,33 +284,24 @@ class VoxStreamAccessibilityService : AccessibilityService() {
             return false
         }
 
-        // Priority 1: Modern Android 13+ (API 33+) AccessibilityInputConnection
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            try {
-                val a11yIm = inputMethod
-                val a11yIc = a11yIm?.currentInputConnection
-                if (a11yIc != null) {
-                    a11yIc.commitText(newText, 1, null)
-                    Log.d(TAG, "AccessibilityInputConnection.commitText completed successfully (caret-level, zero-clipboard)")
-                    return true
-                }
-            } catch (e: Throwable) {
-                Log.w(TAG, "AccessibilityInputConnection injection error: ${e.message}")
-            }
-        }
-
-        // Priority 2: Companion VoxStreamInputMethodService
+        // Priority 1: Companion VoxStreamInputMethodService
         if (VoxStreamInputMethodService.commitText(newText)) {
             Log.d(TAG, "VoxStreamInputMethodService committed text successfully")
             return true
         }
 
-        // Priority 3: Direct node editing via injectTextSafely
+        // Priority 2: Direct node editing via injectTextSafely
         val targetNode = getActiveEditableNode()
         if (targetNode != null) {
             val targetPkg = targetNode.packageName?.toString() ?: ""
-            Log.d(TAG, "Fallback to direct node injection for $targetPkg")
-            return injectTextSafely(targetNode, newText)
+            Log.d(TAG, "Executing direct node injection for $targetPkg")
+            val injected = injectTextSafely(targetNode, newText)
+            if (injected) return true
+
+            // Fallback: If direct node edit failed on custom editors (e.g. rich text), use paste injection
+            if (AppClassifier.isPasteRequired(targetPkg)) {
+                return performPasteInjection(targetNode, newText)
+            }
         }
 
         return false
@@ -631,5 +618,87 @@ class VoxStreamAccessibilityService : AccessibilityService() {
         }
 
         return if (snippets.isNotEmpty()) snippets.takeLast(3).joinToString("\n---\n") else null
+    }
+
+    /**
+     * Extracts rich AI screen context (chat messages, visible instructions, and draft input)
+     * strictly when the foreground app is classified as an AI application.
+     */
+    fun extractAiScreenContext(): com.example.data.CapturedScreenContext? {
+        if (FloatingBubbleManager.isCurrentAppSensitive.value) {
+            Log.w(TAG, "extractAiScreenContext blocked: Sensitive app or Smart Safe Mode active")
+            return null
+        }
+
+        val activePkg = getActivePackageName() ?: return null
+        val appName = AppContextResolver.resolveAppName(this, activePkg)
+
+        // Strict boundary: Only extract context if the app is classified as an AI app
+        if (!AppClassifier.isAiChatApp(activePkg, appName)) {
+            Log.d(TAG, "extractAiScreenContext skipped: $appName ($activePkg) is not an AI app")
+            return null
+        }
+
+        val targetEditableNode = getActiveEditableNode()
+        val focusedInputDraft = targetEditableNode?.let { extractGenuineText(it) }?.takeIf { it.isNotBlank() }
+
+        val root = rootInActiveWindow ?: targetEditableNode ?: return null
+        val conversationMessages = mutableListOf<String>()
+        var systemInstructionText: String? = null
+
+        try {
+            fun traverseForAiContext(node: AccessibilityNodeInfo, depth: Int) {
+                if (depth > 12 || conversationMessages.size >= 12) return
+
+                val text = node.text?.toString()?.trim()
+                val className = node.className?.toString() ?: ""
+                val viewId = node.viewIdResourceName ?: ""
+
+                if (!text.isNullOrBlank() && text.length >= 4 && node != targetEditableNode) {
+                    val isInteractiveButton = className.contains("Button", ignoreCase = true) ||
+                            viewId.contains("send", ignoreCase = true) ||
+                            viewId.contains("attach", ignoreCase = true) ||
+                            viewId.contains("menu", ignoreCase = true)
+
+                    val isHeaderOrToolbar = viewId.contains("toolbar", ignoreCase = true) ||
+                            viewId.contains("action_bar", ignoreCase = true) ||
+                            viewId.contains("status", ignoreCase = true)
+
+                    if (!isInteractiveButton && !isHeaderOrToolbar && !className.contains("ImageView", ignoreCase = true)) {
+                        // Check if text looks like system/model instruction or prompt guidance
+                        if (text.contains("Custom Instructions", ignoreCase = true) ||
+                            text.contains("System Prompt", ignoreCase = true) ||
+                            text.contains("You are a helpful assistant", ignoreCase = true)
+                        ) {
+                            if (systemInstructionText == null) {
+                                systemInstructionText = text.take(400)
+                            }
+                        } else if (text.length > 8 && !conversationMessages.contains(text)) {
+                            // Don't capture tiny UI labels or single-word indicators
+                            conversationMessages.add(text.take(600))
+                        }
+                    }
+                }
+
+                for (i in 0 until node.childCount) {
+                    val child = node.getChild(i) ?: continue
+                    traverseForAiContext(child, depth + 1)
+                }
+            }
+
+            traverseForAiContext(root, 0)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error traversing AI screen context: ${e.message}")
+        }
+
+        val result = com.example.data.CapturedScreenContext(
+            packageName = activePkg,
+            appName = appName,
+            conversationSnippets = conversationMessages.takeLast(10),
+            systemInstructions = systemInstructionText,
+            focusedInputText = focusedInputDraft
+        )
+        Log.d(TAG, "Extracted AI Screen Context from $appName: ${result.conversationSnippets.size} messages")
+        return result
     }
 }

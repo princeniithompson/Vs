@@ -131,10 +131,73 @@ class FloatingBubbleService : Service() {
                 onRingClick = { onRingClicked() },
                 onCancelClick = { onCancelClicked() },
                 onPolishClick = { onPolishClicked() },
-                onCompleteClick = { onConfirmClicked() }
+                onCompleteClick = { onConfirmClicked() },
+                onLongPressBubble = { onLongPressBubble() },
+                onScanTriggered = { onScanTriggered() }
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing overlay window", e)
+        }
+    }
+
+    private fun onLongPressBubble() {
+        if (sessionManager.isRecording || overlayWindowManager.overlayExpanded.value) return
+        if (FloatingBubbleManager.isCurrentAppSensitive.value) return
+
+        val accessService = VoxStreamAccessibilityService.instance
+        val pkg = accessService?.getActivePackageName() ?: FloatingBubbleManager.currentForegroundPackage.value
+        val appName = if (pkg != null) AppContextResolver.resolveAppName(this, pkg) else null
+
+        if (AppClassifier.isAiChatApp(pkg, appName)) {
+            FloatingHapticManager.trigger(this, FloatingHapticType.BUBBLE_HOLD)
+            overlayWindowManager.overlayScanMode.value = true
+            AppLogRepository.addLog(
+                LogLevel.INFO,
+                TAG,
+                "Context Scan Mode activated for $appName (Tap lens to scan)"
+            )
+        } else {
+            FloatingHapticManager.trigger(this, FloatingHapticType.BUBBLE_HOLD)
+            Toast.makeText(
+                this,
+                "Screen Context Scan is available in AI chat apps",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    private fun onScanTriggered() {
+        if (!overlayWindowManager.overlayScanMode.value) return
+        val accessService = VoxStreamAccessibilityService.instance
+        val pkg = accessService?.getActivePackageName() ?: FloatingBubbleManager.currentForegroundPackage.value
+        val appName = if (pkg != null) AppContextResolver.resolveAppName(this, pkg) else "AI App"
+
+        FloatingHapticManager.trigger(this, FloatingHapticType.FINAL_SENTENCE)
+        overlayWindowManager.overlayScanMode.value = false
+
+        overlayWindowManager.showScanAnimation(appName) {
+            serviceScope.launch(Dispatchers.IO) {
+                val context = accessService?.extractAiScreenContext()
+                if (context != null) {
+                    com.example.data.ScreenContextRepository.setContext(context)
+                    withContext(Dispatchers.Main) {
+                        FloatingHapticManager.trigger(this@FloatingBubbleService, FloatingHapticType.FINAL_SENTENCE)
+                        Toast.makeText(
+                            this@FloatingBubbleService,
+                            "Captured ${context.appName} context (${context.conversationSnippets.size} msgs)",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            this@FloatingBubbleService,
+                            "Could not capture screen context",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
         }
     }
 
@@ -386,6 +449,7 @@ class FloatingBubbleService : Service() {
                     val isAiApp = category == AppCategory.AI
                     val aiMode = if (isAiApp) FloatingBubbleManager.selectedAiPolishMode.value else null
                     val contextSnippet = if (isAiApp) VoxStreamAccessibilityService.instance?.extractRecentConversationContext() else null
+                    val capturedScreenContext = com.example.data.ScreenContextRepository.capturedContext.value
 
                     withContext(Dispatchers.IO) {
                         result = FloatingPolishClient.polishTranscript(
@@ -394,8 +458,14 @@ class FloatingBubbleService : Service() {
                             category = category,
                             appName = appName,
                             aiPolishMode = aiMode,
-                            conversationContext = contextSnippet
+                            conversationContext = contextSnippet,
+                            screenContext = capturedScreenContext
                         )
+                    }
+
+                    // Clear context after it has been consumed for polish
+                    if (capturedScreenContext != null) {
+                        com.example.data.ScreenContextRepository.clearContext()
                     }
                 }
 
@@ -463,6 +533,7 @@ class FloatingBubbleService : Service() {
 
     private fun resetAndCollapse() {
         FloatingBubbleManager.unlockSessionContext()
+        com.example.data.ScreenContextRepository.clearContext()
         overlayWindowManager.overlayPendingFinalizing.value = false
         overlayWindowManager.overlayRecording.value = false
         isPolishingInProgress.set(false)
