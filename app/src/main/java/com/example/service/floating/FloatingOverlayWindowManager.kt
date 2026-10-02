@@ -12,8 +12,6 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.LinearInterpolator
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
@@ -53,11 +51,6 @@ class FloatingOverlayWindowManager(private val context: Context) {
     val overlayExpanded = MutableStateFlow(false)
     val overlayShrunk = MutableStateFlow(false)
     val overlayAudioAmplitude = MutableStateFlow(0f)
-    val overlayScanMode = MutableStateFlow(false)
-    val overlayScanningAnimation = MutableStateFlow(false)
-    val overlayScanningAppName = MutableStateFlow<String?>(null)
-    val overlayScanOriginX = MutableStateFlow(0.5f)
-    val overlayScanOriginY = MutableStateFlow(0.5f)
 
     private var isSnappedToRight = true
     private var savedY = 0
@@ -74,9 +67,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
         onRingClick: () -> Unit,
         onCancelClick: () -> Unit,
         onPolishClick: () -> Unit,
-        onCompleteClick: () -> Unit,
-        onLongPressBubble: () -> Unit = {},
-        onScanTriggered: () -> Unit = {}
+        onCompleteClick: () -> Unit
     ) {
         lifecycleOwner.onCreate()
         lifecycleOwner.onStart()
@@ -137,73 +128,54 @@ class FloatingOverlayWindowManager(private val context: Context) {
                     val isExpanded by overlayExpanded.collectAsState()
                     val isShrunk by overlayShrunk.collectAsState()
                     val audioAmplitude by overlayAudioAmplitude.collectAsState()
-                    val isScanMode by overlayScanMode.collectAsState()
-                    val isScanningAnimation by overlayScanningAnimation.collectAsState()
-                    val scanningAppName by overlayScanningAppName.collectAsState()
-                    val scanOriginX by overlayScanOriginX.collectAsState()
-                    val scanOriginY by overlayScanOriginY.collectAsState()
-                    val isContextLoaded by com.example.data.ScreenContextRepository.isContextLoaded.collectAsState()
                     val selectedGlowStyleId by FloatingBubbleManager.selectedGlowStyleId.collectAsState()
                     val selectedFinishingStyleId by FloatingBubbleManager.selectedFinishingStyleId.collectAsState()
                     val isCurrentAppSensitive by FloatingBubbleManager.isCurrentAppSensitive.collectAsState()
 
-                    androidx.compose.foundation.layout.Box(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
-                        if (isScanningAnimation) {
-                            com.example.ui.components.overlay.FloatingScreenScanOverlay(
-                                isScanning = true,
-                                appName = scanningAppName,
-                                originX = scanOriginX,
-                                originY = scanOriginY
-                            )
-                        } else if (isCurrentAppSensitive) {
-                            FloatingSafeModeShieldBadge(
-                                isSnappedToRight = isSnappedToRight,
-                                onClick = onRingClick,
-                                onDragStart = {
-                                    FloatingHapticManager.trigger(context, FloatingHapticType.BUBBLE_HOLD)
-                                    resetInactivityTimer(keepShrunk = true)
-                                },
-                                onDrag = { dx: Float, dy: Float -> handleOverlayDrag(dx, dy) },
-                                onDragEnd = { handleOverlayDragEnd() }
-                            )
-                        } else if (isExpanded) {
-                            FloatingDictationPopup(
-                                transcriptText = transcript,
-                                isRecording = recording,
-                                isPendingFinalizing = pendingFinalizing,
-                                isPolishing = polishing,
-                                audioAmplitude = audioAmplitude,
-                                glowStyleId = selectedGlowStyleId,
-                                finishingStyleId = selectedFinishingStyleId,
-                                onCancelClick = onCancelClick,
-                                onPolishClick = onPolishClick,
-                                onCompleteClick = onCompleteClick,
-                                onLifebuoyClick = onRingClick,
-                                onDragStart = {
-                                    FloatingHapticManager.trigger(context, FloatingHapticType.BUBBLE_HOLD)
-                                    resetInactivityTimer(keepShrunk = true)
-                                },
-                                onDrag = { dx: Float, dy: Float -> handleOverlayDrag(dx, dy) },
-                                onDragEnd = { handleOverlayDragEnd() }
-                            )
-                        } else {
-                            FloatingCollapsedBubble(
-                                isRecording = recording,
-                                isShrunk = isShrunk,
-                                isSnappedToRight = isSnappedToRight,
-                                isScanMode = isScanMode,
-                                isContextLoaded = isContextLoaded,
-                                onClick = onRingClick,
-                                onLongPress = onLongPressBubble,
-                                onScanTriggered = onScanTriggered,
-                                onDragStart = {
-                                    FloatingHapticManager.trigger(context, FloatingHapticType.BUBBLE_HOLD)
-                                    resetInactivityTimer(keepShrunk = true)
-                                },
-                                onDrag = { dx: Float, dy: Float -> handleOverlayDrag(dx, dy) },
-                                onDragEnd = { handleOverlayDragEnd() }
-                            )
-                        }
+                    if (isCurrentAppSensitive) {
+                        FloatingSafeModeShieldBadge(
+                            isSnappedToRight = isSnappedToRight,
+                            onClick = onRingClick,
+                            onDragStart = {
+                                FloatingHapticManager.trigger(context, FloatingHapticType.BUBBLE_HOLD)
+                                resetInactivityTimer(keepShrunk = true)
+                            },
+                            onDrag = { dx: Float, dy: Float -> handleOverlayDrag(dx, dy) },
+                            onDragEnd = { handleOverlayDragEnd() }
+                        )
+                    } else if (isExpanded) {
+                        FloatingDictationPopup(
+                            transcriptText = transcript,
+                            isRecording = recording,
+                            isPendingFinalizing = pendingFinalizing,
+                            isPolishing = polishing,
+                            audioAmplitude = audioAmplitude,
+                            glowStyleId = selectedGlowStyleId,
+                            finishingStyleId = selectedFinishingStyleId,
+                            onCancelClick = onCancelClick,
+                            onPolishClick = onPolishClick,
+                            onCompleteClick = onCompleteClick,
+                            onLifebuoyClick = onRingClick,
+                            onDragStart = {
+                                FloatingHapticManager.trigger(context, FloatingHapticType.BUBBLE_HOLD)
+                                resetInactivityTimer(keepShrunk = true)
+                            },
+                            onDrag = { dx: Float, dy: Float -> handleOverlayDrag(dx, dy) },
+                            onDragEnd = { handleOverlayDragEnd() }
+                        )
+                    } else {
+                        FloatingCollapsedBubble(
+                            isRecording = recording,
+                            isShrunk = isShrunk,
+                            isSnappedToRight = isSnappedToRight,
+                            onClick = onRingClick,
+                            onDragStart = {
+                                FloatingHapticManager.trigger(context, FloatingHapticType.BUBBLE_HOLD)
+                                resetInactivityTimer(keepShrunk = true)
+                            },
+                            onDrag = { dx: Float, dy: Float -> handleOverlayDrag(dx, dy) },
+                            onDragEnd = { handleOverlayDragEnd() }
+                        )
                     }
                 }
             }
@@ -322,42 +294,6 @@ class FloatingOverlayWindowManager(private val context: Context) {
             Log.e(TAG, "Error updating window layout on collapse", e)
         }
         resetInactivityTimer()
-    }
-
-    fun showScanAnimation(appName: String?, onComplete: () -> Unit) {
-        val lp = layoutParams ?: return
-        val displayMetrics = context.resources.displayMetrics
-        val screenWidth = displayMetrics.widthPixels.toFloat()
-        val screenHeight = displayMetrics.heightPixels.toFloat()
-
-        // Compute normalized bubble position for origin of expanding aurora rings
-        val originX = if (screenWidth > 0) (lp.x.toFloat() / screenWidth).coerceIn(0.1f, 0.9f) else 0.5f
-        val originY = if (screenHeight > 0) (lp.y.toFloat() / screenHeight).coerceIn(0.1f, 0.9f) else 0.5f
-
-        overlayScanOriginX.value = originX
-        overlayScanOriginY.value = originY
-        overlayScanningAppName.value = appName
-        overlayScanningAnimation.value = true
-
-        lp.width = WindowManager.LayoutParams.MATCH_PARENT
-        lp.height = WindowManager.LayoutParams.MATCH_PARENT
-        lp.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-        lp.x = 0
-        lp.y = 0
-
-        try {
-            windowManager?.updateViewLayout(overlayView, lp)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error updating window layout for scan animation", e)
-        }
-
-        mainHandler.postDelayed({
-            overlayScanningAnimation.value = false
-            collapsePanel()
-            onComplete()
-        }, 1300L)
     }
 
     private fun handleOverlayDrag(dx: Float, dy: Float) {

@@ -200,7 +200,7 @@ class GeminiLiveWebSocketClient(
                 }
 
                 val systemPromptText = buildString {
-                    append("You are a real-time speech-to-text dictation engine. Ignore continuous background noise, ambient sounds, wind, traffic, other people's voices, room reverberation, television audio, and any non-speech audio. Only transcribe clear speech directed at the microphone. Output only the transcribed words with proper capitalization and punctuation. Do not reply conversationally, do not answer questions, and do not add commentary—only output the verbatim transcription of what was said.")
+                    append("You are a real-time speech-to-text dictation engine. Transcribe the user's spoken audio directly into text as they speak. Output only the transcribed words with proper capitalization and punctuation. Do not reply conversationally, do not answer questions, and do not add commentary—only output the verbatim transcription of what was said.")
                     if (customVocabularyList.isNotEmpty()) {
                         val termsStr = customVocabularyList.filter { it.isNotBlank() }.joinToString(", ")
                         if (termsStr.isNotBlank()) {
@@ -227,10 +227,10 @@ class GeminiLiveWebSocketClient(
                         put("inputAudioTranscription", transcriptionConfig)
                         put("realtimeInputConfig", JSONObject().apply {
                             put("automaticActivityDetection", JSONObject().apply {
-                                put("startOfSpeechSensitivity", "START_SENSITIVITY_LOW")
-                                put("endOfSpeechSensitivity", "END_SENSITIVITY_LOW")
-                                put("prefixPaddingMs", 200)
-                                put("silenceDurationMs", 1600)
+                                put("startOfSpeechSensitivity", "START_SENSITIVITY_HIGH")
+                                put("endOfSpeechSensitivity", "END_SENSITIVITY_HIGH")
+                                put("prefixPaddingMs", 100)
+                                put("silenceDurationMs", 350)
                             })
                         })
                     }
