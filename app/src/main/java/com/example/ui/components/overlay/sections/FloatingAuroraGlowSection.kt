@@ -69,7 +69,6 @@ fun FloatingAuroraGlowSection(
                     waitingLoopProgress = state.waitingLoopProgress
                 )
             }
-            .clip(notchedShape) // Double guarantee clipping
             .padding(top = 16.dp, bottom = 12.dp, start = 16.dp, end = 16.dp),
         content = content
     )
