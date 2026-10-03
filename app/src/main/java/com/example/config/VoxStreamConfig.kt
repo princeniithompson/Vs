@@ -21,6 +21,9 @@ object VoxStreamConfig {
     /** Maximum auto-reconnect attempts for WebSocket */
     const val MAX_RECONNECT_ATTEMPTS: Int = 3
 
+    /** Feature flag: Application detection (disabled per user request; layout space preserved) */
+    const val IS_APP_DETECTION_ENABLED: Boolean = false
+
     /** Default Gemini Live Transcribe model */
     const val DEFAULT_LIVE_MODEL: String = "models/gemini-2.0-flash-exp"
 

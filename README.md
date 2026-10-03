@@ -85,6 +85,14 @@ app/src/main/java/com/example/
 
 ---
 
+## Network & Connection Stability
+
+- **WebSocket Keep-Alive**: Configured with a tolerant 45-second ping interval (45000ms) to prevent aggressive dropouts and false ping timeouts across variable mobile networks.
+- **Exponential Reconnect Backoff**: Reconnection attempts start at 1 second, doubling on each retry (up to 30s max, capped at 3 retries) with state logging across transitions.
+- **Standard TLS Verification**: OkHttpClient uses standard system root CA verification without brittle hardcoded pin sets for `generativelanguage.googleapis.com`.
+
+---
+
 ## Privacy Note
 
 Voice audio recorded during dictation is streamed directly over an encrypted WebSocket to Google's Gemini API solely for real-time speech-to-text transcription and requested text polishing. No audio or transcript data is sold or stored on external servers. Audio recordings cached locally on the device remain in private app storage unless the user explicitly chooses to share or export them.

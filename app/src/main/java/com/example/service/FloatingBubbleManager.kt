@@ -219,19 +219,25 @@ object FloatingBubbleManager {
     fun updateCurrentForegroundPackage(pkg: String?, context: Context? = null) {
         if (!AppContextResolver.isIgnoredPackage(context, pkg)) {
             _currentForegroundPackage.value = pkg
-            val a11y = VoxStreamAccessibilityService.instance
-            val resolved = if (context != null) {
-                com.example.util.AppResolutionEngine.defaultInstance.resolve(
-                    context = context,
-                    packageName = pkg,
-                    windowInfo = a11y?.getActiveApplicationWindow(),
-                    rootNode = a11y?.rootInActiveWindow
-                )
-            } else null
 
-            _currentResolvedAppContext.value = resolved
-            val isAi = resolved?.isAiApp ?: AppClassifier.isAiChatApp(pkg, resolved?.name)
-            _isCurrentAppAi.value = isAi
+            if (com.example.config.VoxStreamConfig.IS_APP_DETECTION_ENABLED) {
+                val a11y = VoxStreamAccessibilityService.instance
+                val resolved = if (context != null) {
+                    com.example.util.AppResolutionEngine.defaultInstance.resolve(
+                        context = context,
+                        packageName = pkg,
+                        windowInfo = a11y?.getActiveApplicationWindow(),
+                        rootNode = a11y?.rootInActiveWindow
+                    )
+                } else null
+
+                _currentResolvedAppContext.value = resolved
+                val isAi = resolved?.isAiApp ?: AppClassifier.isAiChatApp(pkg, resolved?.name)
+                _isCurrentAppAi.value = isAi
+            } else {
+                _currentResolvedAppContext.value = null
+                _isCurrentAppAi.value = false
+            }
 
             val isSensitive = if (_isSmartSafeModeEnabled.value) {
                 SafeModeClassifier.isSensitiveApp(context, pkg)
@@ -278,6 +284,12 @@ object FloatingBubbleManager {
      * Even if the user switches apps, the locked context remains unchanged until unlockSessionContext() is called.
      */
     fun lockSessionContext(context: Context) {
+        if (!com.example.config.VoxStreamConfig.IS_APP_DETECTION_ENABLED) {
+            _lockedSessionContext.value = null
+            _currentResolvedAppContext.value = null
+            _isCurrentAppAi.value = false
+            return
+        }
         if (_lockedSessionContext.value == null) {
             val a11y = VoxStreamAccessibilityService.instance
             val currentPkg = a11y?.getActivePackageName()

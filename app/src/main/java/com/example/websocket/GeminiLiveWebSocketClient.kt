@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Base64
 import android.util.Log
+import com.example.core.ApiConfig
 import com.example.data.AppLogRepository
 import com.example.data.ConnectionState
 import com.example.data.DiagnosticSource
@@ -47,10 +48,11 @@ class GeminiLiveWebSocketClient(
         const val WS_BASE_URL =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
         private const val MAX_RECONNECT_ATTEMPTS = 3
+        private const val PING_INTERVAL_SECONDS = 45L
 
         fun buildWebSocketRequest(apiKey: String): Request {
             val trimmedKey = apiKey.trim()
-            if (com.example.core.ApiConfig.isPlaceholder(trimmedKey)) {
+            if (ApiConfig.isPlaceholder(trimmedKey)) {
                 throw IllegalArgumentException("Gemini API Key is missing or placeholder. Please provide a valid key in Secrets or Settings.")
             }
             return Request.Builder()
@@ -60,13 +62,7 @@ class GeminiLiveWebSocketClient(
         }
     }
 
-    private val client: OkHttpClient = okHttpClient ?: OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS) // Indefinite read timeout for persistent WebSocket
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .pingInterval(45, TimeUnit.SECONDS) // Tolerant 45s ping interval to prevent aggressive dropouts
-        .retryOnConnectionFailure(true)
-        .build()
+    private val client: OkHttpClient = okHttpClient ?: ApiConfig.createOkHttpClient()
 
     private var webSocket: WebSocket? = null
     private val isSetupComplete = AtomicBoolean(false)
@@ -106,8 +102,9 @@ class GeminiLiveWebSocketClient(
         customVocabulary: List<String> = emptyList()
     ) {
         val trimmedKey = apiKey.trim()
-        if (com.example.core.ApiConfig.isPlaceholder(trimmedKey)) {
+        if (ApiConfig.isPlaceholder(trimmedKey)) {
             val errMsg = "Gemini API Key is missing or placeholder. Please provide a valid key in Secrets or Settings."
+            Log.e(TAG, "[ConnectionState] FAILED: $errMsg")
             onLog(LogLevel.ERROR, TAG, errMsg, null)
             notifyError(errMsg, GeminiLiveError.MissingApiKey(errMsg))
             notifyStateChanged(ConnectionState.Error(errMsg))
@@ -135,6 +132,7 @@ class GeminiLiveWebSocketClient(
         isExplicitlyClosed.set(false)
         reconnectAttempts.set(0)
         isSetupComplete.set(false)
+        Log.i(TAG, "[ConnectionState] CONNECTING to $WS_BASE_URL ($activeModel)...")
         notifyStateChanged(ConnectionState.Connecting)
 
         connectInternal()
@@ -155,6 +153,7 @@ class GeminiLiveWebSocketClient(
         } catch (e: Exception) {
             isConnectingGuard.set(false)
             val errMsg = "Failed to build WebSocket request: ${e.message}"
+            Log.e(TAG, "[ConnectionState] FAILED building request: $errMsg", e)
             notifyError(errMsg, GeminiLiveError.MissingApiKey(errMsg))
             notifyStateChanged(ConnectionState.Error(errMsg))
             return
@@ -164,22 +163,25 @@ class GeminiLiveWebSocketClient(
         val vocabCount = customVocabularyList.size
         val attemptNum = reconnectAttempts.get()
         if (attemptNum == 0) {
-            onLog(LogLevel.INFO, TAG, "Opening WebSocket connection to $WS_BASE_URL ($activeModel) in $modeLabel mode with $vocabCount custom vocabulary terms", null)
+            Log.i(TAG, "[ConnectionState] CONNECTING: Opening socket to $WS_BASE_URL ($activeModel) [mode=$modeLabel, vocab=$vocabCount, pingInterval=${PING_INTERVAL_SECONDS}s]")
+            onLog(LogLevel.INFO, TAG, "Opening WebSocket connection to $WS_BASE_URL ($activeModel) in $modeLabel mode with $vocabCount custom vocabulary terms (pingInterval=${PING_INTERVAL_SECONDS}s)", null)
         } else {
+            Log.i(TAG, "[ConnectionState] RECONNECTING: Attempt $attemptNum/$MAX_RECONNECT_ATTEMPTS to $WS_BASE_URL ($activeModel)...")
             onLog(LogLevel.INFO, TAG, "Reconnecting WebSocket (attempt $attemptNum/$MAX_RECONNECT_ATTEMPTS) to $WS_BASE_URL ($activeModel)...", null)
         }
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (isExplicitlyClosed.get()) {
+                    Log.d(TAG, "[ConnectionState] onOpen received but client explicitly closed, closing socket immediately")
                     webSocket.close(1000, "Closed by client")
                     isConnectingGuard.set(false)
                     return
                 }
 
                 activeTurnText.clear()
-                Log.d(TAG, "WebSocket connection opened. Sending Step A initial setup JSON ($modeLabel, vocab=$vocabCount)...")
-                onLog(LogLevel.INFO, TAG, "WebSocket opened. Sending initial setup payload ($modeLabel, vocab=$vocabCount)...", null)
+                Log.i(TAG, "[ConnectionState] CONNECTED: WebSocket open (HTTP ${response.code}). Sending initial setup JSON...")
+                onLog(LogLevel.INFO, TAG, "WebSocket connected successfully (HTTP ${response.code}). Sending initial setup payload ($modeLabel, vocab=$vocabCount)...", null)
                 notifyStateChanged(ConnectionState.ConnectedWaitingSetup)
 
                 // Step A: Send initial setup JSON
@@ -243,6 +245,7 @@ class GeminiLiveWebSocketClient(
                     onLog(LogLevel.SENT, TAG, "Setup message sent to server", payload)
                 } else {
                     val err = "Failed to send setup message over socket"
+                    Log.e(TAG, "[ConnectionState] FAILED: $err")
                     onLog(LogLevel.ERROR, TAG, err, payload)
                     notifyStateChanged(ConnectionState.Error(err))
                     notifyError(err, GeminiLiveError.SetupFailed(err))
@@ -260,7 +263,7 @@ class GeminiLiveWebSocketClient(
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 val reasonDetail = if (reason.isNotBlank()) reason else "Normal shutdown"
-                Log.d(TAG, "WebSocket closing (code: $code, reason: $reasonDetail)")
+                Log.d(TAG, "[ConnectionState] DISCONNECTING: WebSocket closing (code: $code, reason: $reasonDetail)")
                 onLog(LogLevel.INFO, TAG, "WebSocket closing (code: $code, reason: $reasonDetail)", null)
                 if (!isExplicitlyClosed.get()) {
                     notifyStateChanged(ConnectionState.Stopping)
@@ -269,7 +272,7 @@ class GeminiLiveWebSocketClient(
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 val reasonDetail = if (reason.isNotBlank()) reason else "No reason provided"
-                Log.d(TAG, "WebSocket closed (code: $code, reason: $reasonDetail)")
+                Log.i(TAG, "[ConnectionState] DISCONNECTED: WebSocket closed (code: $code, reason: $reasonDetail)")
                 isSetupComplete.set(false)
 
                 if (code == 1000 || isExplicitlyClosed.get()) {
@@ -307,6 +310,7 @@ class GeminiLiveWebSocketClient(
                     }
                 }
 
+                Log.w(TAG, "[ConnectionState] FAILURE detected: $errorDetails", t)
                 handleDisconnectOrFailure(errorDetails, t)
             }
         })
@@ -322,17 +326,19 @@ class GeminiLiveWebSocketClient(
 
         val attempts = reconnectAttempts.incrementAndGet()
         if (attempts <= MAX_RECONNECT_ATTEMPTS && lastApiKey.isNotBlank()) {
-            val reconnectLog = "WebSocket connection dropped ($errorDetails). Scheduling auto-reconnect (attempt $attempts/$MAX_RECONNECT_ATTEMPTS)..."
-            Log.i(TAG, reconnectLog)
+            // Exponential backoff: attempt 1 = 1000ms, attempt 2 = 2000ms, attempt 3 = 4000ms (up to 30000ms max)
+            val backoffMs = (1000L * (1L shl (attempts - 1))).coerceAtMost(30000L)
+
+            val reconnectLog = "WebSocket connection dropped ($errorDetails). Scheduling auto-reconnect (attempt $attempts/$MAX_RECONNECT_ATTEMPTS in ${backoffMs}ms)..."
+            Log.i(TAG, "[ConnectionState] RECONNECTING: $reconnectLog")
             onLog(LogLevel.INFO, TAG, reconnectLog, null)
             AppLogRepository.logEvent(
                 DiagnosticSource.APP,
                 DiagnosticType.SESSION_RECONNECT,
-                "Attempting auto-reconnect ($attempts/$MAX_RECONNECT_ATTEMPTS) due to: ${errorDetails.take(120)}"
+                "Attempting auto-reconnect ($attempts/$MAX_RECONNECT_ATTEMPTS in ${backoffMs}ms) due to: ${errorDetails.take(120)}"
             )
             notifyStateChanged(ConnectionState.Connecting)
 
-            val backoffMs = (attempts * 300L).coerceAtMost(1200L)
             cancelPendingReconnect()
             val runnable = Runnable {
                 if (!isExplicitlyClosed.get()) {
@@ -350,12 +356,12 @@ class GeminiLiveWebSocketClient(
         isConnectingGuard.set(false)
         lastApiKey = ""
         val fatalMsg = "ended_reason: connection_failed_after_retries | $errorDetails"
-        Log.e(TAG, fatalMsg, throwable)
+        Log.e(TAG, "[ConnectionState] FAILED: WebSocket failed permanently after $MAX_RECONNECT_ATTEMPTS attempts: $fatalMsg", throwable)
         onLog(LogLevel.ERROR, TAG, fatalMsg, null)
         AppLogRepository.logEvent(
             DiagnosticSource.APP,
             DiagnosticType.ERROR,
-            "WebSocket failed permanently after $MAX_RECONNECT_ATTEMPTS reconnect attempts"
+            "WebSocket failed permanently after $MAX_RECONNECT_ATTEMPTS reconnect attempts: ${errorDetails.take(120)}"
         )
         notifyStateChanged(ConnectionState.Error(fatalMsg))
         notifyError(fatalMsg, GeminiLiveError.NetworkFailure(fatalMsg, throwable))
@@ -370,7 +376,7 @@ class GeminiLiveWebSocketClient(
                 isSetupComplete.set(true)
                 val wasReconnecting = reconnectAttempts.get() > 0
                 reconnectAttempts.set(0)
-                Log.i(TAG, "setupComplete received from Gemini Live server!")
+                Log.i(TAG, "[ConnectionState] STREAMING: setupComplete acknowledged by Gemini Live server!")
                 val ackMsg = if (wasReconnecting) {
                     "setupComplete acknowledged! Session resumed after reconnect."
                 } else {
@@ -394,7 +400,7 @@ class GeminiLiveWebSocketClient(
                     if (status.isNotBlank()) append(" [$status]")
                     append(": $errMsg")
                 }
-                Log.e(TAG, detailedError)
+                Log.e(TAG, "[ConnectionState] SERVER_ERROR: $detailedError")
                 onLog(LogLevel.ERROR, TAG, detailedError, rawJson)
                 notifyStateChanged(ConnectionState.Error(detailedError))
                 notifyError(detailedError, GeminiLiveError.ServerError(code, status, detailedError))
@@ -522,6 +528,7 @@ class GeminiLiveWebSocketClient(
     }
 
     fun disconnect() {
+        Log.i(TAG, "[ConnectionState] DISCONNECT requested by client")
         isExplicitlyClosed.set(true)
         reconnectAttempts.set(MAX_RECONNECT_ATTEMPTS)
         cancelPendingReconnect()
@@ -566,6 +573,15 @@ class GeminiLiveWebSocketClient(
     }
 
     private fun notifyStateChanged(state: ConnectionState) {
+        val stateName = when (state) {
+            is ConnectionState.Idle -> "IDLE"
+            is ConnectionState.Connecting -> if (reconnectAttempts.get() > 0) "RECONNECTING" else "CONNECTING"
+            is ConnectionState.ConnectedWaitingSetup -> "CONNECTED_WAITING_SETUP"
+            is ConnectionState.Streaming -> "STREAMING"
+            is ConnectionState.Stopping -> "STOPPING"
+            is ConnectionState.Error -> "FAILED"
+        }
+        Log.i(TAG, "[ConnectionState] State updated: $stateName")
         if (Looper.myLooper() == Looper.getMainLooper()) {
             onStateChanged(state)
         } else {

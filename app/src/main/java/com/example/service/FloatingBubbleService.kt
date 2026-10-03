@@ -226,16 +226,25 @@ class FloatingBubbleService : Service() {
             return
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            try {
+        val notification = FloatingNotificationManager.buildNotification(this, "Listening...")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(
                     FloatingNotificationManager.NOTIFICATION_ID,
-                    FloatingNotificationManager.buildNotification(this, "Listening..."),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
                 )
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not upgrade FGS to microphone: ${e.message}")
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    FloatingNotificationManager.NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                )
+            } else {
+                startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification)
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not startForeground with microphone service type: ${e.message}")
         }
 
         overlayWindowManager.expandToFullSize()

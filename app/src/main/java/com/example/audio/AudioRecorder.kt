@@ -110,13 +110,14 @@ class AudioRecorder(
                 return@launch
             }
 
-            // Size the internal buffer to accommodate at least several chunks or minBufferSize
-            val internalBufferSize = maxOf(minBufferSize, CHUNK_SIZE_BYTES * 4)
+            // Size the internal buffer for low-latency capture: minBufferSize * 2
+            val internalBufferSize = maxOf(minBufferSize * 2, CHUNK_SIZE_BYTES * 2)
 
             try {
                 val candidateSources = mutableListOf(
-                    MediaRecorder.AudioSource.MIC,
+                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                     MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    MediaRecorder.AudioSource.MIC,
                     MediaRecorder.AudioSource.DEFAULT
                 )
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {

@@ -103,9 +103,15 @@ class FloatingPolishCoordinator {
                     result = PolishResult(null, err)
                 } else {
                     val currentPkg = FloatingBubbleManager.currentForegroundPackage.value
-                    val appContext = AppContextResolver.resolve(context, currentPkg)
-                    val category = AppClassifier.classify(currentPkg, appContext?.appName)
-                    val appName = appContext?.appName ?: "App"
+                    val category = if (com.example.config.VoxStreamConfig.IS_APP_DETECTION_ENABLED) {
+                        val appContext = AppContextResolver.resolve(context, currentPkg)
+                        AppClassifier.classify(currentPkg, appContext?.appName)
+                    } else {
+                        AppCategory.OTHER
+                    }
+                    val appName = if (com.example.config.VoxStreamConfig.IS_APP_DETECTION_ENABLED) {
+                        AppContextResolver.resolve(context, currentPkg)?.appName ?: "App"
+                    } else "App"
                     val isAiApp = category == AppCategory.AI
                     val aiMode = if (isAiApp) FloatingBubbleManager.selectedAiPolishMode.value else null
 

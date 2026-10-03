@@ -260,16 +260,20 @@ fun FloatingActionRow(
         val currentAppContext by FloatingBubbleManager.currentResolvedAppContext.collectAsState()
         val currentPkg by FloatingBubbleManager.currentForegroundPackage.collectAsState()
         val context = LocalContext.current
-        val displayContext = sessionContext ?: currentAppContext?.formatted ?: remember(currentPkg) {
-            AppContextResolver.resolve(context, currentPkg)?.formatted
-        }
+        val displayContext = if (com.example.config.VoxStreamConfig.IS_APP_DETECTION_ENABLED) {
+            sessionContext ?: currentAppContext?.formatted ?: remember(currentPkg) {
+                AppContextResolver.resolve(context, currentPkg)?.formatted
+            }
+        } else null
 
-        if (!displayContext.isNullOrBlank()) {
-            Spacer(modifier = Modifier.height(5.dp))
-            Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.Center
-            ) {
+        Spacer(modifier = Modifier.height(5.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            if (!displayContext.isNullOrBlank()) {
                 Text(
                     text = displayContext,
                     style = TextStyle(
