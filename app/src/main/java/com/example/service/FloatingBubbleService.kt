@@ -249,6 +249,58 @@ class FloatingBubbleService : Service() {
 
         overlayWindowManager.expandToFullSize()
         FloatingBubbleManager.lockSessionContext(this)
+
+        val a11y = VoxStreamAccessibilityService.instance
+        val pkg = a11y?.getActivePackageName() ?: FloatingBubbleManager.currentForegroundPackage.value
+        if (pkg != null && pkg != packageName && !com.example.util.AppResolutionEngine.defaultInstance.isSystemOrIme(this, pkg)) {
+            serviceScope.launch {
+                try {
+                    // Check container package and get extra evidence
+                    var extraEvidence: String? = null
+                    if (pkg == "com.google.android.googlequicksearchbox" || pkg.startsWith("org.chromium.webapk")) {
+                        val windowTitle = a11y?.getActiveApplicationWindow()?.title?.toString()
+                        val className = a11y?.lastSeenClassName
+                        val sb = java.lang.StringBuilder()
+                        if (!windowTitle.isNullOrBlank()) {
+                            sb.append("Window title: ").append(windowTitle)
+                        }
+                        if (!className.isNullOrBlank()) {
+                            if (sb.isNotEmpty()) sb.append("\n")
+                            sb.append("Activity: ").append(className)
+                        }
+                        if (sb.isNotEmpty()) {
+                            extraEvidence = sb.toString()
+                        }
+                    }
+
+                    // Start 10-second timeout detection
+                    val result = kotlinx.coroutines.withTimeout(10000L) {
+                        AppDetector.detectApp(pkg, extraEvidence)
+                    }
+
+                    // Log success
+                    Log.d("AppDetector", "Detection succeeded: ${result.appName} -> ${result.category}")
+                    
+                    // Show final result visibly (small label on the bubble and toast)
+                    val formatted = "Detected: ${result.appName} -> ${result.category}"
+                    FloatingBubbleManager.setLockedSessionContext(formatted)
+                    Toast.makeText(this@FloatingBubbleService, formatted, Toast.LENGTH_SHORT).show()
+                } catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
+                    val reason = "Detection timed out after 10s"
+                    Log.d("AppDetector", "Detection failed: $reason")
+                    FloatingBubbleManager.setLockedSessionContext("Detection failed: $reason")
+                    Toast.makeText(this@FloatingBubbleService, "Detection failed: $reason", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    val reason = e.message ?: e.javaClass.simpleName
+                    Log.d("AppDetector", "Detection failed: $reason")
+                    FloatingBubbleManager.setLockedSessionContext("Detection failed: $reason")
+                    Toast.makeText(this@FloatingBubbleService, "Detection failed: $reason", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } else {
+            FloatingBubbleManager.setLockedSessionContext(null)
+        }
+
         FloatingBubbleManager.setRecordingState(true)
         FloatingHapticManager.trigger(this, FloatingHapticType.TRANSCRIPTION_START)
         overlayWindowManager.expandPanel()

@@ -26,6 +26,9 @@ class VoxStreamAccessibilityService : AccessibilityService() {
     private var lastFocusedEditableNode: AccessibilityNodeInfo? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    @Volatile
+    var lastSeenClassName: String? = null
+
     private val delayedCheckRunnable = Runnable {
         checkAndNotifyKeyboard()
     }
@@ -66,6 +69,10 @@ class VoxStreamAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            lastSeenClassName = event.className?.toString()
+        }
 
         val detectedPkg = getActivePackageName() ?: run {
             val eventPkg = event.packageName?.toString()

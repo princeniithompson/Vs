@@ -84,8 +84,33 @@ object FloatingBubbleManager {
 
     private var initialized = false
 
+    private fun bypassHiddenApiRestrictions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            try {
+                val getMethod = java.lang.Class::class.java.getDeclaredMethod(
+                    "getDeclaredMethod",
+                    String::class.java,
+                    java.lang.Class.forName("[Ljava.lang.Class;")
+                )
+                val vmRuntimeClass = java.lang.Class.forName("dalvik.system.VMRuntime")
+                val getRuntime = getMethod.invoke(vmRuntimeClass, "getRuntime", null) as java.lang.reflect.Method
+                val vmRuntime = getRuntime.invoke(null)
+                val setHiddenApiExemptions = getMethod.invoke(
+                    vmRuntimeClass,
+                    "setHiddenApiExemptions",
+                    arrayOf(java.lang.Class.forName("[Ljava.lang.String;"))
+                ) as java.lang.reflect.Method
+                setHiddenApiExemptions.invoke(vmRuntime, arrayOf("L"))
+                Log.i(TAG, "Successfully bypassed hidden API restrictions")
+            } catch (e: Throwable) {
+                Log.w(TAG, "Could not bypass hidden API restrictions", e)
+            }
+        }
+    }
+
     fun init(context: Context) {
         if (initialized) return
+        bypassHiddenApiRestrictions()
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         _isBubbleEnabled.value = prefs.getBoolean(KEY_BUBBLE_ENABLED, false)
 
@@ -290,23 +315,13 @@ object FloatingBubbleManager {
             _isCurrentAppAi.value = false
             return
         }
-        if (_lockedSessionContext.value == null) {
-            val a11y = VoxStreamAccessibilityService.instance
-            val currentPkg = a11y?.getActivePackageName()
-                ?: _currentForegroundPackage.value
-            val activeWindow = a11y?.getActiveApplicationWindow()
-            val rootNode = a11y?.rootInActiveWindow
-            val resolved = _currentResolvedAppContext.value ?: com.example.util.AppResolutionEngine.defaultInstance.resolve(
-                context = context,
-                packageName = currentPkg,
-                windowInfo = activeWindow,
-                rootNode = rootNode
-            )
-            _lockedSessionContext.value = resolved?.formatted
-            _currentResolvedAppContext.value = resolved
-            _isCurrentAppAi.value = resolved?.isAiApp ?: false
-            Log.d(TAG, "Locked session context: ${resolved?.formatted} for package: $currentPkg")
-        }
+        _lockedSessionContext.value = "Detecting..."
+        _currentResolvedAppContext.value = null
+        _isCurrentAppAi.value = false
+    }
+
+    fun setLockedSessionContext(value: String?) {
+        _lockedSessionContext.value = value
     }
 
     /**
