@@ -34,6 +34,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -365,9 +366,12 @@ class FloatingBubbleService : Service() {
             sessionManager.signalStreamEndOnly(serviceScope)
         }
 
-        serviceScope.launch {
+        pendingCompletionTimeoutJob?.cancel()
+        pendingCompletionTimeoutJob = serviceScope.launch {
             delay(1400L)
-            performInjectionAndClose()
+            if (isActive) {
+                performInjectionAndClose()
+            }
         }
     }
 
