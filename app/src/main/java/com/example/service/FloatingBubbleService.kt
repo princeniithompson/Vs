@@ -71,6 +71,7 @@ class FloatingBubbleService : Service() {
     private var isPendingInjectionOnSmartCompletion = false
     private var pendingCompletionTimeoutJob: Job? = null
     private var activeDetectionJob: Job? = null
+    private var fgsDowngradeJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -214,6 +215,9 @@ class FloatingBubbleService : Service() {
     }
 
     private fun startVoiceTyping() {
+        fgsDowngradeJob?.cancel()
+        fgsDowngradeJob = null
+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             Toast.makeText(this, "Microphone permission required. Please grant it in VoxStream.", Toast.LENGTH_LONG).show()
             val appIntent = Intent(this, MainActivity::class.java).apply {
@@ -341,7 +345,8 @@ class FloatingBubbleService : Service() {
         sessionManager.stopSession(serviceScope, endedReason)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            serviceScope.launch {
+            fgsDowngradeJob?.cancel()
+            fgsDowngradeJob = serviceScope.launch {
                 delay(450L)
                 try {
                     startForeground(
@@ -645,6 +650,8 @@ class FloatingBubbleService : Service() {
         isPendingInjectionOnSmartCompletion = false
         pendingCompletionTimeoutJob?.cancel()
         pendingCompletionTimeoutJob = null
+        fgsDowngradeJob?.cancel()
+        fgsDowngradeJob = null
 
         if (::sessionManager.isInitialized) {
             stopVoiceTyping()
