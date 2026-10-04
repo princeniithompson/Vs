@@ -1,6 +1,6 @@
 # VoxStream
 
-VoxStream is a native Android voice-typing system powered by Google's Gemini Multimodal Live API. It provides low-latency bidirectional PCM audio streaming, real-time transcription, context-aware text polishing, and direct text injection into any input field across Android via an unclipped floating overlay and an Accessibility Service.
+VoxStream is a native Android voice-typing system powered by Google's Gemini Multimodal Live API, delivering low-latency bidirectional PCM audio streaming, real-time transcription, context-aware AI text polishing, and direct text injection across any Android application.
 
 ---
 
@@ -9,58 +9,57 @@ VoxStream is a native Android voice-typing system powered by Google's Gemini Mul
 ```text
 app/src/main/java/com/example/
 ├── MainActivity.kt                          # Single-activity host with edge-to-edge configuration
+├── audio/
+│   ├── AudioRecorder.kt                     # 16kHz 16-bit Mono PCM AudioRecord microphone capture engine
+│   └── HighPassFilter.kt                    # Pre-processing filter removing DC offset and mic rumble
+├── config/
+│   └── VoxStreamConfig.kt                   # Audio constants, model endpoints, and fallback logic
 ├── core/
-│   ├── ApiConfig.kt                         # Central Gemini API keys and default model configurations
-│   ├── AppConfig.kt                         # Audio capture rates, buffer constraints, and feature flags
-│   └── ToneEngine.kt                        # Tone presets, system instructions, and vocabulary prompt builder
+│   └── ApiConfig.kt                         # Single source of truth for key resolution & placeholder validation
 ├── data/
-│   ├── AppLogRepository.kt                  # Persistent multi-day JSONL logger for events, frames, and notes
-│   ├── AudioRecordingRepository.kt          # Manages local WAV recordings cache, sharing, and Downloads export
-│   ├── Database.kt                          # Room database instance for local vocabulary and history
-│   ├── HistoryDao.kt & HistoryEntity.kt     # Room DAO and entity for past dictation transcripts
-│   ├── Models.kt                            # Data models for LiveStats, ConnectionState, and LogEntries
-│   └── VocabularyDao.kt & Entity.kt         # Room DAO and entity for custom replacement vocabulary
+│   ├── AppLogRepository.kt                  # Multi-day diagnostic logging for socket events and sessions
+│   ├── AudioRecordingRepository.kt          # Manages local WAV recordings cache, playback, and export
+│   ├── CustomVocabularyRepository.kt        # Repository for custom user words and phonetic replacements
+│   ├── HistoryRepository.kt                 # Persistence repository for past dictation sessions
+│   ├── Models.kt                            # Domain data models for LiveStats, ConnectionState, and LogEntries
+│   └── ScreenContextRepository.kt           # In-memory store for active app package, title, and context
 ├── service/
-│   ├── AppDetector.kt                       # Gemini REST detector for Android packages & active browser websites
-│   ├── FloatingBubbleService.kt             # Foreground service managing the system overlay window lifecycle
-│   ├── VoxStreamAccessibilityService.kt     # AccessibilityService detecting active input nodes and injecting text
+│   ├── AppClassifier.kt                     # Contextual classification of active apps into tone profiles
+│   ├── AppContextResolver.kt                # Resolves app identity and context from accessibility nodes
+│   ├── AppDetector.kt                       # Dynamic app & browser URL detector using Gemini fallback
+│   ├── AppRegistry.kt                       # Static mapping of known packages to tone and category
+│   ├── FloatingBubbleManager.kt             # Bridge between UI and FloatingBubbleService state
+│   ├── FloatingBubbleService.kt             # Foreground service hosting the floating overlay window
+│   ├── LearnedAppRegistry.kt                # Local cache of previously classified apps
+│   ├── SafeModeClassifier.kt                # Detects sensitive and password fields to protect user privacy
+│   ├── SmartVocabularyService.kt            # Suggests contextual vocabulary based on active apps
+│   ├── VoxStreamAccessibilityService.kt     # AccessibilityService detecting active input nodes & injecting text
+│   ├── VoxStreamInputMethodService.kt       # Optional IME service fallback for direct input commit
 │   └── floating/
-│       ├── FloatingAudioRecorder.kt         # Microphone capture pipeline (16kHz 16-bit PCM) for overlay
-│       ├── FloatingOverlayContent.kt        # Compose view coordinator hosted inside WindowManager
-│       └── SmartSafeModeEngine.kt           # Auto-detection for password and sensitive input fields
+│       ├── AiPolishMode.kt                  # Polish tone presets (Clean, Casual, Formal, Punchy, etc.)
+│       ├── FloatingAudioRecorder.kt         # Audio recorder instance tied to floating session lifecycle
+│       ├── FloatingDictationSessionManager.kt # Dictation state coordinator, socket bridge, and stats
+│       ├── FloatingDragSnapHandler.kt       # Drag gesture and edge-snapping physics for floating bubble
+│       ├── FloatingHapticManager.kt         # Haptic feedback triggers for dictation milestones
+│       ├── FloatingNotificationManager.kt   # Ongoing foreground service notification builder
+│       ├── FloatingOverlayContent.kt        # Compose view hierarchy displayed inside WindowManager
+│       ├── FloatingOverlayLifecycleOwner.kt # Custom LifecycleOwner, SavedState, and ViewModelStore owner
+│       ├── FloatingOverlayWindowManager.kt  # WindowManager layout params, window attachment, and drag/drop
+│       ├── FloatingPolishClient.kt          # HTTP REST client for on-demand Gemini text polishing
+│       ├── FloatingPolishCoordinator.kt     # Debounced coordination of transcript polishing
+│       └── FloatingTextInjector.kt          # Text injection helper via accessibility actions and clipboard
 ├── ui/
-│   ├── VoiceTypingScreen.kt                 # In-app dictation screen and visualizers
+│   ├── VoiceTypingScreen.kt                 # In-app dictation interface, visualizers, and state actions
 │   ├── VoiceTypingViewModel.kt              # ViewModel managing audio recording state and socket connectivity
-│   ├── components/
-│   │   ├── DiagnosticsSheet.kt              # Bottom sheet coordinating tabs and document export
-│   │   ├── FloatingDictationBubbleOverlay.kt# Composable assembling the floating popup overlay
-│   │   ├── InAppVoiceTypingBubble.kt        # Main in-app voice card composable
-│   │   ├── diagnostics/
-│   │   │   ├── DiagnosticsAudioSection.kt   # Local WAV recording player, timeline, and share/downloads
-│   │   │   ├── DiagnosticsClearConfirmDialog.kt # Gated confirmation alert dialog for log deletion
-│   │   │   ├── DiagnosticsEventTracker.kt   # Diagnostics tracking methods & day-grouped log history
-│   │   │   ├── DiagnosticsExportUtils.kt    # Clipboard copying and text document export utilities
-│   │   │   ├── DiagnosticsHistorySection.kt # Multi-day collapsible history logs and event badges
-│   │   │   ├── DiagnosticsLiveSection.kt    # Real-time socket monitor, counters, and live frames
-│   │   │   ├── DiagnosticsNotesSection.kt   # Field notes creation and chronological notes list
-│   │   │   └── DiagnosticsToolbarSection.kt # Top action toolbar and weekly vocabulary simulation card
-│   │   └── overlay/
-│   │       ├── AuroraColorPalette.kt        # Dynamic system accent palette extraction
-│   │       ├── FloatingActionRow.kt         # Action buttons (Cancel, Polish, Complete) and app badge
-│   │       ├── FloatingCollapsedBubble.kt   # Collapsed floating bubble composable
-│   │       ├── FloatingDockedLifebuoy.kt     # Docked draggable bubble ring
-│   │       ├── FloatingTranscriptBox.kt     # Scrollable transcript text box with cursor
-│   │       ├── NotchedOverlayShape.kt       # Custom Shape geometry with top-right cutout notch
-│   │       └── sections/
-│   │           ├── FloatingAuroraGlowSection.kt     # Aurora glow bloom background renderer
-│   │           ├── FloatingButtonRowSection.kt      # Action buttons (Cancel, Polish, Complete) section
-│   │           ├── FloatingDictationPopupState.kt   # State holder for popup animations and transitions
-│   │           ├── FloatingNotchedCutoutSection.kt  # Semicircular cutout notch & docked ring section
-│   │           └── FloatingTranscriptSection.kt     # Transcript display with normalization and metrics
+│   ├── components/                          # Reusable UI sheets, animated glow bars, and dialogs
+│   │   ├── diagnostics/                     # Diagnostic live frame inspectors, event trackers, and notes
+│   │   └── overlay/                         # Floating overlay composables (bubble, dock, action row)
 │   ├── screens/
 │   │   ├── DictionaryScreen.kt              # Custom vocabulary management screen
-│   │   └── HomeScreen.kt                    # Dashboard with history list, usage stats, and settings
+│   │   └── HomeScreen.kt                    # Dashboard with past sessions, statistics, and settings
 │   └── theme/                               # Material 3 Expressive theme, typography, and brush gradients
+├── util/
+│   └── AppResolutionEngine.kt               # App name and website host resolution utilities
 └── websocket/
     └── GeminiLiveWebSocketClient.kt         # OkHttp WebSocket client for Gemini Live Bidi streaming
 ```
@@ -69,31 +68,43 @@ app/src/main/java/com/example/
 
 ## Background Services
 
-- `FloatingBubbleService`: Displays a persistent floating overlay window over other applications and orchestrates foreground voice capture.
-- `VoxStreamAccessibilityService`: Detects focused editable text fields on screen and directly injects finalized voice transcriptions into them.
+- `FloatingBubbleService`: Displays a persistent floating overlay window (`WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY`) over third-party applications and orchestrates microphone recording with foreground service lifecycle management.
+- `VoxStreamAccessibilityService`: Listens for focus and text-change accessibility events across running apps to identify editable input nodes (`AccessibilityNodeInfo`) and directly injects finalized transcripts via `ACTION_SET_TEXT`.
 
 ---
 
 ## Permissions
 
 - `RECORD_AUDIO`: Captures raw PCM microphone audio for live dictation and AI transcription.
-- `INTERNET`: Establishes real-time secure WebSockets to the Gemini Live Multimodal API endpoint.
-- `SYSTEM_ALERT_WINDOW`: Draws the floating dictation bubble overlay on top of other running apps.
-- `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_MICROPHONE` / `FOREGROUND_SERVICE_SPECIAL_USE`: Maintains uninterrupted audio streaming when dictating outside the app.
-- `POST_NOTIFICATIONS`: Displays required ongoing notifications while background overlay recording is active.
-- `VIBRATE`: Provides haptic feedback when dictation starts, pauses, or finishes.
-- `WAKE_LOCK`: Prevents CPU sleep while streaming audio in the background.
+- `SYSTEM_ALERT_WINDOW`: Displays the interactive floating voice bubble overlay on top of other running apps.
+- `INTERNET`: Connects via secure WebSockets and HTTPS to Google Gemini Live API endpoints.
+- `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_MICROPHONE` / `FOREGROUND_SERVICE_SPECIAL_USE`: Ensures uninterrupted audio streaming and floating overlay operation when dictating outside the app.
+- `POST_NOTIFICATIONS`: Displays the required ongoing notification while background recording is active.
+- `VIBRATE`: Provides tactile haptic feedback when dictation starts, pauses, or completes.
+- `WAKE_LOCK`: Keeps CPU awake during active live audio recording sessions.
 
 ---
 
-## Network & Connection Stability
+## API Key Configuration
 
-- **WebSocket Keep-Alive**: Configured with a tolerant 45-second ping interval (45000ms) to prevent aggressive dropouts and false ping timeouts across variable mobile networks.
-- **Exponential Reconnect Backoff**: Reconnection attempts start at 1 second, doubling on each retry (up to 30s max, capped at 3 retries) with state logging across transitions.
-- **Standard TLS Verification**: OkHttpClient uses standard system root CA verification without brittle hardcoded pin sets for `generativelanguage.googleapis.com`.
+The Gemini API key is managed via a strict hierarchy through `ApiConfig.kt`:
+1. **User Settings**: Custom key entered at runtime by the user in the app settings, stored securely in private app preferences.
+2. **Environment Variable**: `BuildConfig.GEMINI_API_KEY` injected at build time from `.env` via secrets gradle plugin (and never checked into Git).
+3. **Safe Fallback**: If neither is configured, the system cleanly defaults to empty string `""` without crashing.
+
+No real API key is ever hardcoded in source files, comments, or repository defaults.
 
 ---
 
 ## Privacy Note
 
-Voice audio recorded during dictation is streamed directly over an encrypted WebSocket to Google's Gemini API solely for real-time speech-to-text transcription and requested text polishing. No audio or transcript data is sold or stored on external servers. Audio recordings cached locally on the device remain in private app storage unless the user explicitly chooses to share or export them.
+All voice audio captured during dictation is streamed directly over an encrypted TLS connection to Google's Gemini API strictly for real-time speech-to-text transcription and requested AI polishing. No audio, transcripts, or personal data are collected, sold, or shared with third parties. Recorded audio files stored locally on the device remain strictly within private app storage unless the user explicitly chooses to export or share them.
+
+---
+
+## Recent Hardening
+
+- **Key Safety & Repository Cleanliness**: Extracted all key resolution and placeholder checking into `ApiConfig.kt` as the single source of truth, eliminated all hardcoded API tokens from source files, and ensured `.gitignore` strictly guards `.env`, `local.properties`, and keystores.
+- **Race Condition in Injection Delay**: Resolved a race condition in `FloatingBubbleService.onConfirmClicked()` by tracking and assigning the 1400ms injection timeout to `pendingCompletionTimeoutJob`, ensuring user cancellation halts pending injections before execution.
+- **Microphone Protection on Android 14+**: Assigned the 450ms FGS type demotion to `fgsDowngradeJob` and cancelled it upon `startVoiceTyping()`, preventing background service demotion from killing the microphone during rapid re-dictation.
+- **WebSocket Auto-Reconnect Resilience**: Updated `GeminiLiveWebSocketClient.onClosed()` to preserve `lastApiKey` across normal server closures during active speech, ensuring automated exponential backoff reconnects seamlessly rather than aborting.
