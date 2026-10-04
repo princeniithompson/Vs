@@ -85,27 +85,7 @@ object FloatingBubbleManager {
     private var initialized = false
 
     private fun bypassHiddenApiRestrictions() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            try {
-                val getMethod = java.lang.Class::class.java.getDeclaredMethod(
-                    "getDeclaredMethod",
-                    String::class.java,
-                    java.lang.Class.forName("[Ljava.lang.Class;")
-                )
-                val vmRuntimeClass = java.lang.Class.forName("dalvik.system.VMRuntime")
-                val getRuntime = getMethod.invoke(vmRuntimeClass, "getRuntime", null) as java.lang.reflect.Method
-                val vmRuntime = getRuntime.invoke(null)
-                val setHiddenApiExemptions = getMethod.invoke(
-                    vmRuntimeClass,
-                    "setHiddenApiExemptions",
-                    arrayOf(java.lang.Class.forName("[Ljava.lang.String;"))
-                ) as java.lang.reflect.Method
-                setHiddenApiExemptions.invoke(vmRuntime, arrayOf("L"))
-                Log.i(TAG, "Successfully bypassed hidden API restrictions")
-            } catch (e: Throwable) {
-                Log.w(TAG, "Could not bypass hidden API restrictions", e)
-            }
-        }
+        // No-op: Restricted on modern Android SDKs and not required for application features.
     }
 
     fun init(context: Context) {

@@ -9,6 +9,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.example.MainActivity
@@ -68,6 +69,7 @@ class FloatingBubbleService : Service() {
     @Volatile
     private var isPendingInjectionOnSmartCompletion = false
     private var pendingCompletionTimeoutJob: Job? = null
+    private var activeDetectionJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -250,43 +252,43 @@ class FloatingBubbleService : Service() {
         overlayWindowManager.expandToFullSize()
         FloatingBubbleManager.lockSessionContext(this)
 
+        activeDetectionJob?.cancel()
+        activeDetectionJob = null
+
         val a11y = VoxStreamAccessibilityService.instance
         val pkg = a11y?.getActivePackageName() ?: FloatingBubbleManager.currentForegroundPackage.value
         if (pkg != null && pkg != packageName && !com.example.util.AppResolutionEngine.defaultInstance.isSystemOrIme(this, pkg)) {
-            serviceScope.launch {
+            activeDetectionJob = serviceScope.launch {
                 try {
-                    // Check container package and get extra evidence
-                    var extraEvidence: String? = null
-                    if (pkg == "com.google.android.googlequicksearchbox" || pkg.startsWith("org.chromium.webapk")) {
-                        val windowTitle = a11y?.getActiveApplicationWindow()?.title?.toString()
-                        val className = a11y?.lastSeenClassName
-                        val sb = java.lang.StringBuilder()
-                        if (!windowTitle.isNullOrBlank()) {
-                            sb.append("Window title: ").append(windowTitle)
-                        }
-                        if (!className.isNullOrBlank()) {
-                            if (sb.isNotEmpty()) sb.append("\n")
-                            sb.append("Activity: ").append(className)
-                        }
-                        if (sb.isNotEmpty()) {
-                            extraEvidence = sb.toString()
-                        }
+                    // 1. IMPLEMENT DEBOUNCING: Wait 500ms and verify foreground package remains stable
+                    delay(500L)
+                    val currentPkg = a11y?.getActivePackageName() ?: FloatingBubbleManager.currentForegroundPackage.value
+                    if (currentPkg != pkg) {
+                        Log.d("AppDetector", "Package name changed from $pkg to $currentPkg. Skipping detection.")
+                        return@launch
                     }
 
-                    // Start 10-second timeout detection
-                    val result = kotlinx.coroutines.withTimeout(10000L) {
-                        AppDetector.detectApp(pkg, extraEvidence)
+                    // Collect multi-signal evidence (Stage A)
+                    val evidence = com.example.util.AppResolutionEngine.defaultInstance.collectEvidence(
+                        context = this@FloatingBubbleService,
+                        packageName = pkg
+                    )
+
+                    // Run hybrid detection (Stage B local check -> Stage C Gemini only if needed)
+                    val result = kotlinx.coroutines.withTimeout(20000L) {
+                        AppDetector.detectAppHybrid(evidence, this@FloatingBubbleService)
                     }
 
                     // Log success
-                    Log.d("AppDetector", "Detection succeeded: ${result.appName} -> ${result.category}")
+                    val resolutionSource = if (result.isLocallyResolved) "Local" else "Gemini"
+                    Log.d("AppDetector", "Detection succeeded ($resolutionSource): ${result.appName} -> ${result.category}")
                     
                     // Show final result visibly (small label on the bubble and toast)
                     val formatted = "Detected: ${result.appName} -> ${result.category}"
                     FloatingBubbleManager.setLockedSessionContext(formatted)
                     Toast.makeText(this@FloatingBubbleService, formatted, Toast.LENGTH_SHORT).show()
                 } catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
-                    val reason = "Detection timed out after 10s"
+                    val reason = "Detection timed out after 20s"
                     Log.d("AppDetector", "Detection failed: $reason")
                     FloatingBubbleManager.setLockedSessionContext("Detection failed: $reason")
                     Toast.makeText(this@FloatingBubbleService, "Detection failed: $reason", Toast.LENGTH_SHORT).show()
@@ -447,6 +449,10 @@ class FloatingBubbleService : Service() {
     }
 
     private fun resetAndCollapse() {
+        activeDetectionJob?.cancel()
+        activeDetectionJob = null
+        AppDetector.clearCache()
+
         FloatingBubbleManager.unlockSessionContext()
         overlayWindowManager.overlayPendingFinalizing.value = false
         overlayWindowManager.overlayRecording.value = false
@@ -480,9 +486,156 @@ class FloatingBubbleService : Service() {
         return ApiConfig.getEffectiveKey(customKey)
     }
 
+    private fun isBrowserOrContainerPackage(pkg: String): Boolean {
+        val lower = pkg.lowercase(java.util.Locale.US)
+        return lower == "com.google.android.googlequicksearchbox" ||
+                lower.startsWith("org.chromium.webapk") ||
+                lower.contains(".webapk") ||
+                lower == "com.android.chrome" ||
+                lower == "com.chrome.beta" ||
+                lower == "com.chrome.dev" ||
+                lower == "com.sec.android.app.sbrowser" ||
+                lower == "com.microsoft.emmx" ||
+                lower == "org.mozilla.firefox" ||
+                lower == "com.brave.browser" ||
+                lower == "com.opera.browser" ||
+                lower.contains("chrome") ||
+                lower.contains("browser") ||
+                lower.contains("firefox") ||
+                lower.contains("webkit")
+    }
+
+    private fun collectBrowserAndContainerEvidence(
+        pkg: String,
+        a11y: VoxStreamAccessibilityService?
+    ): String? {
+        if (a11y == null) return null
+        val sb = StringBuilder()
+
+        // 1. Window title
+        val windowTitle = try {
+            a11y.getActiveApplicationWindow()?.title?.toString()
+        } catch (_: Throwable) {
+            null
+        }
+        if (!windowTitle.isNullOrBlank()) {
+            sb.append("Window title: ").append(windowTitle.trim())
+        }
+
+        // 2. Activity / class name
+        val className = a11y.lastSeenClassName
+        if (!className.isNullOrBlank()) {
+            if (sb.isNotEmpty()) sb.append("\n")
+            sb.append("Activity: ").append(className.trim())
+        }
+
+        // 3. Root node for URL and visible text samples
+        val root = try {
+            a11y.rootInActiveWindow
+        } catch (_: Throwable) {
+            null
+        }
+
+        if (root != null) {
+            val url = findBrowserUrl(root)
+            if (!url.isNullOrBlank()) {
+                if (sb.isNotEmpty()) sb.append("\n")
+                sb.append("URL: ").append(url.trim())
+            }
+
+            val visibleTexts = mutableListOf<String>()
+            collectSampleVisibleTexts(root, visibleTexts, maxCount = 10, depth = 0, maxDepth = 6)
+            if (visibleTexts.isNotEmpty()) {
+                if (sb.isNotEmpty()) sb.append("\n")
+                sb.append("Visible text samples:\n")
+                visibleTexts.forEach { text ->
+                    sb.append("- ").append(text).append("\n")
+                }
+            }
+        }
+
+        return if (sb.isNotEmpty()) sb.toString().trim() else null
+    }
+
+    private fun findBrowserUrl(rootNode: AccessibilityNodeInfo): String? {
+        val urlViewIds = listOf(
+            "com.android.chrome:id/url_bar",
+            "com.chrome.beta:id/url_bar",
+            "com.chrome.dev:id/url_bar",
+            "com.sec.android.app.sbrowser:id/location_bar_edit_text",
+            "com.microsoft.emmx:id/url_bar",
+            "org.mozilla.firefox:id/url_bar_title",
+            "url_bar",
+            "location_bar",
+            "search_box_text"
+        )
+        for (id in urlViewIds) {
+            try {
+                val nodes = rootNode.findAccessibilityNodeInfosByViewId(id)
+                if (!nodes.isNullOrEmpty()) {
+                    for (node in nodes) {
+                        val text = node.text?.toString()?.trim()
+                        if (!text.isNullOrBlank()) return text
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
+        return searchNodeForUrl(rootNode, 0, 6)
+    }
+
+    private fun searchNodeForUrl(node: AccessibilityNodeInfo?, depth: Int, maxDepth: Int): String? {
+        if (node == null || depth > maxDepth) return null
+        val text = node.text?.toString()?.trim() ?: ""
+        if (text.isNotBlank()) {
+            val lower = text.lowercase(java.util.Locale.US)
+            if (lower.contains("aistudio") || lower.contains("ais-dev-") || lower.contains("ais-pre-") ||
+                lower.contains(".google.com") || lower.contains(".ai") || lower.contains(".com/") ||
+                lower.startsWith("http://") || lower.startsWith("https://")) {
+                return text
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = try { node.getChild(i) } catch (_: Throwable) { null } ?: continue
+            val found = searchNodeForUrl(child, depth + 1, maxDepth)
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun collectSampleVisibleTexts(
+        node: AccessibilityNodeInfo?,
+        collected: MutableList<String>,
+        maxCount: Int,
+        depth: Int,
+        maxDepth: Int
+    ) {
+        if (node == null || depth > maxDepth || collected.size >= maxCount) return
+        val text = node.text?.toString()?.trim()
+        val desc = node.contentDescription?.toString()?.trim()
+        val candidate = when {
+            !text.isNullOrBlank() && text.length > 2 -> text
+            !desc.isNullOrBlank() && desc.length > 2 -> desc
+            else -> null
+        }
+        if (candidate != null && !collected.contains(candidate)) {
+            if (candidate.length <= 120) {
+                collected.add(candidate)
+            }
+        }
+        for (i in 0 until node.childCount) {
+            if (collected.size >= maxCount) break
+            val child = try { node.getChild(i) } catch (_: Throwable) { null } ?: continue
+            collectSampleVisibleTexts(child, collected, maxCount, depth + 1, maxDepth)
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "FloatingBubbleService onDestroy")
+
+        activeDetectionJob?.cancel()
+        activeDetectionJob = null
+        AppDetector.clearCache()
 
         polishCoordinator.cancel()
         isPendingInjectionOnSmartCompletion = false

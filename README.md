@@ -21,6 +21,7 @@ app/src/main/java/com/example/
 │   ├── Models.kt                            # Data models for LiveStats, ConnectionState, and LogEntries
 │   └── VocabularyDao.kt & Entity.kt         # Room DAO and entity for custom replacement vocabulary
 ├── service/
+│   ├── AppDetector.kt                       # Gemini REST detector for Android packages & active browser websites
 │   ├── FloatingBubbleService.kt             # Foreground service managing the system overlay window lifecycle
 │   ├── VoxStreamAccessibilityService.kt     # AccessibilityService detecting active input nodes and injecting text
 │   └── floating/

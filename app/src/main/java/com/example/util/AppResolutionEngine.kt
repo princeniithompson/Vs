@@ -1,42 +1,66 @@
 package com.example.util
 
 import android.content.Context
-import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import com.example.service.LearnedAppRegistry
 
 /**
  * AppResolutionEngine: Multi-Signal Evidence-Based Resolver for VoxStream.
  *
- * Evaluates foreground applications by collecting multi-signal AppEvidence
- * (package name, class name, window title, visible node texts, content descriptions,
- * URL/domain, WebAPK metadata, and app labels) and resolving them deterministically into:
- * - ResolvedIdentity (Exact known application, e.g. GEMINI, GOOGLE_AI_STUDIO, CHATGAT, WHATSAPP)
- * - ResolvedCategory (Semantic classification, e.g. AI_ASSISTANT, AI_DEVELOPER_TOOL, CHAT_MESSAGING, BROWSER)
- * - AppContext (Formatted user-facing representation: "AI · Gemini", "AI · Google AI Studio", etc.)
+ * Implements Stage A (synchronous local name + evidence extraction) and
+ * Stage B (local category lookup via static maps, learned cache, and heuristics).
  */
 class AppResolutionEngine(cacheSize: Int = 150) {
 
-    /**
-     * Conceptual internal evidence collection containing all accessibility signals.
-     */
     data class AppEvidence(
-        val packageName: String?,
-        val className: String? = null,
+        val packageName: String,
+        val appLabel: String? = null,
+        val webApkMetaName: String? = null,
+        val webApkScopeUrl: String? = null,
         val windowTitle: String? = null,
+        val className: String? = null,
+        val urlOrDomain: String? = null,
+        val domain: String? = null,
         val visibleNodeTexts: List<String> = emptyList(),
         val contentDescriptions: List<String> = emptyList(),
-        val urlOrDomain: String? = null,
-        val webApkMetaName: String? = null,
-        val appLabel: String? = null
-    )
+        val localDisplayName: String = "",
+        val learnedRegistryKey: String = packageName
+    ) {
+        fun buildEvidencePromptString(): String = buildString {
+            append("Android Package: ").append(packageName)
+            append("\nLocal Display Name: ").append(localDisplayName)
+            if (!webApkMetaName.isNullOrBlank()) {
+                append("\nWebAPK Name: ").append(webApkMetaName)
+            }
+            if (!webApkScopeUrl.isNullOrBlank()) {
+                append("\nWebAPK Scope: ").append(webApkScopeUrl)
+            }
+            if (!windowTitle.isNullOrBlank()) {
+                append("\nWindow Title: ").append(windowTitle)
+            }
+            if (!className.isNullOrBlank()) {
+                append("\nActivity: ").append(className)
+            }
+            if (!urlOrDomain.isNullOrBlank()) {
+                append("\nURL: ").append(urlOrDomain)
+            }
+            if (!domain.isNullOrBlank()) {
+                append("\nDomain: ").append(domain)
+            }
+            if (visibleNodeTexts.isNotEmpty() || contentDescriptions.isNotEmpty()) {
+                append("\nVisible UI Samples:\n")
+                val combined = (visibleNodeTexts + contentDescriptions).distinct().take(10)
+                combined.forEach { sample ->
+                    append("- ").append(sample.take(100)).append("\n")
+                }
+            }
+        }
+    }
 
-    /**
-     * Exact known application identity.
-     */
     enum class ResolvedIdentity {
         GEMINI,
         CHATGPT,
@@ -46,6 +70,8 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         PERPLEXITY,
         COPILOT,
         QWEN,
+        KIMI,
+        FLOW,
         POE,
         CHARACTER_AI,
         GOOGLE_AI_STUDIO,
@@ -87,9 +113,6 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         UNKNOWN
     }
 
-    /**
-     * Semantic application category classification.
-     */
     enum class ResolvedCategory {
         AI_ASSISTANT,
         AI_DEVELOPER_TOOL,
@@ -100,15 +123,13 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         OTHER
     }
 
-    /**
-     * User-facing application context data class.
-     */
     data class AppContext(
         val name: String,
         val category: String,
         val isAiApp: Boolean,
         val identity: ResolvedIdentity = ResolvedIdentity.UNKNOWN,
-        val resolvedCategory: ResolvedCategory = ResolvedCategory.OTHER
+        val resolvedCategory: ResolvedCategory = ResolvedCategory.OTHER,
+        val isLocallyResolved: Boolean = true
     ) {
         val formatted: String get() = "$category · $name"
     }
@@ -118,7 +139,7 @@ class AppResolutionEngine(cacheSize: Int = 150) {
 
         val defaultInstance = AppResolutionEngine(150)
 
-        // Native Package to Exact Identity Map
+        // Native Package to Exact Identity Map (Stage B1)
         private val NATIVE_APP_MAP = mapOf(
             // AI Native Applications
             "com.google.android.apps.bard" to AppContext("Gemini", "AI", true, ResolvedIdentity.GEMINI, ResolvedCategory.AI_ASSISTANT),
@@ -129,6 +150,7 @@ class AppResolutionEngine(cacheSize: Int = 150) {
             "ai.perplexity.app.android" to AppContext("Perplexity", "AI", true, ResolvedIdentity.PERPLEXITY, ResolvedCategory.AI_ASSISTANT),
             "com.microsoft.copilot" to AppContext("Copilot", "AI", true, ResolvedIdentity.COPILOT, ResolvedCategory.AI_ASSISTANT),
             "com.deepseek.chat" to AppContext("DeepSeek", "AI", true, ResolvedIdentity.DEEPSEEK, ResolvedCategory.AI_ASSISTANT),
+            "com.moonshot.kimi" to AppContext("Kimi", "AI", true, ResolvedIdentity.KIMI, ResolvedCategory.AI_ASSISTANT),
             "com.alibaba.tongyi.intl" to AppContext("Qwen", "AI", true, ResolvedIdentity.QWEN, ResolvedCategory.AI_ASSISTANT),
             "com.alibaba.qwen.intl" to AppContext("Qwen", "AI", true, ResolvedIdentity.QWEN, ResolvedCategory.AI_ASSISTANT),
             "com.aliyun.tongyi.intl" to AppContext("Qwen", "AI", true, ResolvedIdentity.QWEN, ResolvedCategory.AI_ASSISTANT),
@@ -200,7 +222,7 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         )
     }
 
-    // In-Memory Session Cache keyed by (packageName + urlOrDomain + windowTitle)
+    // In-Memory Session Cache
     private class SimpleLruCache<K, V>(private val maxSize: Int) {
         private val map = object : LinkedHashMap<K, V>(maxSize, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?): Boolean {
@@ -224,8 +246,12 @@ class AppResolutionEngine(cacheSize: Int = 150) {
 
     private val appCache = SimpleLruCache<String, AppContext>(cacheSize)
 
+    fun clearCache() {
+        appCache.clear()
+    }
+
     /**
-     * Resolves an AppContext by collecting current AppEvidence from Android system state.
+     * Resolves an AppContext synchronously by evaluating Stage A evidence and Stage B local category.
      */
     fun resolve(
         context: Context,
@@ -237,13 +263,61 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         if (packageName.isNullOrBlank() || isSystemOrIme(context, packageName)) {
             return null
         }
-
         val evidence = collectEvidence(context, packageName, windowInfo, rootNode, className)
-        return resolveWithEvidence(evidence)
+        return resolveWithEvidence(evidence, context)
     }
 
     /**
-     * Collects all available accessibility and system evidence into an AppEvidence instance.
+     * Evaluates AppEvidence deterministically into an AppContext.
+     */
+    fun resolveWithEvidence(evidence: AppEvidence, context: Context? = null): AppContext? {
+        val pkg = evidence.packageName
+        if (isSystemOrIme(context, pkg)) return null
+
+        val resolvedEvidence = if (evidence.localDisplayName.isBlank()) {
+            val name = computeLocalDisplayName(
+                packageName = evidence.packageName,
+                appLabel = evidence.appLabel,
+                webApkMetaName = evidence.webApkMetaName,
+                urlOrDomain = evidence.urlOrDomain,
+                domain = evidence.domain ?: extractDomain(evidence.urlOrDomain),
+                windowTitle = evidence.windowTitle
+            )
+            val isBrowser = isBrowserOrPwa(evidence.packageName.lowercase())
+            val domain = evidence.domain ?: extractDomain(evidence.urlOrDomain)
+            val learnedKey = if (isBrowser && !domain.isNullOrBlank()) {
+                "${evidence.packageName}|$domain"
+            } else {
+                evidence.packageName
+            }
+            evidence.copy(localDisplayName = name, domain = domain, learnedRegistryKey = learnedKey)
+        } else {
+            evidence
+        }
+
+        val local = resolveLocalCategory(context, resolvedEvidence)
+        if (local != null) return local
+
+        val isAi = evaluateHeuristics(resolvedEvidence) != null
+        val fallbackIdentity = if (isBrowserOrPwa(resolvedEvidence.packageName.lowercase())) ResolvedIdentity.CHROME else ResolvedIdentity.UNKNOWN
+        val fallbackCat = when {
+            isAi -> ResolvedCategory.AI_ASSISTANT
+            isBrowserOrPwa(resolvedEvidence.packageName.lowercase()) -> ResolvedCategory.BROWSER
+            else -> ResolvedCategory.OTHER
+        }
+
+        return AppContext(
+            name = resolvedEvidence.localDisplayName,
+            category = if (isAi) "AI" else "Other",
+            isAiApp = isAi,
+            identity = fallbackIdentity,
+            resolvedCategory = fallbackCat,
+            isLocallyResolved = true
+        )
+    }
+
+    /**
+     * STAGE A — Local name + evidence collection (Synchronous, zero network).
      */
     fun collectEvidence(
         context: Context,
@@ -263,46 +337,120 @@ class AppResolutionEngine(cacheSize: Int = 150) {
 
         val (nodeTexts, contentDescs) = collectNodeStrings(effectiveRoot)
         val urlOrDomain = findBrowserUrl(effectiveRoot)
+        val domain = extractDomain(urlOrDomain)
         val webApkMetaName = getWebApkMetaName(context, packageName)
+        val webApkScopeUrl = getWebApkScopeUrl(context, packageName)
         val appLabel = getAppLabel(context, packageName)
+
+        val localDisplayName = computeLocalDisplayName(
+            packageName = packageName,
+            appLabel = appLabel,
+            webApkMetaName = webApkMetaName,
+            urlOrDomain = urlOrDomain,
+            domain = domain,
+            windowTitle = winTitle
+        )
+
+        val isBrowser = isBrowserOrPwa(packageName.lowercase())
+        val learnedKey = if (isBrowser && !domain.isNullOrBlank()) {
+            "$packageName|$domain"
+        } else if (isBrowser && !urlOrDomain.isNullOrBlank()) {
+            "$packageName|${urlOrDomain.hashCode()}"
+        } else {
+            packageName
+        }
 
         return AppEvidence(
             packageName = packageName,
-            className = className,
+            appLabel = appLabel,
+            webApkMetaName = webApkMetaName,
+            webApkScopeUrl = webApkScopeUrl,
             windowTitle = winTitle,
+            className = className ?: a11y?.lastSeenClassName,
+            urlOrDomain = urlOrDomain,
+            domain = domain,
             visibleNodeTexts = nodeTexts,
             contentDescriptions = contentDescs,
-            urlOrDomain = urlOrDomain,
-            webApkMetaName = webApkMetaName,
-            appLabel = appLabel
+            localDisplayName = localDisplayName,
+            learnedRegistryKey = learnedKey
         )
     }
 
     /**
-     * Evaluates AppEvidence deterministically to resolve the application identity and category.
+     * Computes the display name locally based on priority:
+     * 1. WebAPK meta name if present
+     * 2. Else if browser + recognizable site product -> site product name
+     * 3. Else appLabel if non-generic
+     * 4. Else tokenized brand from package
      */
-    fun resolveWithEvidence(evidence: AppEvidence): AppContext? {
-        val pkg = evidence.packageName ?: return null
-        if (isSystemOrIme(null, pkg)) return null
+    fun computeLocalDisplayName(
+        packageName: String,
+        appLabel: String?,
+        webApkMetaName: String?,
+        urlOrDomain: String?,
+        domain: String?,
+        windowTitle: String?
+    ): String {
+        // Priority 1: WebAPK metadata name
+        if (!webApkMetaName.isNullOrBlank()) {
+            return webApkMetaName.trim()
+        }
 
-        val pkgLower = pkg.lowercase()
+        // Priority 2: Browser site product name if recognizable from domain/title
+        val domainLower = (domain ?: urlOrDomain ?: "").lowercase()
+        val titleLower = (windowTitle ?: "").lowercase()
 
-        // Session Cache Key: package + domain + title prevents stale identity leakage across session switches
-        val cacheKey = "$pkg|${evidence.urlOrDomain ?: ""}|${evidence.windowTitle ?: ""}"
+        when {
+            domainLower.contains("aistudio.google.com") || domainLower.contains("aistudio") || titleLower.contains("google ai studio") || titleLower.contains("ai studio") -> return "Google AI Studio"
+            domainLower.contains("chatgpt.com") || domainLower.contains("chat.openai.com") || titleLower.contains("chatgpt") -> return "ChatGPT"
+            domainLower.contains("claude.ai") || titleLower.contains("claude") -> return "Claude"
+            domainLower.contains("grok.com") || domainLower.contains("x.com/i/grok") || titleLower.contains("grok") -> return "Grok"
+            domainLower.contains("perplexity.ai") || titleLower.contains("perplexity") -> return "Perplexity"
+            domainLower.contains("deepseek.com") || titleLower.contains("deepseek") -> return "DeepSeek"
+            domainLower.contains("v0.dev") || titleLower.contains("v0.dev") -> return "v0"
+            domainLower.contains("sportybet.com") || titleLower.contains("sportybet") -> return "SportyBet"
+            domainLower.contains("github.com") -> return "GitHub"
+            domainLower.contains("notion.so") -> return "Notion"
+            domainLower.contains("figma.com") -> return "Figma"
+            domainLower.contains("canva.com") -> return "Canva"
+            domainLower.contains("web.whatsapp.com") -> return "WhatsApp"
+            domainLower.contains("web.telegram.org") -> return "Telegram"
+        }
+
+        // Priority 3: Android PackageManager label (if not generic placeholder)
+        if (!appLabel.isNullOrBlank()) {
+            val labelTrimmed = appLabel.trim()
+            val labelLower = labelTrimmed.lowercase()
+            val isGenericBrowser = labelLower in listOf("chrome", "browser", "internet", "web browser", "google chrome", "samsung internet", "firefox", "edge")
+            val isGenericContainer = labelLower in listOf("web application", "app", "application")
+            if (!isGenericBrowser && !isGenericContainer && !labelTrimmed.contains(".")) {
+                return labelTrimmed
+            }
+        }
+
+        // Priority 4: Fallback to tokenized brand from package
+        return tokenizeBrand(packageName)
+    }
+
+    /**
+     * STAGE B — Local category resolution (Zero network).
+     * Returns AppContext if category is deterministically known, or null if Gemini is needed.
+     */
+    fun resolveLocalCategory(context: Context? = null, evidence: AppEvidence): AppContext? {
+        val pkg = evidence.packageName
+        if (isSystemOrIme(context, pkg)) return null
+
+        val cacheKey = evidence.learnedRegistryKey
         val cached = appCache.get(cacheKey)
         if (cached != null) return cached
 
-        // ----------------------------------------------------
-        // PRIORITY 1: Exact Known Native Package Mapping
-        // ----------------------------------------------------
-        NATIVE_APP_MAP[pkg]?.let {
-            appCache.put(cacheKey, it)
-            return it
+        // 1. Check Exact Known Native Package Mapping
+        NATIVE_APP_MAP[pkg]?.let { mapped ->
+            appCache.put(cacheKey, mapped)
+            return mapped
         }
 
-        // ----------------------------------------------------
-        // PRIORITY 2: QuickSearchBox Gemini Resolution
-        // ----------------------------------------------------
+        // 2. Check QuickSearchBox Gemini vs Google Search
         if (pkg.equals("com.google.android.googlequicksearchbox", ignoreCase = true)) {
             val isGemini = evaluateGeminiEvidence(evidence)
             val result = if (isGemini) {
@@ -314,131 +462,104 @@ class AppResolutionEngine(cacheSize: Int = 150) {
             return result
         }
 
-        // ----------------------------------------------------
-        // PRIORITY 3: Hosted Application Resolution (Chrome, Browsers, WebAPKs)
-        // ----------------------------------------------------
-        if (isBrowserOrPwa(pkgLower)) {
-            val hostedApp = evaluateHostedAppEvidence(evidence)
-            if (hostedApp != null) {
-                appCache.put(cacheKey, hostedApp)
-                return hostedApp
-            }
-            // Generic Browser Fallback
-            val browserLabel = evidence.appLabel ?: "Chrome"
-            val fallback = AppContext(browserLabel, "Other", false, ResolvedIdentity.CHROME, ResolvedCategory.BROWSER)
-            appCache.put(cacheKey, fallback)
-            return fallback
+        // 3. Check WebAPK & Hosted Web App definitions (AI Studio, ChatGPT, SportyBet, etc.)
+        val hostedApp = evaluateHostedAppEvidence(evidence)
+        if (hostedApp != null) {
+            appCache.put(cacheKey, hostedApp)
+            return hostedApp
         }
 
-        // ----------------------------------------------------
-        // PRIORITY 4: Dynamic Category Classification for Unknown Apps
-        // ----------------------------------------------------
-        val unknownResult = evaluateUnknownAppCategory(evidence)
-        appCache.put(cacheKey, unknownResult)
-        return unknownResult
+        // 4. Check Persisted Learned Registry (confirmed entries)
+        if (context != null) {
+            val learned = LearnedAppRegistry.get(context, cacheKey)
+            if (learned != null && learned.confirmCount >= LearnedAppRegistry.CONFIRM_THRESHOLD) {
+                val isAi = learned.category.equals("AI", ignoreCase = true)
+                val result = AppContext(
+                    name = evidence.localDisplayName.ifBlank { learned.appName },
+                    category = learned.category,
+                    isAiApp = isAi,
+                    isLocallyResolved = true
+                )
+                appCache.put(cacheKey, result)
+                Log.d(TAG, "Stage B: Learned registry hit for key=$cacheKey -> ${result.name} (${result.category})")
+                return result
+            }
+        }
+
+        // 5. Heuristic check on package / name (e.g. chatgpt, claude, grok, kimi, qwen, deepseek)
+        val heuristic = evaluateHeuristics(evidence)
+        if (heuristic != null) {
+            appCache.put(cacheKey, heuristic)
+            return heuristic
+        }
+
+        // Unknown category -> Return null to trigger Stage C (Gemini)
+        return null
     }
 
-    /**
-     * Evaluates Gemini evidence inside QuickSearchBox.
-     * Prevents false positives by requiring explicit Gemini text/title or Robin activity signals.
-     */
     private fun evaluateGeminiEvidence(evidence: AppEvidence): Boolean {
         var score = 0
-
         val titleLower = (evidence.windowTitle ?: "").lowercase()
         val classLower = (evidence.className ?: "").lowercase()
         val allNodeText = (evidence.visibleNodeTexts + evidence.contentDescriptions).joinToString(" ").lowercase()
 
-        // Very Strong Signals (+10)
         if (titleLower.contains("gemini") || titleLower.contains("ask gemini") || titleLower.contains("chat with gemini") || titleLower.contains("bard")) {
             score += 10
         }
         if (allNodeText.contains("ask gemini") || allNodeText.contains("chat with gemini") || allNodeText.contains("gemini advanced") || allNodeText.contains("ask anything with gemini")) {
             score += 10
         }
-
-        // Strong Signals (+5)
         if (allNodeText.contains("gemini") || allNodeText.contains("bard")) {
             score += 5
         }
         if (classLower.contains("robinactivity") || classLower.contains("bard") || classLower.contains("geminiactivity")) {
             score += 5
         }
-
-        // Weak Signals (+1) - Generic class names such as "Search" or "Assistant" alone DO NOT yield Gemini without supporting text
-        if (classLower.contains("assistant") || classLower.contains("search")) {
-            score += 1
-        }
-
-        // Threshold: Must have at least one strong Gemini signal (score >= 5)
         return score >= 5
     }
 
-    /**
-     * Evaluates hosted application identity inside browsers/WebAPKs (e.g. Google AI Studio, ChatGPT, Claude, Grok).
-     */
     private fun evaluateHostedAppEvidence(evidence: AppEvidence): AppContext? {
-        val domainLower = (evidence.urlOrDomain ?: "").lowercase()
+        val domainLower = (evidence.domain ?: evidence.urlOrDomain ?: "").lowercase()
         val titleLower = (evidence.windowTitle ?: "").lowercase()
         val metaLower = (evidence.webApkMetaName ?: "").lowercase()
         val allNodeText = (evidence.visibleNodeTexts + evidence.contentDescriptions).joinToString(" ").lowercase()
 
-        // 1. Google AI Studio Hosted App Detection
+        // 1. Google AI Studio Hosted / WebAPK
         var aiStudioScore = 0
         if (domainLower.contains("aistudio.google.com")) aiStudioScore += 10
         if (domainLower.contains("aistudio") || domainLower.contains("ais-dev-") || domainLower.contains("ais-pre-")) aiStudioScore += 8
         if (titleLower.contains("google ai studio") || titleLower.contains("ai studio")) aiStudioScore += 10
         if (metaLower.contains("google ai studio") || metaLower.contains("ai studio")) aiStudioScore += 10
 
-        // Developer UI phrases count as strong signals (+5 each)
         val devUiPhrases = listOf("system instructions", "prompt gallery", "get api key", "temperature", "top p", "safety settings", "create prompt")
         val devUiMatchCount = devUiPhrases.count { allNodeText.contains(it) }
-        if (devUiMatchCount >= 2) {
-            aiStudioScore += 10
-        } else if (devUiMatchCount == 1) {
-            aiStudioScore += 5
-        }
-
-        // Weak single word "AI Studio" in body text without domain/title or dev UI gives only +2 (prevents article false positives)
-        if (allNodeText.contains("google ai studio") || allNodeText.contains("ai studio")) {
-            aiStudioScore += 2
-        }
+        if (devUiMatchCount >= 2) aiStudioScore += 10 else if (devUiMatchCount == 1) aiStudioScore += 5
 
         if (aiStudioScore >= 8) {
             return AppContext("Google AI Studio", "AI", true, ResolvedIdentity.GOOGLE_AI_STUDIO, ResolvedCategory.AI_DEVELOPER_TOOL)
         }
 
-        // 2. ChatGPT Hosted Web App
+        // 2. Known AI Web Apps
         if (domainLower.contains("chatgpt.com") || domainLower.contains("chat.openai.com") || titleLower.contains("chatgpt")) {
             return AppContext("ChatGPT", "AI", true, ResolvedIdentity.CHATGPT, ResolvedCategory.AI_ASSISTANT)
         }
-
-        // 3. Claude Hosted Web App
         if (domainLower.contains("claude.ai") || titleLower.contains("claude")) {
             return AppContext("Claude", "AI", true, ResolvedIdentity.CLAUDE, ResolvedCategory.AI_ASSISTANT)
         }
-
-        // 4. Grok Hosted Web App
         if (domainLower.contains("grok.com") || domainLower.contains("x.com/i/grok") || titleLower.contains("grok")) {
             return AppContext("Grok", "AI", true, ResolvedIdentity.GROK, ResolvedCategory.AI_ASSISTANT)
         }
-
-        // 5. Perplexity Hosted Web App
         if (domainLower.contains("perplexity.ai") || titleLower.contains("perplexity")) {
             return AppContext("Perplexity", "AI", true, ResolvedIdentity.PERPLEXITY, ResolvedCategory.AI_ASSISTANT)
         }
-
-        // 6. DeepSeek Hosted Web App
         if (domainLower.contains("deepseek.com") || titleLower.contains("deepseek")) {
             return AppContext("DeepSeek", "AI", true, ResolvedIdentity.DEEPSEEK, ResolvedCategory.AI_ASSISTANT)
         }
-
-        // 7. v0 Hosted Web App
         if (domainLower.contains("v0.dev") || titleLower.contains("v0.dev")) {
             return AppContext("v0", "AI", true, ResolvedIdentity.V0, ResolvedCategory.AI_DEVELOPER_TOOL)
         }
 
-        // 8. Other Popular Hosted Web Apps
+        // 3. Known Productivity & Social Web Apps
         if (domainLower.contains("web.whatsapp.com")) return AppContext("WhatsApp", "Social", false, ResolvedIdentity.WHATSAPP, ResolvedCategory.CHAT_MESSAGING)
         if (domainLower.contains("web.telegram.org")) return AppContext("Telegram", "Social", false, ResolvedIdentity.TELEGRAM, ResolvedCategory.CHAT_MESSAGING)
         if (domainLower.contains("github.com")) return AppContext("GitHub", "Work", false, ResolvedIdentity.GITHUB, ResolvedCategory.PRODUCTIVITY)
@@ -446,59 +567,47 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         if (domainLower.contains("figma.com")) return AppContext("Figma", "Work", false, ResolvedIdentity.FIGMA, ResolvedCategory.PRODUCTIVITY)
         if (domainLower.contains("canva.com")) return AppContext("Canva", "Work", false, ResolvedIdentity.CANVA, ResolvedCategory.PRODUCTIVITY)
 
+        // 4. Other Specific Brands
+        if (domainLower.contains("sportybet.com") || titleLower.contains("sportybet")) {
+            return AppContext("SportyBet", "Other", false, ResolvedIdentity.SPORTYBET, ResolvedCategory.OTHER)
+        }
+
         return null
     }
 
-    /**
-     * Evaluates category classification for unknown/unmapped applications based on multiple signals.
-     */
-    private fun evaluateUnknownAppCategory(evidence: AppEvidence): AppContext {
-        val allNodeText = (evidence.visibleNodeTexts + evidence.contentDescriptions).joinToString(" ").lowercase()
-        val titleLower = (evidence.windowTitle ?: "").lowercase()
-        val labelLower = (evidence.appLabel ?: "").lowercase()
+    private fun evaluateHeuristics(evidence: AppEvidence): AppContext? {
+        val pkgLower = evidence.packageName.lowercase()
+        val nameLower = evidence.localDisplayName.lowercase()
 
-        val strongAiPhrases = listOf("new chat", "ask anything", "send a message", "regenerate response", "select model", "conversation history")
-        val strongAiMatchCount = strongAiPhrases.count { allNodeText.contains(it) || titleLower.contains(it) }
-
-        val weakAiKeywords = listOf("ai", "chat", "assistant", "bot", "gpt", "api")
-        val weakAiMatchCount = weakAiKeywords.count { allNodeText.contains(it) || titleLower.contains(it) }
-
-        // Require at least 2 strong conversational phrases OR 1 strong phrase + multiple weak keywords to classify as AI
-        if (strongAiMatchCount >= 2 || (strongAiMatchCount >= 1 && weakAiMatchCount >= 2)) {
-            return AppContext("AI Assistant", "AI", true, ResolvedIdentity.UNKNOWN, ResolvedCategory.AI_ASSISTANT)
+        val aiKeywords = listOf("chatgpt", "claude", "grok", "kimi", "qwen", "deepseek", "perplexity", "copilot", "character.ai", "midjourney")
+        if (aiKeywords.any { pkgLower.contains(it) || nameLower.contains(it) }) {
+            return AppContext(evidence.localDisplayName, "AI", true, ResolvedIdentity.UNKNOWN, ResolvedCategory.AI_ASSISTANT)
         }
 
-        // Social / Chat signals
-        if (labelLower.contains("chat") || labelLower.contains("message") || allNodeText.contains("type a message")) {
-            return AppContext(evidence.appLabel ?: "Messaging", "Social", false, ResolvedIdentity.UNKNOWN, ResolvedCategory.CHAT_MESSAGING)
-        }
-
-        // Productivity signals
-        if (labelLower.contains("note") || labelLower.contains("doc") || labelLower.contains("office")) {
-            return AppContext(evidence.appLabel ?: "Productivity", "Work", false, ResolvedIdentity.UNKNOWN, ResolvedCategory.PRODUCTIVITY)
-        }
-
-        val brandName = evidence.appLabel ?: tokenizeBrand(evidence.packageName ?: "App")
-        return AppContext(brandName, "Other", false, ResolvedIdentity.UNKNOWN, ResolvedCategory.OTHER)
+        return null
     }
 
     private fun collectNodeStrings(rootNode: AccessibilityNodeInfo?): Pair<List<String>, List<String>> {
         if (rootNode == null) return Pair(emptyList(), emptyList())
         val texts = mutableListOf<String>()
         val descs = mutableListOf<String>()
-        traverseNodes(rootNode, texts, descs, 0, 10)
+        traverseNodes(rootNode, texts, descs, 0, 8)
         return Pair(texts, descs)
     }
 
     private fun traverseNodes(node: AccessibilityNodeInfo?, texts: MutableList<String>, descs: MutableList<String>, depth: Int, maxDepth: Int) {
-        if (node == null || depth > maxDepth) return
+        if (node == null || depth > maxDepth || texts.size >= 12) return
         val text = node.text?.toString()?.trim()
         val desc = node.contentDescription?.toString()?.trim()
-        if (!text.isNullOrBlank()) texts.add(text)
-        if (!desc.isNullOrBlank()) descs.add(desc)
+        if (!text.isNullOrBlank() && text.length > 2 && !texts.contains(text) && text.length <= 120) {
+            texts.add(text)
+        }
+        if (!desc.isNullOrBlank() && desc.length > 2 && !descs.contains(desc) && desc.length <= 120) {
+            descs.add(desc)
+        }
 
         for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
+            val child = try { node.getChild(i) } catch (_: Throwable) { null } ?: continue
             traverseNodes(child, texts, descs, depth + 1, maxDepth)
         }
     }
@@ -508,6 +617,7 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         val urlViewIds = listOf(
             "com.android.chrome:id/url_bar",
             "com.chrome.beta:id/url_bar",
+            "com.chrome.dev:id/url_bar",
             "com.sec.android.app.sbrowser:id/location_bar_edit_text",
             "com.microsoft.emmx:id/url_bar",
             "org.mozilla.firefox:id/url_bar_title",
@@ -534,16 +644,36 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         val text = node.text?.toString()?.trim() ?: ""
         if (text.isNotBlank()) {
             val lower = text.lowercase()
-            if (lower.contains("aistudio") || lower.contains("ais-dev-") || lower.contains("ais-pre-") || lower.contains(".google.com") || lower.contains(".ai") || lower.contains(".com/") || lower.startsWith("http")) {
+            if (lower.contains("aistudio") || lower.contains("ais-dev-") || lower.contains("ais-pre-") ||
+                lower.contains(".google.com") || lower.contains(".ai") || lower.contains(".com/") ||
+                lower.startsWith("http://") || lower.startsWith("https://")) {
                 return text
             }
         }
         for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
+            val child = try { node.getChild(i) } catch (_: Throwable) { null } ?: continue
             val found = searchNodeForUrl(child, depth + 1, maxDepth)
             if (found != null) return found
         }
         return null
+    }
+
+    fun extractDomain(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        var clean = url.trim()
+        if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
+            clean = "https://$clean"
+        }
+        return try {
+            val uri = java.net.URI(clean)
+            val host = uri.host
+            if (!host.isNullOrBlank()) {
+                host.removePrefix("www.")
+            } else null
+        } catch (_: Throwable) {
+            val noProto = clean.substringAfter("://").substringBefore("/").substringBefore("?").removePrefix("www.")
+            if (noProto.isNotBlank()) noProto else null
+        }
     }
 
     private fun getWebApkMetaName(context: Context, packageName: String): String? {
@@ -568,6 +698,28 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         } catch (_: Throwable) { null }
     }
 
+    private fun getWebApkScopeUrl(context: Context, packageName: String): String? {
+        if (!packageName.startsWith("org.chromium.webapk") && !packageName.contains(".webapk")) return null
+        return try {
+            val pm = context.packageManager
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                PackageManager.ApplicationInfoFlags.of(PackageManager.GET_META_DATA.toLong())
+            } else {
+                @Suppress("DEPRECATION")
+                PackageManager.GET_META_DATA
+            }
+            val appInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.getApplicationInfo(packageName, flags as PackageManager.ApplicationInfoFlags)
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getApplicationInfo(packageName, flags as Int)
+            }
+            val meta = appInfo.metaData
+            meta?.getString("org.chromium.webapk.shell_apk.scope_url")
+                ?: meta?.getString("org.chromium.webapk.shell_apk.start_url")
+        } catch (_: Throwable) { null }
+    }
+
     private fun getAppLabel(context: Context, packageName: String): String? {
         return try {
             val pm = context.packageManager
@@ -588,10 +740,14 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         return best.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
     }
 
-    private fun isBrowserOrPwa(pkgLower: String): Boolean {
+    fun isBrowserOrPwa(pkgLower: String): Boolean {
         return pkgLower.startsWith("org.chromium.webapk") ||
                 pkgLower.contains(".webapk") ||
-                pkgLower in BROWSER_PACKAGES
+                pkgLower in BROWSER_PACKAGES ||
+                pkgLower.contains("chrome") ||
+                pkgLower.contains("browser") ||
+                pkgLower.contains("firefox") ||
+                pkgLower.contains("webkit")
     }
 
     fun isSystemOrIme(context: Context?, packageName: String?): Boolean {
