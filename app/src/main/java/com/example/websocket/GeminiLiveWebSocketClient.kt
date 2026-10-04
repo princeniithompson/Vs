@@ -275,13 +275,13 @@ class GeminiLiveWebSocketClient(
                 Log.i(TAG, "[ConnectionState] DISCONNECTED: WebSocket closed (code: $code, reason: $reasonDetail)")
                 isSetupComplete.set(false)
 
-                if (code == 1000 || isExplicitlyClosed.get()) {
+                if (isExplicitlyClosed.get()) {
                     isConnectingGuard.set(false)
                     lastApiKey = ""
-                    onLog(LogLevel.INFO, TAG, "WebSocket closed cleanly (code: 1000, reason: $reasonDetail)", null)
+                    onLog(LogLevel.INFO, TAG, "WebSocket closed cleanly (code: $code, reason: $reasonDetail)", null)
                     notifyStateChanged(ConnectionState.Idle)
                 } else {
-                    handleDisconnectOrFailure("WebSocket closed abnormally (code: $code, reason: $reasonDetail)", null)
+                    handleDisconnectOrFailure("WebSocket closed (code: $code, reason: $reasonDetail)", null)
                 }
             }
 
