@@ -440,7 +440,13 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         val pkg = evidence.packageName
         if (isSystemOrIme(context, pkg)) return null
 
-        val cacheKey = evidence.learnedRegistryKey
+        val cacheKey = if (pkg.equals("com.google.android.googlequicksearchbox", ignoreCase = true)) {
+            "$pkg|${evidence.windowTitle ?: ""}|${evidence.visibleNodeTexts.joinToString(",")}"
+        } else if (isBrowserOrPwa(pkg.lowercase())) {
+            "$pkg|${evidence.urlOrDomain ?: ""}|${evidence.windowTitle ?: ""}"
+        } else {
+            evidence.learnedRegistryKey
+        }
         val cached = appCache.get(cacheKey)
         if (cached != null) return cached
 
@@ -474,14 +480,20 @@ class AppResolutionEngine(cacheSize: Int = 150) {
             val learned = LearnedAppRegistry.get(context, cacheKey)
             if (learned != null && learned.confirmCount >= LearnedAppRegistry.CONFIRM_THRESHOLD) {
                 val isAi = learned.category.equals("AI", ignoreCase = true)
+                // PRECEDENCE: learned > Gemini fresh > local label. Always preserve learned.appName!
+                val resolvedName = if (learned.source == "local" && evidence.localDisplayName.isNotBlank()) {
+                    evidence.localDisplayName
+                } else {
+                    learned.appName.ifBlank { evidence.localDisplayName }
+                }
                 val result = AppContext(
-                    name = evidence.localDisplayName.ifBlank { learned.appName },
+                    name = resolvedName,
                     category = learned.category,
                     isAiApp = isAi,
                     isLocallyResolved = true
                 )
                 appCache.put(cacheKey, result)
-                Log.d(TAG, "Stage B: Learned registry hit for key=$cacheKey -> ${result.name} (${result.category})")
+                Log.d(TAG, "Stage B: Learned registry hit for key=$cacheKey -> appName='${result.name}' (learned='${learned.appName}', local='${evidence.localDisplayName}'), category='${result.category}', confirmCount=${learned.confirmCount}")
                 return result
             }
         }
@@ -578,9 +590,21 @@ class AppResolutionEngine(cacheSize: Int = 150) {
     private fun evaluateHeuristics(evidence: AppEvidence): AppContext? {
         val pkgLower = evidence.packageName.lowercase()
         val nameLower = evidence.localDisplayName.lowercase()
+        val allNodeText = (evidence.visibleNodeTexts + evidence.contentDescriptions).joinToString(" ").lowercase()
+        val titleLower = (evidence.windowTitle ?: "").lowercase()
 
-        val aiKeywords = listOf("chatgpt", "claude", "grok", "kimi", "qwen", "deepseek", "perplexity", "copilot", "character.ai", "midjourney")
-        if (aiKeywords.any { pkgLower.contains(it) || nameLower.contains(it) }) {
+        val strongAiPhrases = listOf("new chat", "ask anything", "send a message", "regenerate response", "select model", "conversation history")
+        val strongAiMatchCount = strongAiPhrases.count { allNodeText.contains(it) || titleLower.contains(it) }
+
+        val weakAiKeywords = listOf("ai", "chat", "assistant", "bot", "gpt", "api", "chatgpt", "claude", "grok", "kimi", "qwen", "deepseek", "perplexity", "copilot", "character.ai", "midjourney")
+        val weakAiMatchCount = weakAiKeywords.count { allNodeText.contains(it) || titleLower.contains(it) || pkgLower.contains(it) || nameLower.contains(it) }
+
+        if (strongAiMatchCount >= 2 || (strongAiMatchCount >= 1 && weakAiMatchCount >= 2) || (pkgLower.contains("ai") && strongAiMatchCount >= 1)) {
+            val displayName = if (evidence.localDisplayName.isBlank() || evidence.localDisplayName == "SuperAI" || evidence.localDisplayName == "App") "AI Assistant" else evidence.localDisplayName
+            return AppContext(displayName, "AI", true, ResolvedIdentity.UNKNOWN, ResolvedCategory.AI_ASSISTANT)
+        }
+
+        if (weakAiKeywords.any { pkgLower.contains(it) || nameLower.contains(it) }) {
             return AppContext(evidence.localDisplayName, "AI", true, ResolvedIdentity.UNKNOWN, ResolvedCategory.AI_ASSISTANT)
         }
 

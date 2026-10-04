@@ -8,13 +8,15 @@ data class LearnedAppEntry(
     val appName: String,
     val category: String,
     val confirmCount: Int,
+    val source: String = "gemini",
     val lastUpdatedMs: Long = System.currentTimeMillis()
 )
 
 /**
  * Persisted registry for dynamically learned application names and categories.
- * When Gemini confirms the category for an unknown package or browser site 2-3 times,
- * the result is marked confirmed and subsequent detections resolve locally with zero network calls.
+ * When Gemini confirms or corrects the appName + category for an unknown package or browser site,
+ * the result is stored with highest precedence (learned > Gemini fresh > local label).
+ * After confirmCount >= 2, subsequent detections resolve locally with zero network calls.
  */
 object LearnedAppRegistry {
     private const val TAG = "LearnedAppRegistry"
@@ -30,6 +32,7 @@ object LearnedAppRegistry {
                 appName = json.getString("appName"),
                 category = json.getString("category"),
                 confirmCount = json.optInt("confirmCount", 1),
+                source = json.optString("source", "gemini"),
                 lastUpdatedMs = json.optLong("lastUpdatedMs", System.currentTimeMillis())
             )
         } catch (e: Exception) {
@@ -43,10 +46,19 @@ object LearnedAppRegistry {
         return entry.confirmCount >= CONFIRM_THRESHOLD
     }
 
-    fun recordConfirmation(context: Context, key: String, appName: String, category: String): LearnedAppEntry {
+    fun recordConfirmation(
+        context: Context,
+        key: String,
+        appName: String,
+        category: String,
+        source: String = "gemini"
+    ): LearnedAppEntry {
         val existing = get(context, key)
-        val newCount = if (existing != null && existing.category.equals(category, ignoreCase = true)) {
-            existing.confirmCount + 1
+        val sameCategory = existing != null && existing.category.equals(category, ignoreCase = true)
+        val sameName = existing != null && existing.appName.trim().equals(appName.trim(), ignoreCase = true)
+
+        val newCount = if (sameCategory && sameName) {
+            existing!!.confirmCount + 1
         } else {
             1
         }
@@ -55,6 +67,7 @@ object LearnedAppRegistry {
             appName = appName,
             category = category,
             confirmCount = newCount,
+            source = source,
             lastUpdatedMs = System.currentTimeMillis()
         )
 
@@ -64,10 +77,11 @@ object LearnedAppRegistry {
                 put("appName", updated.appName)
                 put("category", updated.category)
                 put("confirmCount", updated.confirmCount)
+                put("source", updated.source)
                 put("lastUpdatedMs", updated.lastUpdatedMs)
             }
             prefs.edit().putString(key, json.toString()).apply()
-            Log.d(TAG, "Learned key='$key' -> '${updated.appName}' ('${updated.category}'), count=$newCount, confirmed=${newCount >= CONFIRM_THRESHOLD}")
+            Log.d(TAG, "Learned entry saved: key='$key', appName='${updated.appName}', category='${updated.category}', count=$newCount, source='${updated.source}', confirmed=${newCount >= CONFIRM_THRESHOLD}")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to persist learned entry for $key", e)
         }
