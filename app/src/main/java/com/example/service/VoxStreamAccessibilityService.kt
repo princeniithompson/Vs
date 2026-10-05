@@ -248,26 +248,67 @@ class VoxStreamAccessibilityService : AccessibilityService() {
         return false
     }
 
-    private fun commitTextViaInputMethod(text: String): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            try {
-                val target = lastFocusedEditableNode ?: getActiveEditableNode()
-                target?.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-
-                val im = inputMethod
-                val ic = im?.currentInputConnection
-                if (ic != null) {
-                    ic.commitText(text, 1, null)
-                    Log.d(TAG, "AccessibilityInputConnection.commitText dispatched successfully, len=${text.length}")
-                    return true
-                } else {
-                    Log.d(TAG, "AccessibilityInputConnection is null at injection time")
-                }
-            } catch (e: Throwable) {
-                Log.w(TAG, "Error in commitTextViaInputMethod: ${e.message}")
-            }
+    @androidx.annotation.VisibleForTesting(otherwise = androidx.annotation.VisibleForTesting.PRIVATE)
+    internal fun commitTextViaInputMethod(text: String): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            Log.d(TAG, "InputConnection unavailable: Android version < 13")
+            return false
         }
-        return false
+
+        return try {
+            val im = inputMethod
+            if (im == null || !im.currentInputStarted) {
+                Log.d(TAG, "InputConnection unavailable: inputMethod is null or not started")
+                return false
+            }
+
+            val ic = im.currentInputConnection
+            if (ic == null) {
+                Log.d(TAG, "InputConnection unavailable: currentInputConnection is null")
+                return false
+            }
+
+            val target = lastFocusedEditableNode ?: getActiveEditableNode()
+            target?.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+
+            val beforeSurrounding = try {
+                ic.getSurroundingText(text.length + 64, 64, 0)?.text?.toString()
+            } catch (_: Throwable) {
+                null
+            }
+            val beforeNodeText = target?.text?.toString()
+
+            ic.commitText(text, 1, null)
+
+            val afterSurrounding = try {
+                ic.getSurroundingText(text.length + 64, 64, 0)?.text?.toString()
+            } catch (_: Throwable) {
+                null
+            }
+            target?.refresh()
+            val afterNodeText = target?.text?.toString()
+
+            val commitSucceeded = when {
+                afterSurrounding != null && afterSurrounding.contains(text) -> true
+                afterNodeText != null && afterNodeText.contains(text) -> true
+                afterSurrounding != null && beforeSurrounding != null && afterSurrounding != beforeSurrounding -> true
+                afterNodeText != null && beforeNodeText != null && afterNodeText != beforeNodeText -> true
+                afterSurrounding != null && beforeSurrounding != null && afterSurrounding == beforeSurrounding -> false
+                afterNodeText != null && beforeNodeText != null && afterNodeText == beforeNodeText -> false
+                else -> false
+            }
+
+            if (commitSucceeded) {
+                Log.d(TAG, "InputConnection commit succeeded, len=${text.length}")
+                true
+            } else {
+                Log.w(TAG, "InputConnection commit failed: editor did not reflect committed text")
+                false
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "InputConnection commit threw an exception: ${e.message}", e)
+            false
+        }
     }
 
     private fun getActiveEditableNode(): AccessibilityNodeInfo? {

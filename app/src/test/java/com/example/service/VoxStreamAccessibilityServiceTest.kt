@@ -72,4 +72,17 @@ class VoxStreamAccessibilityServiceTest {
         val result = service.extractGenuineText(node)
         assertEquals("", result)
     }
+
+    @Test
+    fun `commitTextViaInputMethod returns false when InputConnection is unavailable`() {
+        val result = service.commitTextViaInputMethod("Test text")
+        // When input connection is unavailable or not started, must return false to allow fallbacks
+        org.junit.Assert.assertFalse(result)
+    }
+
+    @Test
+    fun `injectText returns false for empty text`() {
+        val result = service.injectText("")
+        org.junit.Assert.assertFalse(result)
+    }
 }
