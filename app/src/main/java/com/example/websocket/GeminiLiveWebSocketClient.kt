@@ -205,7 +205,7 @@ class GeminiLiveWebSocketClient(
                 }
 
                 val systemPromptText = buildString {
-                    append("You are a real-time speech-to-text dictation engine. Ignore continuous background noise, ambient sounds, wind, traffic, other people’s voices, and any non-speech audio. Only transcribe clear speech directed at the microphone. Output only the transcribed words with proper capitalization and punctuation. Do not reply conversationally, do not answer questions, and do not add commentary—only output the verbatim transcription of what was said.")
+                    append("You are an ultra-accurate real-time voice dictation engine. Transcribe ONLY the words spoken by the primary user closest to the microphone. Completely ignore background ambient sounds, restaurant noise, kitchen clatter, passing vehicles, and background conversations. Never transcribe non-speech sounds. Output only the transcribed text with proper capitalization and punctuation. Do not reply conversationally, do not answer questions, and do not add commentary—only output the verbatim transcription of what was said.")
                     if (customVocabularyList.isNotEmpty()) {
                         val termsStr = customVocabularyList.filter { it.isNotBlank() }.joinToString(", ")
                         if (termsStr.isNotBlank()) {

@@ -31,6 +31,11 @@ class FloatingDictationSessionManager(
     companion object {
         private const val TAG = "FloatingDictationMgr"
         private const val MAX_AUDIO_QUEUE_CHUNKS = 50 // ~5s buffer at 100ms chunks to bridge reconnects
+        // Syllable duration threshold: Human speech/whisper requires at least 3 consecutive 20ms frames (~60ms)
+        private const val MIN_SPEECH_FRAMES = 3
+        // Minimum speech amplitude above ambient noise floor (tuned for close-proximity whispering: ~0.030)
+        private const val SPEECH_DELTA_THRESHOLD = 0.016f
+        private const val MIN_ABSOLUTE_SPEECH_AMP = 0.030f
     }
 
     private val audioQueue = ConcurrentLinkedQueue<ByteArray>()
@@ -51,6 +56,22 @@ class FloatingDictationSessionManager(
 
     private val finalizedTranscript = StringBuilder()
     private var interimTranscript = ""
+
+    // VAD & Silence tracking state: separates sustained speech from brief ambient clatter/transients
+    private var baselineNoiseFloor = 0.018f
+    private var consecutiveSpeechFrames = 0
+    private var smoothedAmp = 0f
+    private var lastSustainedSpeechTimestamp = 0L
+
+    var isSpeechActive: Boolean = false
+        private set
+
+    val silenceDurationMs: Long
+        get() {
+            if (!isRecording) return 0L
+            val lastSpeech = lastSustainedSpeechTimestamp
+            return if (lastSpeech > 0L) (System.currentTimeMillis() - lastSpeech).coerceAtLeast(0L) else 0L
+        }
 
     private val audioRecorder = AudioRecorder(
         onChunkReady = { chunk ->
@@ -77,10 +98,48 @@ class FloatingDictationSessionManager(
                 }
             }
         },
-        onAmplitudeChanged = { amp ->
+        onAmplitudeChanged = { rawAmp ->
             if (isRecording) {
-                onAmplitudeChanged(amp.coerceIn(0f, 1f))
+                val clamped = rawAmp.coerceIn(0f, 1f)
+
+                // 1. Slow adaptation of ambient noise floor during quiet periods
+                if (!isSpeechActive && clamped < 0.05f) {
+                    baselineNoiseFloor = (baselineNoiseFloor * 0.98f) + (clamped * 0.02f)
+                }
+
+                // 2. Check if frame exceeds vocal speech threshold (including close whisper)
+                val speechThreshold = maxOf(MIN_ABSOLUTE_SPEECH_AMP, baselineNoiseFloor + SPEECH_DELTA_THRESHOLD)
+                val isAboveThreshold = clamped >= speechThreshold
+
+                if (isAboveThreshold) {
+                    consecutiveSpeechFrames++
+                    if (consecutiveSpeechFrames >= MIN_SPEECH_FRAMES) {
+                        isSpeechActive = true
+                        lastSustainedSpeechTimestamp = System.currentTimeMillis()
+                    }
+                } else {
+                    // Frame below speech threshold
+                    if (consecutiveSpeechFrames > 0) {
+                        consecutiveSpeechFrames = 0
+                    }
+                    if (isSpeechActive) {
+                        isSpeechActive = false
+                    }
+                }
+
+                // 3. Transient dampening for visualizer:
+                // An isolated transient spike (< 60ms) without sustained speech does not jerk the visualizer to max
+                val targetAmp = if (isSpeechActive || isAboveThreshold) {
+                    clamped
+                } else {
+                    clamped.coerceAtMost(0.04f)
+                }
+                smoothedAmp = (smoothedAmp * 0.7f) + (targetAmp * 0.3f)
+                onAmplitudeChanged(smoothedAmp.coerceIn(0f, 1f))
             } else {
+                smoothedAmp = 0f
+                consecutiveSpeechFrames = 0
+                isSpeechActive = false
                 onAmplitudeChanged(0f)
             }
         },
@@ -123,6 +182,12 @@ class FloatingDictationSessionManager(
         sessionChunksSent = 0
         sessionBytesSent = 0L
         audioQueue.clear()
+
+        baselineNoiseFloor = 0.018f
+        consecutiveSpeechFrames = 0
+        smoothedAmp = 0f
+        isSpeechActive = false
+        lastSustainedSpeechTimestamp = 0L
 
         val modeLabel = if (smartMode) "SMART" else "VERBATIM"
         AppLogRepository.logEvent(
