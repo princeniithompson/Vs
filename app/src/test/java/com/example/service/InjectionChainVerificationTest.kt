@@ -64,6 +64,19 @@ class InjectionChainVerificationTest {
     }
 
     @Test
+    fun `cancelPendingPaste also cancels restoration callback to prevent cross-operation interference`() {
+        var restoreExecuted = false
+        val dummyRestoreRunnable = Runnable { restoreExecuted = true }
+
+        testHandler.postDelayed(dummyRestoreRunnable, 450)
+        FloatingTextInjector.cancelPendingPaste(testHandler)
+        testHandler.removeCallbacks(dummyRestoreRunnable)
+
+        ShadowLooper.idleMainLooper()
+        assertFalse("Cancelled restoration must never execute", restoreExecuted)
+    }
+
+    @Test
     fun `injectTextSafely preserves existing text and inserts at cursor position without duplication`() {
         val node = AccessibilityNodeInfo.obtain()
         node.text = "Hello "

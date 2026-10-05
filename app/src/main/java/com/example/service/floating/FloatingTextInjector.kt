@@ -135,14 +135,21 @@ object FloatingTextInjector {
         return false
     }
 
+    private val nextPasteOperationId = java.util.concurrent.atomic.AtomicLong(0)
+    @Volatile
+    private var activePasteOperationId = 0L
+
     private var pendingPasteRunnable: Runnable? = null
     private var pendingRetryRunnable: Runnable? = null
+    private var pendingRestoreRunnable: Runnable? = null
 
     /**
-     * Cancels any pending asynchronous paste callbacks to ensure an asynchronous
-     * paste never fires after another injection method has already succeeded.
+     * Cancels any pending asynchronous paste and clipboard-restoration callbacks
+     * to ensure an asynchronous paste or old restoration never fires after another
+     * injection method has already succeeded or a new injection has started.
      */
     fun cancelPendingPaste(handler: Handler = mainHandler) {
+        activePasteOperationId = 0L
         pendingPasteRunnable?.let {
             handler.removeCallbacks(it)
             pendingPasteRunnable = null
@@ -150,6 +157,10 @@ object FloatingTextInjector {
         pendingRetryRunnable?.let {
             handler.removeCallbacks(it)
             pendingRetryRunnable = null
+        }
+        pendingRestoreRunnable?.let {
+            handler.removeCallbacks(it)
+            pendingRestoreRunnable = null
         }
     }
 
@@ -165,6 +176,10 @@ object FloatingTextInjector {
     ): Boolean {
         cancelPendingPaste(handler)
 
+        val operationId = nextPasteOperationId.incrementAndGet()
+        activePasteOperationId = operationId
+        val operationLabel = "VoxStream Dictation #$operationId"
+
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         val originalClip = try {
             clipboard?.primaryClip
@@ -173,7 +188,7 @@ object FloatingTextInjector {
             null
         }
 
-        Log.d(TAG, "Executing paste-injection for pkg=${targetNode.packageName}, textLen=${newText.length}")
+        Log.d(TAG, "Executing paste-injection #$operationId for pkg=${targetNode.packageName}, textLen=${newText.length}")
 
         // 1. Ensure target node receives both ACTION_FOCUS and ACTION_ACCESSIBILITY_FOCUS
         try {
@@ -190,7 +205,12 @@ object FloatingTextInjector {
 
         val pasteRunnable = Runnable {
             pendingPasteRunnable = null
-            val dictationClip = ClipData.newPlainText("VoxStream Dictation", newText)
+            if (activePasteOperationId != operationId) {
+                Log.d(TAG, "Paste operation #$operationId cancelled before dispatch")
+                return@Runnable
+            }
+
+            val dictationClip = ClipData.newPlainText(operationLabel, newText)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 try {
                     val extras = android.os.PersistableBundle().apply {
@@ -203,37 +223,41 @@ object FloatingTextInjector {
             try {
                 clipboard?.setPrimaryClip(dictationClip)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed setting dictation clip", e)
+                Log.e(TAG, "Failed setting dictation clip for #$operationId", e)
                 return@Runnable
             }
 
             var initialPasteResult = false
             try {
                 initialPasteResult = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-                Log.d(TAG, "Initial ACTION_PASTE dispatch: $initialPasteResult")
+                Log.d(TAG, "Initial ACTION_PASTE dispatch for #$operationId: $initialPasteResult")
             } catch (e: Exception) {
-                Log.w(TAG, "Initial ACTION_PASTE dispatch error: ${e.message}")
+                Log.w(TAG, "Initial ACTION_PASTE dispatch error for #$operationId: ${e.message}")
             }
 
             if (!initialPasteResult) {
                 // Retry once after a short delay
                 val retryRunnable = Runnable {
                     pendingRetryRunnable = null
+                    if (activePasteOperationId != operationId) return@Runnable
                     try {
                         targetNode.refresh()
                         val retryPasteResult = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-                        Log.d(TAG, "Retry ACTION_PASTE dispatch: $retryPasteResult")
+                        Log.d(TAG, "Retry ACTION_PASTE dispatch for #$operationId: $retryPasteResult")
                     } catch (e: Exception) {
-                        Log.w(TAG, "Retry ACTION_PASTE dispatch error: ${e.message}")
+                        Log.w(TAG, "Retry ACTION_PASTE dispatch error for #$operationId: ${e.message}")
                     }
                 }
                 pendingRetryRunnable = retryRunnable
                 handler.postDelayed(retryRunnable, pasteRetryDelayMs)
             }
 
-            handler.postDelayed({
-                safeRestoreOriginalClipboard(clipboard, originalClip, newText)
-            }, clipboardRestoreDelayMs)
+            val restoreRunnable = Runnable {
+                pendingRestoreRunnable = null
+                safeRestoreOriginalClipboard(clipboard, originalClip, newText, operationId, operationLabel)
+            }
+            pendingRestoreRunnable = restoreRunnable
+            handler.postDelayed(restoreRunnable, clipboardRestoreDelayMs)
         }
 
         pendingPasteRunnable = pasteRunnable
@@ -245,15 +269,22 @@ object FloatingTextInjector {
     private fun safeRestoreOriginalClipboard(
         clipboard: ClipboardManager?,
         originalClip: ClipData?,
-        expectedDictationText: String
+        expectedDictationText: String,
+        operationId: Long,
+        operationLabel: String
     ) {
+        if (activePasteOperationId != operationId) {
+            Log.i(TAG, "Paste operation #$operationId is obsolete (active is #$activePasteOperationId). Skipping restoration.")
+            return
+        }
+
         try {
             val currentClip = try { clipboard?.primaryClip } catch (_: Exception) { null }
 
             val isStillOurDictationClip = if (currentClip != null && currentClip.itemCount > 0) {
                 val currentText = currentClip.getItemAt(0)?.text?.toString() ?: ""
                 val label = currentClip.description?.label?.toString() ?: ""
-                currentText == expectedDictationText || label == "VoxStream Dictation"
+                label == operationLabel && currentText == expectedDictationText
             } else {
                 false
             }
@@ -261,20 +292,24 @@ object FloatingTextInjector {
             if (isStillOurDictationClip) {
                 if (originalClip != null) {
                     clipboard?.setPrimaryClip(originalClip)
-                    Log.d(TAG, "Restored original user clipboard safely")
+                    Log.d(TAG, "Restored original user clipboard safely for operation #$operationId")
                 } else {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                         clipboard?.clearPrimaryClip()
                     } else {
                         clipboard?.setPrimaryClip(ClipData.newPlainText("", ""))
                     }
-                    Log.d(TAG, "Cleared temporary dictation clip from clipboard")
+                    Log.d(TAG, "Cleared temporary dictation clip from clipboard for operation #$operationId")
                 }
             } else {
-                Log.i(TAG, "User copied new data during paste window. Preserving current clipboard.")
+                Log.i(TAG, "User or new operation copied new data during paste window. Preserving current clipboard.")
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error in safeRestoreOriginalClipboard: ${e.message}")
+        } finally {
+            if (activePasteOperationId == operationId) {
+                activePasteOperationId = 0L
+            }
         }
     }
 
