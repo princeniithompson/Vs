@@ -85,4 +85,21 @@ class VoxStreamAccessibilityServiceTest {
         val result = service.injectText("")
         org.junit.Assert.assertFalse(result)
     }
+
+    @Test
+    fun `injectText is blocked when Smart Safe Mode is active`() {
+        FloatingBubbleManager.updateCurrentForegroundPackage("com.chase.sig.android", null)
+        try {
+            val result = service.injectText("Secret password")
+            org.junit.Assert.assertFalse("Injection must be blocked when Smart Safe Mode is active", result)
+        } finally {
+            FloatingBubbleManager.updateCurrentForegroundPackage("com.google.android.keep", null)
+        }
+    }
+
+    @Test
+    fun `VoxStreamInputMethodService commitText returns false when service is uninitialized`() {
+        val result = VoxStreamInputMethodService.commitText("Hello")
+        org.junit.Assert.assertFalse("Must return false when IME instance is null", result)
+    }
 }

@@ -19,14 +19,24 @@ class VoxStreamInputMethodService : InputMethodService() {
             private set
 
         fun commitText(text: String): Boolean {
-            val ime = instance ?: return false
+            val ime = instance ?: run {
+                Log.d(TAG, "VoxStreamIME unavailable: instance is null")
+                return false
+            }
+            if (!ime.currentInputStarted) {
+                Log.d(TAG, "VoxStreamIME unavailable: currentInputStarted is false")
+                return false
+            }
             return try {
-                val ic = ime.currentInputConnection ?: return false
+                val ic = ime.currentInputConnection ?: run {
+                    Log.d(TAG, "VoxStreamIME unavailable: currentInputConnection is null")
+                    return false
+                }
                 val success = ic.commitText(text, 1)
                 Log.d(TAG, "VoxStreamIME commitText result: $success, len=${text.length}")
                 success
             } catch (e: Exception) {
-                Log.w(TAG, "VoxStreamIME commitText failed: ${e.message}")
+                Log.w(TAG, "VoxStreamIME commitText failed with exception: ${e.message}", e)
                 false
             }
         }

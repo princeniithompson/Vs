@@ -293,9 +293,14 @@ class VoxStreamAccessibilityService : AccessibilityService() {
                 afterNodeText != null && afterNodeText.contains(text) -> true
                 afterSurrounding != null && beforeSurrounding != null && afterSurrounding != beforeSurrounding -> true
                 afterNodeText != null && beforeNodeText != null && afterNodeText != beforeNodeText -> true
-                afterSurrounding != null && beforeSurrounding != null && afterSurrounding == beforeSurrounding -> false
-                afterNodeText != null && beforeNodeText != null && afterNodeText == beforeNodeText -> false
-                else -> false
+                afterSurrounding != null && beforeSurrounding != null && afterSurrounding == beforeSurrounding -> {
+                    Log.w(TAG, "InputConnection commit rejected: surrounding text unchanged after commit")
+                    false
+                }
+                else -> {
+                    Log.d(TAG, "InputConnection commit dispatched cleanly without explicit text feedback (preventing duplicate insertion)")
+                    true
+                }
             }
 
             if (commitSucceeded) {
