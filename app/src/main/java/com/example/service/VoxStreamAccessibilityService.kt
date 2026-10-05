@@ -51,8 +51,12 @@ class VoxStreamAccessibilityService : AccessibilityService() {
 
         // FLAG_REPORT_VIEW_IDS: Required to resolve view resource IDs in target editable fields for direct text injection
         // FLAG_INCLUDE_NOT_IMPORTANT_VIEWS: Required to access nested or custom editor view hierarchies in rich text and messaging inputs
-        val flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+        // FLAG_INPUT_METHOD_EDITOR: Connects directly to the active editor's InputConnection (Wispr Flow architecture)
+        var flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                 AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            flags = flags or AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
+        }
 
         info.flags = flags
         info.notificationTimeout = 30
@@ -215,13 +219,19 @@ class VoxStreamAccessibilityService : AccessibilityService() {
             return false
         }
 
-        // Priority 1: Companion VoxStreamInputMethodService
+        // Priority 1: Direct Android 13+ AccessibilityInputConnection (Wispr Flow architecture)
+        if (commitTextViaInputMethod(newText)) {
+            Log.d(TAG, "AccessibilityInputConnection committed text successfully")
+            return true
+        }
+
+        // Priority 2: Companion VoxStreamInputMethodService
         if (VoxStreamInputMethodService.commitText(newText)) {
             Log.d(TAG, "VoxStreamInputMethodService committed text successfully")
             return true
         }
 
-        // Priority 2: Direct node editing via injectTextSafely
+        // Priority 3: Direct node editing via injectTextSafely
         val targetNode = getActiveEditableNode()
         if (targetNode != null) {
             val targetPkg = targetNode.packageName?.toString() ?: ""
@@ -235,6 +245,28 @@ class VoxStreamAccessibilityService : AccessibilityService() {
             }
         }
 
+        return false
+    }
+
+    private fun commitTextViaInputMethod(text: String): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            try {
+                val target = lastFocusedEditableNode ?: getActiveEditableNode()
+                target?.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+
+                val im = inputMethod
+                val ic = im?.currentInputConnection
+                if (ic != null) {
+                    ic.commitText(text, 1, null)
+                    Log.d(TAG, "AccessibilityInputConnection.commitText dispatched successfully, len=${text.length}")
+                    return true
+                } else {
+                    Log.d(TAG, "AccessibilityInputConnection is null at injection time")
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "Error in commitTextViaInputMethod: ${e.message}")
+            }
+        }
         return false
     }
 

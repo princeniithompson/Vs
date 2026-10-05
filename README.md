@@ -69,7 +69,7 @@ app/src/main/java/com/example/
 ## Background Services
 
 - `FloatingBubbleService`: Displays a persistent floating overlay window (`WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY`) over third-party applications and orchestrates microphone recording with foreground service lifecycle management.
-- `VoxStreamAccessibilityService`: Listens for focus and text-change accessibility events across running apps to identify editable input nodes (`AccessibilityNodeInfo`) and directly injects finalized transcripts via `ACTION_SET_TEXT`.
+- `VoxStreamAccessibilityService`: Listens for focus and text-change accessibility events across running apps to identify editable input nodes (`AccessibilityNodeInfo`). Injects text with Priority 1 using Android 13+ `AccessibilityInputConnection` directly into the active editor's native input connection (Wispr Flow architecture), falling back to caret-level node actions without clipboard pollution.
 
 ---
 
@@ -102,9 +102,66 @@ All voice audio captured during dictation is streamed directly over an encrypted
 
 ---
 
+## Text Injection Architecture (The Wispr Flow Blueprint)
+
+VoxStream achieves universal, non-destructive text injection across all Android apps—including rich-text and document editors like Google Keep, Google Docs, Chrome, and Notion—without replacing the user's default keyboard (Gboard) and without touching the system clipboard.
+
+### The Underlying Problem with Traditional Accessibility Injection
+1. **The "Empty Note Discarded" Bug in Rich Editors**:
+   - Standard accessibility tools rely on `AccessibilityNodeInfo.performAction(ACTION_SET_TEXT)`.
+   - While `ACTION_SET_TEXT` displays words visually on screen, apps with proprietary document models (like Google Keep) do not register this as genuine typing. Keep's internal state machine listens specifically to keyboard events through Android's `InputConnection`.
+   - When exiting or backing out, Google Keep inspects its internal document state, sees that no keyboard inputs occurred, and silently deletes the draft with "Empty note discarded".
+2. **The Clipboard Trap**:
+   - Falling back to `ACTION_PASTE` requires writing to `ClipboardManager`, which pollutes the user's clipboard history and triggers mandatory, non-dismissible OS-level toasts on Android 12+ (*"VoxStream pasted from your clipboard"*).
+
+### The Solution: Direct Native `AccessibilityInputConnection`
+Starting in Android 13 (API 33), Android introduced `AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR` (`flagInputMethodEditor`). This grants the active `AccessibilityService` direct access to the system's live `AccessibilityInputConnection` for whichever editor currently has focus.
+
+```text
+[Dictated Speech] ──► [Gemini Live WebSocket / AI Polish]
+                             │
+                             ▼
+               [VoxStreamAccessibilityService]
+                             │
+       ┌─────────────────────┴─────────────────────┐
+       ▼                                           ▼
+[Priority 1: Direct Pipe]               [Fallback: Standard Caret]
+inputMethod.currentInputConnection       injectTextSafely (ACTION_SET_TEXT)
+.commitText(text, 1, null)               with cursor bounds & hint safety
+       │                                           │
+       ▼                                           ▼
+[Target App: Google Keep, Chrome, etc.]   [Standard Native Views]
+   - Saved to internal document database     - Visually updated & caret positioned
+   - Gboard remains untouched as default      - Zero clipboard usage
+   - Zero clipboard pollution / paste toasts
+```
+
+### Hybrid Injection Priority Order in `VoxStreamAccessibilityService.kt`
+1. **Priority 1 (`commitTextViaInputMethod`)**:
+   - Queries `inputMethod.currentInputConnection`.
+   - Calls `ic.commitText(text, 1, null)` directly at the blinking cursor.
+   - *Result*: Instant, native keystroke recognition by Google Keep, Google Docs, Notion, Chrome WebViews, WhatsApp, and Slack without clipboard involvement.
+2. **Priority 2 (`VoxStreamInputMethodService.commitText`)**:
+   - Dispatches via companion `InputMethodService` if enabled as an alternate virtual input connection.
+3. **Priority 3 (`injectTextSafely`)**:
+   - Dispatches caret-level `ACTION_SET_TEXT` with cursor bounds checking, hint-text preservation (never treats strings > 15 characters as hints), and selection repositioning.
+4. **Strict Clipboard Policy**:
+   - The system clipboard is **NEVER** touched when an editable text field is active.
+   - Clipboard fallback is only triggered if dictation occurs with **zero** active input fields on screen (`"Copied to clipboard (no active text field found)"`).
+
+### Troubleshooting & Regression Prevention Checklist
+If text injection into Google Keep or rich editors ever fails in future refactorings, verify the following:
+1. **XML Config**: Verify `android:accessibilityFlags` in `app/src/main/res/xml/accessibility_service_config.xml` includes `flagInputMethodEditor`.
+2. **Runtime Service Info**: Ensure `serviceInfo.flags` in `VoxStreamAccessibilityService.onServiceConnected()` includes `AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR` for `Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU`.
+3. **Priority 1 Order**: Verify `commitTextViaInputMethod(newText)` is evaluated at the very top of `VoxStreamAccessibilityService.injectText()` before any node action fallbacks.
+4. **Return Type**: Note that `AccessibilityInputConnection.commitText()` in the Android SDK returns `Unit` (void), unlike standard IME `InputConnection.commitText()` which returns `Boolean`. Check that `ic != null` before invoking `ic.commitText()`.
+
+---
+
 ## Recent Hardening
 
 - **Key Safety & Repository Cleanliness**: Extracted all key resolution and placeholder checking into `ApiConfig.kt` as the single source of truth, eliminated all hardcoded API tokens from source files, and ensured `.gitignore` strictly guards `.env`, `local.properties`, and keystores.
 - **Race Condition in Injection Delay**: Resolved a race condition in `FloatingBubbleService.onConfirmClicked()` by tracking and assigning the 1400ms injection timeout to `pendingCompletionTimeoutJob`, ensuring user cancellation halts pending injections before execution.
 - **Microphone Protection on Android 14+**: Assigned the 450ms FGS type demotion to `fgsDowngradeJob` and cancelled it upon `startVoiceTyping()`, preventing background service demotion from killing the microphone during rapid re-dictation.
 - **WebSocket Auto-Reconnect Resilience**: Updated `GeminiLiveWebSocketClient.onClosed()` to preserve `lastApiKey` across normal server closures during active speech, ensuring automated exponential backoff reconnects seamlessly rather than aborting.
+- **Direct Input Connection (Wispr Flow Architecture)**: Enabled `FLAG_INPUT_METHOD_EDITOR` (`flagInputMethodEditor`) on `VoxStreamAccessibilityService` and implemented `commitTextViaInputMethod()` using Android 13+ `AccessibilityInputConnection`. Transcribed text is whispered directly through the active editor's native input connection at the blinking cursor, ensuring apps like Google Keep immediately detect and persist typed notes without clipboard copying, paste toasts, or replacing Gboard.
