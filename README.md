@@ -69,7 +69,7 @@ app/src/main/java/com/example/
 ## Background Services
 
 - `FloatingBubbleService`: Displays a persistent floating overlay window (`WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY`) over third-party applications and orchestrates microphone recording with foreground service lifecycle management.
-- `VoxStreamAccessibilityService`: Listens for focus and text-change accessibility events across running apps to identify editable input nodes (`AccessibilityNodeInfo`). Injects text with Priority 1 using Android 13+ `AccessibilityInputConnection` directly into the active editor's native input connection (Wispr Flow architecture), falling back to caret-level node actions without clipboard pollution.
+- `VoxStreamAccessibilityService`: Listens for focus and text-change accessibility events across running apps to identify editable input nodes (`AccessibilityNodeInfo`). Injects text via a four-tier prioritized chain: Priority 1 native `AccessibilityInputConnection`, Priority 2 companion IME, Priority 3 direct node editing (`ACTION_SET_TEXT`), and Priority 4 targeted paste injection for custom rich-text editors with automated clipboard restoration.
 
 ---
 
@@ -137,17 +137,33 @@ inputMethod.currentInputConnection       injectTextSafely (ACTION_SET_TEXT)
 ```
 
 ### Hybrid Injection Priority Order in `VoxStreamAccessibilityService.kt`
-1. **Priority 1 (`commitTextViaInputMethod`)**:
-   - Queries `inputMethod.currentInputConnection`.
-   - Calls `ic.commitText(text, 1, null)` directly at the blinking cursor.
-   - *Result*: Instant, native keystroke recognition by Google Keep, Google Docs, Notion, Chrome WebViews, WhatsApp, and Slack without clipboard involvement.
-2. **Priority 2 (`VoxStreamInputMethodService.commitText`)**:
-   - Dispatches via companion `InputMethodService` if enabled as an alternate virtual input connection.
-3. **Priority 3 (`injectTextSafely`)**:
-   - Dispatches caret-level `ACTION_SET_TEXT` with cursor bounds checking, hint-text preservation (never treats strings > 15 characters as hints), and selection repositioning.
-4. **Strict Clipboard Policy**:
-   - The system clipboard is **NEVER** touched when an editable text field is active.
-   - Clipboard fallback is only triggered if dictation occurs with **zero** active input fields on screen (`"Copied to clipboard (no active text field found)"`).
+- **Priority 1 (`commitTextViaInputMethod`)**:
+  - Direct native injection via Android 13+ `AccessibilityInputConnection` (`ic.commitText(text, 1, null)`).
+  - Whispers text directly through the active editor's native input connection at the caret without clipboard usage.
+  - Used for rich document editors (Google Keep, Google Docs, Notion, Chrome, WhatsApp, Slack).
+- **Priority 2 (`VoxStreamInputMethodService.commitText`)**:
+  - Virtual input method fallback if enabled by the user.
+  - Verifies `currentInputStarted` before committing text to prevent false dispatches or dead-end attempts.
+- **Priority 3 (`injectTextSafely`)**:
+  - Caret-level node action (`AccessibilityNodeInfo.performAction(ACTION_SET_TEXT)`).
+  - Includes cursor bounds verification, automatic clean spacing, and hint-text preservation (never treats strings > 15 characters as hints).
+- **Priority 4 (`performPasteInjection`)**:
+  - Targeted fallback strictly restricted to custom/rich-text apps where `AppClassifier.isPasteRequired(pkg)` is true and Priority 3 direct node editing failed.
+  - Temporarily sets the clipboard with a uniquely labeled dictation clip, requests focus, dispatches `ACTION_PASTE`, and automatically restores the user's original clipboard content after ~450ms.
+- **No Active Text Field Fallback**:
+  - If dictation completes when zero editable input fields are focused on screen, text is copied to the clipboard with an explicit user toast (`"Copied to clipboard (no active text field found)"`).
+
+### Exactly-Once Injection & Race Prevention
+- **Short-Circuiting Pipeline**: Higher priority tiers short-circuit the injection pipeline immediately upon success (`return true`). Lower tiers (including node edit and paste) are never executed if an earlier tier succeeds.
+- **Smart Safe Mode Protection**: If `FloatingBubbleManager.isCurrentAppSensitive` is active (e.g., banking apps, password fields, secure credit card inputs), text injection is blocked immediately before any tier can execute.
+- **Empty Text Rejection**: Blank or empty strings are rejected at the entry point of `injectText()`, preventing unintended mutations or clipboard resets.
+- **Caret Splicing & Duplicate Avoidance**: In Priority 3, text is spliced precisely at the active selection cursor. Surrounding whitespace is checked to avoid duplicate boundary spacing, and known search hint texts are stripped to prevent merging placeholders into dictation.
+
+### Asynchronous Paste & Clipboard Isolation
+- **Disarmable Asynchronous Callbacks**: In Priority 4, the initial delayed paste, retry paste, and clipboard restoration callbacks are all actively tracked. Calling `cancelPendingPaste()` immediately cancels all pending runnables from the Handler queue.
+- **Monotonically Increasing Operation IDs**: Each paste injection is assigned an atomic operation ID and unique clip label (`"VoxStream Dictation #$id"`).
+- **Stale Callback Disarming**: Delayed callbacks verify that `activePasteOperationId == operationId` before dispatching. If a newer injection starts or cancels the pipeline, older callbacks recognize they are obsolete and abort without touching the clipboard.
+- **Original Clipboard Preservation Across Rapid Dictations**: If a second paste injection begins while a previous dictation clip is still on the clipboard, `savedUserOriginalClip` preserves the user's true pre-dictation clipboard rather than adopting intermediate dictation text, ensuring clean restoration once the sequence completes.
 
 ### Troubleshooting & Regression Prevention Checklist
 If text injection into Google Keep or rich editors ever fails in future refactorings, verify the following:
@@ -166,3 +182,4 @@ If text injection into Google Keep or rich editors ever fails in future refactor
 - **WebSocket Auto-Reconnect Resilience**: Updated `GeminiLiveWebSocketClient.onClosed()` to preserve `lastApiKey` across normal server closures during active speech, ensuring automated exponential backoff reconnects seamlessly rather than aborting.
 - **Direct Input Connection (Wispr Flow Architecture)**: Enabled `FLAG_INPUT_METHOD_EDITOR` (`flagInputMethodEditor`) on `VoxStreamAccessibilityService` and implemented `commitTextViaInputMethod()` using Android 13+ `AccessibilityInputConnection`. Transcribed text is whispered directly through the active editor's native input connection at the blinking cursor, ensuring apps like Google Keep immediately detect and persist typed notes without clipboard copying, paste toasts, or replacing Gboard.
 - **Duplicate Injection & Fallback Audit (Step 2)**: Hardened `commitTextViaInputMethod()` so that clean dispatches across active connections on editors that do not implement `getSurroundingText()` are recognized as successes rather than false-negatives, preventing accidental duplicate injection by lower fallback layers. Additionally hardened `VoxStreamInputMethodService.commitText()` to verify `currentInputStarted` before attempting injection.
+- **Injection Pipeline & Clipboard Isolation Hardening (Step 3 & 3.1)**: Unified the four-priority injection pipeline with strict short-circuiting. Tracked and cancelled delayed paste, retry, and clipboard-restoration runnables via `cancelPendingPaste()`. Isolated paste operations using atomic IDs and unique clip labels, and preserved true user clipboard state across rapid sequential paste dictations. Verified through comprehensive unit tests (`InjectionChainVerificationTest`).
