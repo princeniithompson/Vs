@@ -48,7 +48,7 @@ class GeminiLiveWebSocketClient(
         const val WS_BASE_URL =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
         private const val MAX_RECONNECT_ATTEMPTS = 3
-        private const val PING_INTERVAL_SECONDS = 45L
+        private const val PING_INTERVAL_SECONDS = 25L
 
         fun buildWebSocketRequest(apiKey: String): Request {
             val trimmedKey = apiKey.trim()
@@ -62,7 +62,10 @@ class GeminiLiveWebSocketClient(
         }
     }
 
-    private val client: OkHttpClient = okHttpClient ?: ApiConfig.createOkHttpClient()
+    private val client: OkHttpClient = (okHttpClient ?: ApiConfig.createOkHttpClient())
+        .newBuilder()
+        .pingInterval(PING_INTERVAL_SECONDS, TimeUnit.SECONDS)
+        .build()
 
     private var webSocket: WebSocket? = null
     private val isSetupComplete = AtomicBoolean(false)

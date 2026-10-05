@@ -12,8 +12,8 @@ object VoxStreamConfig {
     /** High-pass filter cutoff frequency in Hertz */
     const val HPF_CUTOFF_HZ: Float = 120f
 
-    /** Ping interval for persistent WebSocket connection in seconds */
-    const val PING_INTERVAL_SECONDS: Long = 45L
+    /** Ping interval for persistent WebSocket connection in seconds (25s to avoid cellular carrier NAT timeouts) */
+    const val PING_INTERVAL_SECONDS: Long = 25L
 
     /** Debounce interval for polish button taps in milliseconds */
     const val POLISH_DEBOUNCE_MS: Long = 800L
