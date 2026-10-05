@@ -4,6 +4,6 @@ import com.example.audio.AudioRecorder
 
 /**
  * FloatingAudioRecorder is the specialized audio capture pipeline for the floating dictation overlay.
- * Uses VOICE_COMMUNICATION audio source with hardware AEC, NoiseSuppressor, and 120Hz high-pass filtering.
+ * Uses clean VOICE_RECOGNITION audio source with raw uncompressed capture for diagnostic baseline.
  */
 typealias FloatingAudioRecorder = AudioRecorder

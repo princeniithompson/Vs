@@ -108,13 +108,15 @@ class ConcurrencyAndReliabilityTest {
         val threadCount = 8
         val startLatch = CountDownLatch(1)
         val doneLatch = CountDownLatch(threadCount)
+        val threadExceptions = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
 
         for (i in 0 until threadCount) {
             Thread {
                 try {
                     startLatch.await()
                     liveClient.connect(testValidApiKey)
-                } catch (_: Exception) {
+                } catch (t: Throwable) {
+                    threadExceptions.add(t)
                 } finally {
                     doneLatch.countDown()
                 }
@@ -123,6 +125,9 @@ class ConcurrencyAndReliabilityTest {
 
         startLatch.countDown()
         assertTrue("All threads should finish connecting", doneLatch.await(3, TimeUnit.SECONDS))
+        if (threadExceptions.isNotEmpty()) {
+            println("Caught thread exceptions: ${threadExceptions.map { it.message }}")
+        }
 
         // Assert only ONE connection attempt was made across all rapid concurrent calls
         assertEquals(

@@ -114,11 +114,12 @@ class AudioRecorder(
             val internalBufferSize = maxOf(minBufferSize * 2, CHUNK_SIZE_BYTES * 2)
 
             try {
+                // Diagnostic Baseline: Prioritize VOICE_RECOGNITION tuned for natural speech recognition
                 val candidateSources = mutableListOf(
-                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                     MediaRecorder.AudioSource.VOICE_RECOGNITION,
                     MediaRecorder.AudioSource.MIC,
-                    MediaRecorder.AudioSource.DEFAULT
+                    MediaRecorder.AudioSource.DEFAULT,
+                    MediaRecorder.AudioSource.VOICE_COMMUNICATION
                 )
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     candidateSources.add(MediaRecorder.AudioSource.UNPROCESSED)
@@ -159,9 +160,14 @@ class AudioRecorder(
                 audioRecord = rec
 
                 val sessionId = rec.audioSessionId
+                // Controlled Diagnostic Baseline: Bypass hardware AEC, NoiseSuppressor, and AGC to evaluate raw, unclipped voice capture
+                val applyAec = false // Diagnostic baseline: OFF
+                val applyNs = false  // Diagnostic baseline: OFF
+                val applyAgc = false // Diagnostic baseline: OFF
+
                 if (sessionId != 0) {
                     // 1. Acoustic Echo Canceler
-                    if (aecEnabled) {
+                    if (applyAec && aecEnabled) {
                         try {
                             if (AcousticEchoCanceler.isAvailable()) {
                                 acousticEchoCanceler = AcousticEchoCanceler.create(sessionId)?.apply {
@@ -177,7 +183,7 @@ class AudioRecorder(
                     }
 
                     // 2. Noise Suppressor
-                    if (noiseSuppressorEnabled) {
+                    if (applyNs && noiseSuppressorEnabled) {
                         val nsAvailable = try {
                             NoiseSuppressor.isAvailable()
                         } catch (e: Exception) {
@@ -210,31 +216,33 @@ class AudioRecorder(
                     }
 
                     // 3. Automatic Gain Control
-                    try {
-                        val agcAvailable = try {
-                            AutomaticGainControl.isAvailable()
-                        } catch (e: Exception) {
-                            false
-                        }
-                        Log.d(TAG, "AutomaticGainControl isAvailable: $agcAvailable")
-
-                        if (agcAvailable) {
-                            automaticGainControl = AutomaticGainControl.create(sessionId)?.apply {
-                                enabled = true
+                    if (applyAgc) {
+                        try {
+                            val agcAvailable = try {
+                                AutomaticGainControl.isAvailable()
+                            } catch (e: Exception) {
+                                false
                             }
-                            val isAgcActuallyEnabled = automaticGainControl?.enabled == true
-                            Log.d(TAG, "AutomaticGainControl enabled check: $isAgcActuallyEnabled")
-                        } else {
-                            Log.d(TAG, "AutomaticGainControl is not available on this hardware")
+                            Log.d(TAG, "AutomaticGainControl isAvailable: $agcAvailable")
+
+                            if (agcAvailable) {
+                                automaticGainControl = AutomaticGainControl.create(sessionId)?.apply {
+                                    enabled = true
+                                }
+                                val isAgcActuallyEnabled = automaticGainControl?.enabled == true
+                                Log.d(TAG, "AutomaticGainControl enabled check: $isAgcActuallyEnabled")
+                            } else {
+                                Log.d(TAG, "AutomaticGainControl is not available on this hardware")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to enable AutomaticGainControl: ${e.message}", e)
                         }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to enable AutomaticGainControl: ${e.message}", e)
                     }
                 }
 
                 rec.startRecording()
                 _state.value = AudioRecorderState.Recording
-                Log.d(TAG, "AudioRecord started recording at 16000Hz PCM 16-bit (HighPass=120Hz, AGC, NS, AEC active)")
+                Log.d(TAG, "AudioRecord started recording at 16000Hz PCM 16-bit (Diagnostic baseline: VOICE_RECOGNITION, raw capture, DSP/FX bypassed)")
 
                 val chunkBuffer = ByteArray(CHUNK_SIZE_BYTES)
                 var bytesReadTotal = 0
@@ -262,14 +270,14 @@ class AudioRecorder(
                     }
 
                     if (readResult > 0) {
-                        // A. Apply lightweight 120Hz High-Pass Filter in-place on newly read PCM slice
-                        highPassFilter.process(chunkBuffer, bytesReadTotal, readResult)
+                        // Diagnostic baseline: High-Pass Filter bypassed to evaluate raw, full-spectrum natural voice
+                        // highPassFilter.process(chunkBuffer, bytesReadTotal, readResult)
 
-                        // B. Instant, high-frequency amplitude dispatch (every 20ms) from filtered audio
+                        // Amplitude dispatch (every 20ms) from raw audio
                         val instantAmp = calculateRmsAmplitude(chunkBuffer, bytesReadTotal, readResult)
                         onAmplitudeChanged(instantAmp)
 
-                        // C. Track ambient noise conditions
+                        // Track ambient noise conditions
                         sessionSampleCount++
                         sessionAmplitudeSum += instantAmp
                         if (instantAmp > 0.22f) {

@@ -62,7 +62,7 @@ class GeminiLiveWebSocketClient(
         }
     }
 
-    private val client: OkHttpClient = (okHttpClient ?: ApiConfig.createOkHttpClient())
+    private val client: OkHttpClient = okHttpClient ?: ApiConfig.createOkHttpClient()
         .newBuilder()
         .pingInterval(PING_INTERVAL_SECONDS, TimeUnit.SECONDS)
         .build()
