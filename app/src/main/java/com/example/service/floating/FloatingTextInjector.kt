@@ -137,7 +137,7 @@ object FloatingTextInjector {
 
     /**
      * Executes clipboard-assisted paste injection for custom/rich-text editors.
-     * Restores previous clipboard content safely after 150ms.
+     * Restores previous clipboard content safely after a delayed window (~450ms).
      */
     fun performPasteInjection(
         targetNode: AccessibilityNodeInfo,
@@ -155,6 +155,7 @@ object FloatingTextInjector {
 
         Log.d(TAG, "Executing paste-injection for pkg=${targetNode.packageName}, textLen=${newText.length}")
 
+        // 1. Ensure target node receives both ACTION_FOCUS and ACTION_ACCESSIBILITY_FOCUS
         try {
             targetNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
             targetNode.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
@@ -162,29 +163,54 @@ object FloatingTextInjector {
             Log.w(TAG, "Notice requesting focus before paste: ${e.message}")
         }
 
-        val dictationClip = ClipData.newPlainText("VoxStream Dictation", newText)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            try {
-                val extras = android.os.PersistableBundle().apply {
-                    putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
-                }
-                dictationClip.description.extras = extras
-            } catch (_: Throwable) {}
-        }
-
-        try {
-            clipboard?.setPrimaryClip(dictationClip)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed setting dictation clip", e)
-            return false
-        }
-
-        val initialPasteResult = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-        Log.d(TAG, "Initial ACTION_PASTE dispatch: $initialPasteResult")
+        // 2. Short delay (≈100 ms) so editor is ready, then set clipboard, paste, and restore after ~450ms
+        val focusReadyDelayMs = 100L
+        val pasteRetryDelayMs = 100L
+        val clipboardRestoreDelayMs = 450L
 
         handler.postDelayed({
-            safeRestoreOriginalClipboard(clipboard, originalClip, newText)
-        }, 150L)
+            val dictationClip = ClipData.newPlainText("VoxStream Dictation", newText)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                try {
+                    val extras = android.os.PersistableBundle().apply {
+                        putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+                    }
+                    dictationClip.description.extras = extras
+                } catch (_: Throwable) {}
+            }
+
+            try {
+                clipboard?.setPrimaryClip(dictationClip)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed setting dictation clip", e)
+                return@postDelayed
+            }
+
+            var initialPasteResult = false
+            try {
+                initialPasteResult = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                Log.d(TAG, "Initial ACTION_PASTE dispatch: $initialPasteResult")
+            } catch (e: Exception) {
+                Log.w(TAG, "Initial ACTION_PASTE dispatch error: ${e.message}")
+            }
+
+            if (!initialPasteResult) {
+                // Retry once after a short delay
+                handler.postDelayed({
+                    try {
+                        targetNode.refresh()
+                        val retryPasteResult = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                        Log.d(TAG, "Retry ACTION_PASTE dispatch: $retryPasteResult")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Retry ACTION_PASTE dispatch error: ${e.message}")
+                    }
+                }, pasteRetryDelayMs)
+            }
+
+            handler.postDelayed({
+                safeRestoreOriginalClipboard(clipboard, originalClip, newText)
+            }, clipboardRestoreDelayMs)
+        }, focusReadyDelayMs)
 
         return true
     }
