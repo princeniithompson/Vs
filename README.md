@@ -10,8 +10,8 @@ VoxStream is a native Android voice-typing system powered by Google's Gemini Mul
 app/src/main/java/com/example/
 ├── MainActivity.kt                          # Single-activity host with edge-to-edge configuration
 ├── audio/
-│   ├── AudioRecorder.kt                     # 16kHz 16-bit Mono PCM AudioRecord microphone capture engine
-│   └── HighPassFilter.kt                    # Pre-processing filter removing DC offset and mic rumble
+│   ├── AudioRecorder.kt                     # 16kHz 16-bit Mono PCM AudioRecord capture engine (gentle 75Hz HPF, AEC/NS/AGC off)
+│   └── HighPassFilter.kt                    # Gentle 75Hz first-order IIR filter for sub-bass/rumble reduction
 ├── config/
 │   └── VoxStreamConfig.kt                   # Audio constants, model endpoints, and fallback logic
 ├── core/
@@ -183,4 +183,5 @@ If text injection into Google Keep or rich editors ever fails in future refactor
 - **Direct Input Connection (Wispr Flow Architecture)**: Enabled `FLAG_INPUT_METHOD_EDITOR` (`flagInputMethodEditor`) on `VoxStreamAccessibilityService` and implemented `commitTextViaInputMethod()` using Android 13+ `AccessibilityInputConnection`. Transcribed text is whispered directly through the active editor's native input connection at the blinking cursor, ensuring apps like Google Keep immediately detect and persist typed notes without clipboard copying, paste toasts, or replacing Gboard.
 - **Duplicate Injection & Fallback Audit (Step 2)**: Hardened `commitTextViaInputMethod()` so that clean dispatches across active connections on editors that do not implement `getSurroundingText()` are recognized as successes rather than false-negatives, preventing accidental duplicate injection by lower fallback layers. Additionally hardened `VoxStreamInputMethodService.commitText()` to verify `currentInputStarted` before attempting injection.
 - **Injection Pipeline & Clipboard Isolation Hardening (Step 3 & 3.1)**: Unified the four-priority injection pipeline with strict short-circuiting. Tracked and cancelled delayed paste, retry, and clipboard-restoration runnables via `cancelPendingPaste()`. Isolated paste operations using atomic IDs and unique clip labels, and preserved true user clipboard state across rapid sequential paste dictations. Verified through comprehensive unit tests (`InjectionChainVerificationTest`).
-- **Audio Capture Diagnostic Baseline**: Restored `VOICE_RECOGNITION` as the primary microphone source (moving `VOICE_COMMUNICATION` to fallback) and bypassed hardware `NoiseSuppressor`, `AutomaticGainControl`, `AcousticEchoCanceler`, and the 120Hz high-pass filter. This controlled diagnostic baseline delivers raw, natural, unclipped 16kHz 16-bit PCM directly to Gemini and the diagnostics WAV logger to isolate whether ambient speech clipping was introduced by pre-processing DSP.
+- **Audio Capture Diagnostic Baseline**: Restored `VOICE_RECOGNITION` as the primary microphone source (moving `VOICE_COMMUNICATION` to fallback) and bypassed hardware `NoiseSuppressor`, `AutomaticGainControl`, and `AcousticEchoCanceler`.
+- **Gentle 75 Hz High-Pass Filter Experiment**: Added a gentle first-order IIR high-pass filter with a 75 Hz cutoff to `AudioRecorder.kt`. The filter operates directly in-place on the raw 16kHz 16-bit mono PCM stream delivered identically to both Gemini Live and the diagnostic WAV logger. This attenuates environmental rumble and sub-bass fan noise while preserving vocal fundamentals and speech naturalness, keeping AEC, NoiseSuppressor, and AGC disabled.

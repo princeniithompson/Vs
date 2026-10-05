@@ -5,11 +5,11 @@ import kotlin.math.roundToInt
 
 /**
  * High-performance, zero-allocation first-order IIR High-Pass Filter for 16kHz 16-bit mono PCM.
- * Cuts frequencies below 120Hz to eliminate fan hum, air conditioner rumble, and low-frequency
- * room noise while keeping vocal fundamentals and speech dynamics completely intact and delay-free.
+ * Cuts very low frequencies below 75Hz to gently reduce room rumble and fan sub-bass
+ * while keeping vocal fundamentals and natural speech thickness completely intact.
  */
 class HighPassFilter(
-    val cutoffHz: Float = 120f,
+    val cutoffHz: Float = 75f,
     val sampleRate: Float = 16000f
 ) {
     // alpha = 1 / (1 + 2 * PI * cutoff / sampleRate)

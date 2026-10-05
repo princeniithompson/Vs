@@ -12,6 +12,7 @@ import android.util.Log
 import com.example.data.AppLogRepository
 import com.example.data.DiagnosticSource
 import com.example.data.DiagnosticType
+import com.example.data.LogLevel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -60,8 +61,8 @@ class AudioRecorder(
     private val _state = MutableStateFlow<AudioRecorderState>(AudioRecorderState.Idle)
     val state: StateFlow<AudioRecorderState> = _state.asStateFlow()
 
-    // Real-time 120Hz IIR High-Pass Filter: cuts fan rumble and sub-bass background noise
-    private val highPassFilter = HighPassFilter(cutoffHz = 120f, sampleRate = SAMPLE_RATE.toFloat())
+    // Real-time gentle 75Hz IIR High-Pass Filter: reduces low-frequency rumble while preserving natural voice body
+    private val highPassFilter = HighPassFilter(cutoffHz = 75f, sampleRate = SAMPLE_RATE.toFloat())
 
     // Noise environment metrics
     private var currentSource: DiagnosticSource = DiagnosticSource.APP
@@ -242,7 +243,13 @@ class AudioRecorder(
 
                 rec.startRecording()
                 _state.value = AudioRecorderState.Recording
-                Log.d(TAG, "AudioRecord started recording at 16000Hz PCM 16-bit (Diagnostic baseline: VOICE_RECOGNITION, raw capture, DSP/FX bypassed)")
+                val hpfCutoff = highPassFilter.cutoffHz.toInt()
+                Log.d(TAG, "AudioRecord started recording at 16000Hz PCM 16-bit (Audio diagnostic baseline: VOICE_RECOGNITION, AEC/NS/AGC disabled, gentle HPF=${hpfCutoff}Hz)")
+                AppLogRepository.addLog(
+                    LogLevel.INFO,
+                    TAG,
+                    "Audio diagnostic baseline: VOICE_RECOGNITION, AEC/NS/AGC disabled, gentle HPF=${hpfCutoff}Hz"
+                )
 
                 val chunkBuffer = ByteArray(CHUNK_SIZE_BYTES)
                 var bytesReadTotal = 0
@@ -270,10 +277,10 @@ class AudioRecorder(
                     }
 
                     if (readResult > 0) {
-                        // Diagnostic baseline: High-Pass Filter bypassed to evaluate raw, full-spectrum natural voice
-                        // highPassFilter.process(chunkBuffer, bytesReadTotal, readResult)
+                        // Gentle 75Hz High-Pass Filter applied in-place to reduce low-frequency environmental rumble while preserving natural voice body
+                        highPassFilter.process(chunkBuffer, bytesReadTotal, readResult)
 
-                        // Amplitude dispatch (every 20ms) from raw audio
+                        // Amplitude dispatch (every 20ms) from processed audio
                         val instantAmp = calculateRmsAmplitude(chunkBuffer, bytesReadTotal, readResult)
                         onAmplitudeChanged(instantAmp)
 
