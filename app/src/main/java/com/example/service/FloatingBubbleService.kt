@@ -320,8 +320,6 @@ class FloatingBubbleService : Service() {
 
         val prefs = getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)
         val isSmartMode = prefs.getBoolean("smart_mode", false)
-        val isAecEnabled = prefs.getBoolean("aec_enabled", true)
-        val isNoiseSuppressorEnabled = prefs.getBoolean("noise_suppressor_enabled", true)
         val selectedModel = prefs.getString("selected_model", GeminiLiveWebSocketClient.DEFAULT_MODEL) ?: GeminiLiveWebSocketClient.DEFAULT_MODEL
 
         sessionManager.startSession(
@@ -329,9 +327,7 @@ class FloatingBubbleService : Service() {
             scope = serviceScope,
             apiKey = apiKey,
             model = selectedModel,
-            smartMode = isSmartMode,
-            aecEnabled = isAecEnabled,
-            noiseSuppressorEnabled = isNoiseSuppressorEnabled
+            smartMode = isSmartMode
         )
     }
 

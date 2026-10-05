@@ -112,9 +112,7 @@ class FloatingDictationSessionManager(
         scope: CoroutineScope,
         apiKey: String,
         model: String,
-        smartMode: Boolean,
-        aecEnabled: Boolean,
-        noiseSuppressorEnabled: Boolean
+        smartMode: Boolean
     ) {
         if (isRecording) return
         isRecording = true
@@ -165,8 +163,6 @@ class FloatingDictationSessionManager(
         // Start Audio Recorder
         audioRecorder.start(
             scope,
-            aecEnabled = aecEnabled,
-            noiseSuppressorEnabled = noiseSuppressorEnabled,
             source = DiagnosticSource.BUBBLE
         )
 

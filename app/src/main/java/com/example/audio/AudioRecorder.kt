@@ -75,8 +75,6 @@ class AudioRecorder(
     @SuppressLint("MissingPermission")
     fun start(
         scope: CoroutineScope,
-        aecEnabled: Boolean = true,
-        noiseSuppressorEnabled: Boolean = true,
         source: DiagnosticSource = DiagnosticSource.APP
     ) {
         if (isRecording.getAndSet(true)) {
@@ -160,86 +158,8 @@ class AudioRecorder(
 
                 audioRecord = rec
 
-                val sessionId = rec.audioSessionId
-                // Controlled Diagnostic Baseline: Bypass hardware AEC, NoiseSuppressor, and AGC to evaluate raw, unclipped voice capture
-                val applyAec = false // Diagnostic baseline: OFF
-                val applyNs = false  // Diagnostic baseline: OFF
-                val applyAgc = false // Diagnostic baseline: OFF
-
-                if (sessionId != 0) {
-                    // 1. Acoustic Echo Canceler
-                    if (applyAec && aecEnabled) {
-                        try {
-                            if (AcousticEchoCanceler.isAvailable()) {
-                                acousticEchoCanceler = AcousticEchoCanceler.create(sessionId)?.apply {
-                                    enabled = true
-                                }
-                                Log.d(TAG, "AcousticEchoCanceler enabled: ${acousticEchoCanceler?.enabled}")
-                            } else {
-                                Log.d(TAG, "AcousticEchoCanceler is not available on this device")
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to enable AcousticEchoCanceler: ${e.message}", e)
-                        }
-                    }
-
-                    // 2. Noise Suppressor
-                    if (applyNs && noiseSuppressorEnabled) {
-                        val nsAvailable = try {
-                            NoiseSuppressor.isAvailable()
-                        } catch (e: Exception) {
-                            false
-                        }
-                        Log.d(TAG, "NoiseSuppressor isAvailable: $nsAvailable")
-
-                        if (!nsAvailable) {
-                            val warn = "NoiseSuppressor hardware effect is unavailable on this device"
-                            Log.w(TAG, warn)
-                            AppLogRepository.logEvent(currentSource, DiagnosticType.WARNING, warn)
-                        } else {
-                            try {
-                                noiseSuppressor = NoiseSuppressor.create(sessionId)?.apply {
-                                    enabled = true
-                                }
-                                val isNsActuallyEnabled = noiseSuppressor?.enabled == true
-                                Log.d(TAG, "NoiseSuppressor enabled check: $isNsActuallyEnabled")
-                                if (!isNsActuallyEnabled) {
-                                    val warn = "NoiseSuppressor instance created but failed to enable (.enabled is false)"
-                                    Log.w(TAG, warn)
-                                    AppLogRepository.logEvent(currentSource, DiagnosticType.WARNING, warn)
-                                }
-                            } catch (e: Exception) {
-                                val warn = "Failed to enable NoiseSuppressor: ${e.message}"
-                                Log.w(TAG, warn, e)
-                                AppLogRepository.logEvent(currentSource, DiagnosticType.WARNING, warn)
-                            }
-                        }
-                    }
-
-                    // 3. Automatic Gain Control
-                    if (applyAgc) {
-                        try {
-                            val agcAvailable = try {
-                                AutomaticGainControl.isAvailable()
-                            } catch (e: Exception) {
-                                false
-                            }
-                            Log.d(TAG, "AutomaticGainControl isAvailable: $agcAvailable")
-
-                            if (agcAvailable) {
-                                automaticGainControl = AutomaticGainControl.create(sessionId)?.apply {
-                                    enabled = true
-                                }
-                                val isAgcActuallyEnabled = automaticGainControl?.enabled == true
-                                Log.d(TAG, "AutomaticGainControl enabled check: $isAgcActuallyEnabled")
-                            } else {
-                                Log.d(TAG, "AutomaticGainControl is not available on this hardware")
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to enable AutomaticGainControl: ${e.message}", e)
-                        }
-                    }
-                }
+                // Dedicated Clean Voice Baseline: Hardware AEC, NoiseSuppressor, and AGC are intentionally
+                // disabled to capture pure, uncompressed vocal acoustics without clipping whispered speech.
 
                 rec.startRecording()
                 _state.value = AudioRecorderState.Recording
@@ -354,7 +274,7 @@ class AudioRecorder(
             val elevatedRatio = sessionElevatedNoiseCount.toFloat() / count
             if (avgAmp > 0.26f && elevatedRatio > 0.40f) {
                 val pct = (elevatedRatio * 100).toInt()
-                val warn = "Noisy environment detected (avg amplitude: ${String.format(Locale.US, "%.2f", avgAmp)}, $pct% elevated baseline noise). High-pass 120Hz & noise suppression applied."
+                val warn = "Noisy environment detected (avg amplitude: ${String.format(Locale.US, "%.2f", avgAmp)}, $pct% elevated baseline noise). High-pass 75Hz; hardware NS/AGC/AEC disabled."
                 Log.w(TAG, warn)
                 AppLogRepository.logEvent(currentSource, DiagnosticType.NOISY_ENVIRONMENT, warn)
             }

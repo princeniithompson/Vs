@@ -330,8 +330,6 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         // 1. Immediately start AudioRecord on Dispatchers.IO to capture speech without clipping
         audioRecorder.start(
             viewModelScope,
-            aecEnabled = _isAecEnabled.value,
-            noiseSuppressorEnabled = _isNoiseSuppressorEnabled.value,
             source = com.example.data.DiagnosticSource.APP
         )
 
