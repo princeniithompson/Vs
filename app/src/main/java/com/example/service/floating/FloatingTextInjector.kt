@@ -135,6 +135,24 @@ object FloatingTextInjector {
         return false
     }
 
+    private var pendingPasteRunnable: Runnable? = null
+    private var pendingRetryRunnable: Runnable? = null
+
+    /**
+     * Cancels any pending asynchronous paste callbacks to ensure an asynchronous
+     * paste never fires after another injection method has already succeeded.
+     */
+    fun cancelPendingPaste(handler: Handler = mainHandler) {
+        pendingPasteRunnable?.let {
+            handler.removeCallbacks(it)
+            pendingPasteRunnable = null
+        }
+        pendingRetryRunnable?.let {
+            handler.removeCallbacks(it)
+            pendingRetryRunnable = null
+        }
+    }
+
     /**
      * Executes clipboard-assisted paste injection for custom/rich-text editors.
      * Restores previous clipboard content safely after a delayed window (~450ms).
@@ -145,6 +163,8 @@ object FloatingTextInjector {
         context: Context,
         handler: Handler = mainHandler
     ): Boolean {
+        cancelPendingPaste(handler)
+
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         val originalClip = try {
             clipboard?.primaryClip
@@ -168,7 +188,8 @@ object FloatingTextInjector {
         val pasteRetryDelayMs = 100L
         val clipboardRestoreDelayMs = 450L
 
-        handler.postDelayed({
+        val pasteRunnable = Runnable {
+            pendingPasteRunnable = null
             val dictationClip = ClipData.newPlainText("VoxStream Dictation", newText)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 try {
@@ -183,7 +204,7 @@ object FloatingTextInjector {
                 clipboard?.setPrimaryClip(dictationClip)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed setting dictation clip", e)
-                return@postDelayed
+                return@Runnable
             }
 
             var initialPasteResult = false
@@ -196,7 +217,8 @@ object FloatingTextInjector {
 
             if (!initialPasteResult) {
                 // Retry once after a short delay
-                handler.postDelayed({
+                val retryRunnable = Runnable {
+                    pendingRetryRunnable = null
                     try {
                         targetNode.refresh()
                         val retryPasteResult = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
@@ -204,13 +226,18 @@ object FloatingTextInjector {
                     } catch (e: Exception) {
                         Log.w(TAG, "Retry ACTION_PASTE dispatch error: ${e.message}")
                     }
-                }, pasteRetryDelayMs)
+                }
+                pendingRetryRunnable = retryRunnable
+                handler.postDelayed(retryRunnable, pasteRetryDelayMs)
             }
 
             handler.postDelayed({
                 safeRestoreOriginalClipboard(clipboard, originalClip, newText)
             }, clipboardRestoreDelayMs)
-        }, focusReadyDelayMs)
+        }
+
+        pendingPasteRunnable = pasteRunnable
+        handler.postDelayed(pasteRunnable, focusReadyDelayMs)
 
         return true
     }

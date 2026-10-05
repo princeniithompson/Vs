@@ -219,6 +219,9 @@ class VoxStreamAccessibilityService : AccessibilityService() {
             return false
         }
 
+        // Cancel any pending asynchronous paste before starting a new injection
+        com.example.service.floating.FloatingTextInjector.cancelPendingPaste(mainHandler)
+
         // Priority 1: Direct Android 13+ AccessibilityInputConnection (Wispr Flow architecture)
         if (commitTextViaInputMethod(newText)) {
             Log.d(TAG, "AccessibilityInputConnection committed text successfully")
