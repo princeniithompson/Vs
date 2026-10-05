@@ -30,6 +30,7 @@ class FloatingDictationSessionManager(
 ) {
     companion object {
         private const val TAG = "FloatingDictationMgr"
+        private const val MAX_AUDIO_QUEUE_CHUNKS = 50 // ~5s buffer at 100ms chunks to bridge reconnects
     }
 
     private val audioQueue = ConcurrentLinkedQueue<ByteArray>()
@@ -94,7 +95,7 @@ class FloatingDictationSessionManager(
     )
 
     private fun enqueueAudioChunk(chunk: ByteArray) {
-        while (audioQueue.size >= 20) {
+        while (audioQueue.size >= MAX_AUDIO_QUEUE_CHUNKS) {
             audioQueue.poll()
         }
         audioQueue.offer(chunk)
