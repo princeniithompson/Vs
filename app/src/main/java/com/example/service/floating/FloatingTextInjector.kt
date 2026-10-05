@@ -138,6 +138,9 @@ object FloatingTextInjector {
     private val nextPasteOperationId = java.util.concurrent.atomic.AtomicLong(0)
     @Volatile
     private var activePasteOperationId = 0L
+    private var savedUserOriginalClip: ClipData? = null
+
+    fun getActivePasteOperationId(): Long = activePasteOperationId
 
     private var pendingPasteRunnable: Runnable? = null
     private var pendingRetryRunnable: Runnable? = null
@@ -181,11 +184,19 @@ object FloatingTextInjector {
         val operationLabel = "VoxStream Dictation #$operationId"
 
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        val originalClip = try {
+        val currentClip = try {
             clipboard?.primaryClip
         } catch (e: Exception) {
             Log.w(TAG, "Could not read existing clipboard: ${e.message}")
             null
+        }
+
+        val isInternalDictationClip = currentClip?.description?.label?.toString()?.startsWith("VoxStream Dictation") == true
+        val originalClip = if (isInternalDictationClip) {
+            savedUserOriginalClip
+        } else {
+            savedUserOriginalClip = currentClip
+            currentClip
         }
 
         Log.d(TAG, "Executing paste-injection #$operationId for pkg=${targetNode.packageName}, textLen=${newText.length}")
@@ -309,6 +320,7 @@ object FloatingTextInjector {
         } finally {
             if (activePasteOperationId == operationId) {
                 activePasteOperationId = 0L
+                savedUserOriginalClip = null
             }
         }
     }

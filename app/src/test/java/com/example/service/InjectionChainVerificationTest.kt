@@ -64,16 +64,63 @@ class InjectionChainVerificationTest {
     }
 
     @Test
-    fun `cancelPendingPaste also cancels restoration callback to prevent cross-operation interference`() {
-        var restoreExecuted = false
-        val dummyRestoreRunnable = Runnable { restoreExecuted = true }
+    fun `sequential paste operations isolate clipboard and prevent stale restoration overwrite`() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        
+        // 1. Initial user clipboard before any dictation
+        val originalUserText = "Important User Notes"
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("UserClip", originalUserText))
 
-        testHandler.postDelayed(dummyRestoreRunnable, 450)
-        FloatingTextInjector.cancelPendingPaste(testHandler)
-        testHandler.removeCallbacks(dummyRestoreRunnable)
+        val node = AccessibilityNodeInfo.obtain()
+        node.packageName = "com.slack"
 
-        ShadowLooper.idleMainLooper()
-        assertFalse("Cancelled restoration must never execute", restoreExecuted)
+        // 2. Start Paste Operation #1
+        val result1 = FloatingTextInjector.performPasteInjection(node, "First Dictation", context, testHandler)
+        assertTrue("Paste operation #1 must return true", result1)
+        val op1Id = FloatingTextInjector.getActivePasteOperationId()
+        assertTrue("Operation #1 must have a positive ID", op1Id > 0)
+
+        // Advance 150ms so Operation #1's paste runnable fires and sets clipboard
+        ShadowLooper.idleMainLooper(150, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals("First Dictation", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        assertEquals("VoxStream Dictation #$op1Id", clipboard.primaryClip?.description?.label?.toString())
+
+        // 3. Start Paste Operation #2 before Operation #1's restoration callback (scheduled at 450ms) fires
+        val result2 = FloatingTextInjector.performPasteInjection(node, "Second Dictation", context, testHandler)
+        assertTrue("Paste operation #2 must return true", result2)
+        val op2Id = FloatingTextInjector.getActivePasteOperationId()
+        assertTrue("Operation #2 must have a newer ID than Operation #1", op2Id > op1Id)
+
+        // Advance 150ms so Operation #2's paste runnable fires and sets clipboard
+        ShadowLooper.idleMainLooper(150, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals("Second Dictation", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        assertEquals("VoxStream Dictation #$op2Id", clipboard.primaryClip?.description?.label?.toString())
+
+        // 4. Advance past the window where Operation #1's restore would have fired (original 450ms)
+        // Verify that Operation #1's old restore callback DID NOT overwrite or erase Operation #2's clipboard
+        ShadowLooper.idleMainLooper(300, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals(
+            "Second Dictation clipboard must not be overwritten by Operation #1 restoration",
+            "Second Dictation",
+            clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+        )
+        assertEquals("VoxStream Dictation #$op2Id", clipboard.primaryClip?.description?.label?.toString())
+
+        // 5. Advance past Operation #2's restore window (+450ms)
+        ShadowLooper.idleMainLooper(300, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+        // Verify that Operation #2 cleanly restored the original user clipboard
+        assertEquals(
+            "Original user clipboard must be restored safely after Operation #2 finishes",
+            originalUserText,
+            clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+        )
+        assertEquals(
+            "Active operation ID must be reset to 0 after completion",
+            0L,
+            FloatingTextInjector.getActivePasteOperationId()
+        )
     }
 
     @Test
