@@ -100,6 +100,14 @@ class VoxStreamAccessibilityService : AccessibilityService() {
                 val inputFocused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                 if (inputFocused != null && isEditableNode(inputFocused)) {
                     lastFocusedEditableNode = inputFocused
+                } else {
+                    try {
+                        if (lastFocusedEditableNode?.refresh() == false) {
+                            lastFocusedEditableNode = null
+                        }
+                    } catch (_: Exception) {
+                        lastFocusedEditableNode = null
+                    }
                 }
                 checkAndNotifyKeyboard()
             }
@@ -236,6 +244,7 @@ class VoxStreamAccessibilityService : AccessibilityService() {
             val inputFocused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
             if (inputFocused != null && isEditableNode(inputFocused)) {
                 Log.d(TAG, "Found target editable via findFocus(FOCUS_INPUT)")
+                lastFocusedEditableNode = inputFocused
                 return inputFocused
             }
         } catch (e: Exception) {
@@ -249,11 +258,13 @@ class VoxStreamAccessibilityService : AccessibilityService() {
                 val rootFocused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                 if (rootFocused != null && isEditableNode(rootFocused)) {
                     Log.d(TAG, "Found target editable via rootInActiveWindow FOCUS_INPUT")
+                    lastFocusedEditableNode = rootFocused
                     return rootFocused
                 }
                 val found = findFocusedEditableInTree(root)
                 if (found != null) {
                     Log.d(TAG, "Found target editable via rootInActiveWindow tree scan")
+                    lastFocusedEditableNode = found
                     return found
                 }
             }
@@ -310,9 +321,12 @@ class VoxStreamAccessibilityService : AccessibilityService() {
                 if (last.refresh() && isEditableNode(last)) {
                     Log.d(TAG, "Found target editable via refreshed lastFocusedEditableNode")
                     return last
+                } else {
+                    lastFocusedEditableNode = null
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Last focused node refresh failed", e)
+                lastFocusedEditableNode = null
             }
         }
         return null
@@ -387,9 +401,20 @@ class VoxStreamAccessibilityService : AccessibilityService() {
         }
 
         // 3. Check last focused editable node if it belongs to a valid target app
-        val lastNodePkg = lastFocusedEditableNode?.packageName?.toString()
-        if (!AppContextResolver.isIgnoredPackage(this, lastNodePkg)) {
-            return lastNodePkg
+        val last = lastFocusedEditableNode
+        if (last != null) {
+            try {
+                if (last.refresh()) {
+                    val lastNodePkg = last.packageName?.toString()
+                    if (!AppContextResolver.isIgnoredPackage(this, lastNodePkg)) {
+                        return lastNodePkg
+                    }
+                } else {
+                    lastFocusedEditableNode = null
+                }
+            } catch (_: Exception) {
+                lastFocusedEditableNode = null
+            }
         }
 
         // 4. Inspect getWindows() for TYPE_APPLICATION window
