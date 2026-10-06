@@ -5,16 +5,24 @@ import android.content.pm.ApplicationInfo
 import android.os.Build
 
 enum class AppCategory {
-    SOCIAL,
-    WORK,
-    AI,
-    OTHER
+    AI_CHAT,
+    MESSAGING,
+    EMAIL,
+    NOTES_DOCS,
+    OTHER;
+
+    companion object {
+        // Backwards compatibility aliases
+        val AI = AI_CHAT
+        val SOCIAL = MESSAGING
+        val WORK = NOTES_DOCS
+    }
 }
 
 /**
  * AI-Aware App Classifier:
  * 1. Identifies model-driven / rich-text editors that strictly require ACTION_PASTE (e.g. Google Keep, Docs, Notion).
- * 2. Classifies active foreground applications into semantic categories (Social, Work, AI, Other).
+ * 2. Classifies active foreground applications into semantic categories (AI_CHAT, MESSAGING, EMAIL, NOTES_DOCS, OTHER).
  * 3. Provides tailored system instructions and formatting guidance based on the active app.
  */
 object AppClassifier {
@@ -69,9 +77,10 @@ object AppClassifier {
         if (!packageName.isNullOrBlank()) {
             AppRegistry.NATIVE_APP_MAP[packageName]?.let {
                 return when (it.group) {
-                    "AI" -> AppCategory.AI
-                    "Social" -> AppCategory.SOCIAL
-                    "Work" -> AppCategory.WORK
+                    "AI" -> AppCategory.AI_CHAT
+                    "Social" -> AppCategory.MESSAGING
+                    "Work" -> AppCategory.NOTES_DOCS
+                    "Email" -> AppCategory.EMAIL
                     else -> AppCategory.OTHER
                 }
             }
@@ -81,9 +90,10 @@ object AppClassifier {
         val candidateName = resolvedAppName ?: ""
         AppRegistry.matchWebApp(candidateName)?.let {
             return when (it.group) {
-                "AI" -> AppCategory.AI
-                "Social" -> AppCategory.SOCIAL
-                "Work" -> AppCategory.WORK
+                "AI" -> AppCategory.AI_CHAT
+                "Social" -> AppCategory.MESSAGING
+                "Work" -> AppCategory.NOTES_DOCS
+                "Email" -> AppCategory.EMAIL
                 else -> AppCategory.OTHER
             }
         }
@@ -106,10 +116,35 @@ object AppClassifier {
             nameLower.contains("perplexity") || nameLower.contains("deepseek") ||
             nameLower.contains("copilot") || nameLower.contains("qwen")
         ) {
-            return AppCategory.AI
+            return AppCategory.AI_CHAT
         }
 
-        // 2. Social category
+        // 2. Email category
+        if (pkgLower.contains("gmail") || pkgLower.contains("outlook") ||
+            pkgLower.contains("superhuman") || pkgLower.contains("protonmail") ||
+            pkgLower.contains("email") || pkgLower.contains(".mail") ||
+            nameLower.contains("gmail") || nameLower.contains("outlook") ||
+            nameLower.contains("superhuman") || nameLower.contains("mail")
+        ) {
+            return AppCategory.EMAIL
+        }
+
+        // 3. Notes & Docs category
+        if (pkgLower.contains("keep") || pkgLower.contains("notion") ||
+            pkgLower.contains("obsidian") || pkgLower.contains("docs") ||
+            pkgLower.contains("sheets") || pkgLower.contains("slides") ||
+            pkgLower.contains("word") || pkgLower.contains("onenote") ||
+            pkgLower.contains("notes") || pkgLower.contains("evernote") ||
+            pkgLower.contains("linear") || pkgLower.contains("jira") ||
+            pkgLower.contains("trello") || pkgLower.contains("asana") ||
+            nameLower.contains("keep") || nameLower.contains("notion") ||
+            nameLower.contains("obsidian") || nameLower.contains("docs") ||
+            nameLower.contains("notes") || nameLower.contains("word")
+        ) {
+            return AppCategory.NOTES_DOCS
+        }
+
+        // 4. Messaging & Social category
         if (pkgLower.contains("messaging") || pkgLower.contains("mms") ||
             pkgLower.contains("whatsapp") || pkgLower.contains("telegram") ||
             pkgLower.contains("instagram") || pkgLower.contains("messenger") ||
@@ -119,70 +154,23 @@ object AppClassifier {
             pkgLower.contains("signal") || pkgLower.contains("linkedin") ||
             pkgLower.contains("facebook") || pkgLower.contains("threads") ||
             pkgLower.contains("viber") || pkgLower.contains("line") ||
+            pkgLower.contains("slack") || pkgLower.contains("dynamite") ||
             nameLower.contains("whatsapp") || nameLower.contains("telegram") ||
             nameLower.contains("instagram") || nameLower.contains("tiktok") ||
             nameLower.contains("twitter") || nameLower.contains("discord") ||
-            nameLower.contains("messages") || nameLower.contains("signal")
+            nameLower.contains("messages") || nameLower.contains("signal") ||
+            nameLower.contains("slack")
         ) {
-            return AppCategory.SOCIAL
-        }
-
-        // 3. Work / Productivity category
-        if (pkgLower.contains("github") || pkgLower.contains("gmail") ||
-            pkgLower.contains("outlook") || pkgLower.contains("slack") ||
-            pkgLower.contains("docs") || pkgLower.contains("sheets") ||
-            pkgLower.contains("slides") || pkgLower.contains("teams") ||
-            pkgLower.contains("notion") || pkgLower.contains("keep") ||
-            pkgLower.contains("trello") || pkgLower.contains("asana") ||
-            pkgLower.contains("zoom") || pkgLower.contains("linear") ||
-            pkgLower.contains("jira") || pkgLower.contains("office") ||
-            nameLower.contains("gmail") || nameLower.contains("outlook") ||
-            nameLower.contains("slack") || nameLower.contains("docs") ||
-            nameLower.contains("notion") || nameLower.contains("keep") ||
-            nameLower.contains("teams") || nameLower.contains("github")
-        ) {
-            return AppCategory.WORK
+            return AppCategory.MESSAGING
         }
 
         return AppCategory.OTHER
     }
 
     /**
-     * Builds dynamic prompt guidelines tailored to the active app category.
-     */
-    fun getCategoryPromptGuidelines(category: AppCategory, appName: String): String {
-        return when (category) {
-            AppCategory.SOCIAL -> """
-The user is dictating into a social/chat app ($appName).
-- Style: Conversational, fluid, and natural for instant messaging.
-- Use natural sentence flow and clean punctuation without overly stiff or bureaucratic phrasing.
-- If the user dictates hashtags, emojis, or shorthand, preserve them naturally.
-""".trimIndent()
-
-            AppCategory.WORK -> """
-The user is dictating into a professional work/productivity app ($appName).
-- Style: Professional, crisp, and well-structured.
-- Ensure correct capitalization, proper punctuation, and polished business-appropriate phrasing.
-- If multiple items or action points are named, organize them cleanly into concise markdown bullet points.
-""".trimIndent()
-
-            AppCategory.AI -> """
-The user is crafting an AI prompt in $appName.
-- Style: Precise, clear, and instruction-oriented.
-- Preserve technical keywords, parameter names, coding terminology, and query structure accurately.
-""".trimIndent()
-
-            AppCategory.OTHER -> """
-The user is typing in $appName.
-- Style: Clean, well-punctuated, natural spoken text.
-""".trimIndent()
-        }
-    }
-
-    /**
      * Determines whether the given package or app represents an AI chat app.
      */
     fun isAiChatApp(packageName: String?, resolvedAppName: String? = null): Boolean {
-        return classify(packageName, resolvedAppName) == AppCategory.AI
+        return classify(packageName, resolvedAppName) == AppCategory.AI_CHAT
     }
 }

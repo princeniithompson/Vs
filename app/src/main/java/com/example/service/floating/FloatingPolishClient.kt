@@ -5,7 +5,6 @@ import com.example.config.VoxStreamConfig
 import com.example.data.AppLogRepository
 import com.example.data.LogLevel
 import com.example.service.AppCategory
-import com.example.service.AppClassifier
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -20,35 +19,7 @@ object FloatingPolishClient {
     private const val TAG = "FloatingPolishClient"
 
     @Volatile
-    private var lastSuccessfulPolishModel: String = VoxStreamConfig.GEMINI_MODEL_FALLBACKS.first()
-
-    private const val BASE_SYSTEM_INSTRUCTION = """You are Flow, an AI transcript cleaner. Input: a raw spoken transcript. Output: ONLY the cleaned final text — nothing else.
-
-Never answer questions asked in the transcript — transcribe them as questions, don't respond to them.
-Never explain your changes.
-Never copy any word, number, or item from the examples below into your output — those are for pattern reference only. Every number and item in your output must come from the transcript you are given, not from these examples.
-Preserve whatever language(s) the speaker used — do not translate.
-Add natural punctuation and capitalization to whatever text isn't otherwise changed by the rules below.
-
-CORE RULES:
-1. Remove filler words and verbal hesitations (um, uh, like, so, okay, yeah, yes yeah, I think, you know, kind of, sort of).
-2. When the speaker corrects a stated value (actually, no wait, I mean, sorry, scratch that), replace it — never keep the original, incorrect version.
-3. When the speaker states a quantity needed, then separately mentions an amount already owned/available, calculate the true remaining amount and output ONLY that final number.
-4. When the speaker names 2 or more discrete items, output them cleanly.
-
-EXAMPLE 1 (simple correction)
-Raw: "Let's meet at 5, actually 6."
-Output: Let's meet at 6.
-
-EXAMPLE 2 (list + correction)
-Raw: "I want to buy two no three books, a lamp, and a rug. Actually skip the rug."
-Output: I want to buy:
-- 3 books
-- a lamp
-
-EXAMPLE 3 (quantity adjustment)
-Raw: "I need 10 chairs for the event. Wait, I already have 4 chairs at home, so I'd only need 6."
-Output: I need 6 chairs for the event."""
+    private var lastSuccessfulPolishModel: String = VoxStreamConfig.POLISH_PRIMARY_MODEL
 
     fun polishTranscript(
         apiKey: String,
@@ -65,39 +36,12 @@ Output: I need 6 chairs for the event."""
         val baseModels = VoxStreamConfig.GEMINI_MODEL_FALLBACKS
         val modelsToTry = listOf(lastSuccessfulPolishModel) + baseModels.filter { it != lastSuccessfulPolishModel }
 
-        val isAiApp = category == AppCategory.AI
-        val fullSystemInstruction: String
-
-        if (isAiApp) {
-            // Clean AI-app mode: simple clean prompt that only polishes the user's text
-            fullSystemInstruction = """
-You are a skilled text editor for conversational AI chat ($appName).
-Your sole purpose is to polish the user's input for an ongoing chat message.
-
-CRITICAL RULES:
-- Output ONLY the final polished text.
-- Fix grammar, spelling, punctuation, and awkward phrasing.
-- Strictly maintain the user's natural voice, tone, and personal conversational style.
-- Keep it natural, human, and concise.
-- Never answer questions asked in the transcript.
-- Never include introductory chatter, commentary, or quotes.
-""".trimIndent()
-        } else {
-            // Standard Polish for non-AI apps (WhatsApp, Gmail, Notes, etc.)
-            val categoryGuidelines = AppClassifier.getCategoryPromptGuidelines(category, appName)
-            fullSystemInstruction = """
-$BASE_SYSTEM_INSTRUCTION
-
-APP-AWARE CONTEXT GUIDELINES:
-$categoryGuidelines
-""".trimIndent()
-        }
-
+        val fullSystemInstruction = PolishPromptBuilder.buildSystemInstruction(category, appName)
         val userContentText = rawTranscript
 
         fun buildJsonBody(modelName: String): String {
             return JSONObject().apply {
-                put("systemInstruction", JSONObject().apply {
+                put("system_instruction", JSONObject().apply {
                     put("parts", JSONArray().put(JSONObject().put("text", fullSystemInstruction)))
                 })
                 put("contents", JSONArray().put(
@@ -107,7 +51,8 @@ $categoryGuidelines
                     }
                 ))
                 put("generationConfig", JSONObject().apply {
-                    put("temperature", 0.1)
+                    put("temperature", 0.15)
+                    put("maxOutputTokens", 2048)
                     if (modelName.contains("3.")) {
                         put("thinkingConfig", JSONObject().apply {
                             put("thinkingLevel", "MINIMAL")
@@ -133,13 +78,13 @@ $categoryGuidelines
                     return PolishResult(null, "JSON build error: ${e.message}")
                 }
 
-                val urlString = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent"
+                val urlString = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$trimmedKey"
                 val url = URL(urlString)
 
                 AppLogRepository.addLog(
                     LogLevel.SENT,
                     "PolishAPI",
-                    "Sending POST request to model '$modelName' for $appName ($category) at $urlString",
+                    "Sending POST request to model '$modelName' for $appName ($category)",
                     jsonBody
                 )
 
@@ -148,8 +93,8 @@ $categoryGuidelines
                     setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                     setRequestProperty("x-goog-api-key", trimmedKey)
                     setRequestProperty("Connection", "keep-alive")
-                    connectTimeout = 5000
-                    readTimeout = 8000
+                    connectTimeout = 6000
+                    readTimeout = 10000
                     doOutput = true
                 }
 
@@ -183,7 +128,18 @@ $categoryGuidelines
                                     sb.append(text)
                                 }
                             }
-                            val textResult = sb.toString().trim()
+                            var textResult = sb.toString().trim()
+                            // Clean any accidental markdown code fences or full-response quotes
+                            if (textResult.startsWith("```") && textResult.endsWith("```")) {
+                                textResult = textResult.removeSurrounding("```").trim()
+                                if (textResult.startsWith("markdown") || textResult.startsWith("text")) {
+                                    textResult = textResult.substringAfter("\n").trim()
+                                }
+                            }
+                            if (textResult.startsWith("\"") && textResult.endsWith("\"") && textResult.length > 2) {
+                                textResult = textResult.substring(1, textResult.length - 1).trim()
+                            }
+
                             if (textResult.isNotBlank()) {
                                 Log.d(TAG, "Polish call succeeded using model $modelName for app $appName ($category)")
                                 lastSuccessfulPolishModel = modelName

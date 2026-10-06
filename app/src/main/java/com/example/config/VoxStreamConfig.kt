@@ -10,7 +10,7 @@ object VoxStreamConfig {
     const val AUDIO_CHUNK_SIZE: Int = 3200
 
     /** High-pass filter cutoff frequency in Hertz */
-    const val HPF_CUTOFF_HZ: Float = 120f
+    const val HPF_CUTOFF_HZ: Float = 75f
 
     /** Ping interval for persistent WebSocket connection in seconds (25s to avoid cellular carrier NAT timeouts) */
     const val PING_INTERVAL_SECONDS: Long = 25L
@@ -27,6 +27,9 @@ object VoxStreamConfig {
     /** Default Gemini Live Transcribe model */
     const val DEFAULT_LIVE_MODEL: String = "models/gemini-2.0-flash-exp"
 
+    /** Primary Gemini REST/Polish Model */
+    const val POLISH_PRIMARY_MODEL: String = "gemini-2.5-flash-lite"
+
     /** Placeholder API key template value */
     const val PLACEHOLDER_API_KEY: String = "MY_GEMINI_API_KEY"
 
@@ -34,10 +37,9 @@ object VoxStreamConfig {
      * Gemini REST/Polish Model Fallback Chain in prioritized order.
      */
     val GEMINI_MODEL_FALLBACKS: List<String> = listOf(
-        "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash"
+        "gemini-2.5-flash",
+        "gemini-3.1-flash-lite-preview"
     )
 
     /**
