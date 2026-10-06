@@ -25,6 +25,8 @@ class MainActivity : ComponentActivity() {
         com.example.data.AudioRecordingRepository.init(this)
         com.example.data.CustomVocabularyRepository.init(this)
         com.example.data.HistoryRepository.init(this)
+        com.example.data.InjectionLogRepository.init(this)
+        com.example.data.AppDetectionLogRepository.init(this)
         FloatingBubbleManager.init(this)
         enableEdgeToEdge()
         setContent {

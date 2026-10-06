@@ -7,25 +7,50 @@ import org.json.JSONObject
 data class LearnedAppEntry(
     val appName: String,
     val category: String,
-    val confirmCount: Int,
+    val confirmCount: Int = 1,
     val source: String = "gemini",
     val lastUpdatedMs: Long = System.currentTimeMillis()
 )
 
 /**
  * Persisted registry for dynamically learned application names and categories.
- * When Gemini confirms or corrects the appName + category for an unknown package or browser site,
- * the result is stored with highest precedence (learned > Gemini fresh > local label).
- * After confirmCount >= 2, subsequent detections resolve locally with zero network calls.
+ * When Gemini classifies or confirms an unknown app/WebAPK, the result is saved
+ * permanently into SharedPreferences so that subsequent sessions resolve with zero network latency.
  */
 object LearnedAppRegistry {
     private const val TAG = "LearnedAppRegistry"
     private const val PREFS_NAME = "voxstream_learned_apps"
-    const val CONFIRM_THRESHOLD = 2
+    const val CONFIRM_THRESHOLD = 1
+
+    val BROWSER_PACKAGES = setOf(
+        "com.android.chrome",
+        "com.chrome.beta",
+        "com.chrome.canary",
+        "org.chromium.chrome",
+        "com.brave.browser",
+        "com.microsoft.emmx",
+        "org.mozilla.firefox"
+    )
+
+    fun isBrowserPackage(key: String?): Boolean {
+        if (key.isNullOrBlank()) return false
+        val kLower = key.trim().lowercase()
+        return kLower in BROWSER_PACKAGES || kLower.startsWith("org.chromium.chrome")
+    }
 
     fun get(context: Context, key: String): LearnedAppEntry? {
+        if (key.isBlank()) return null
+        val normalizedKey = key.trim().lowercase()
+
+        // Never look up by raw browser package name
+        if (isBrowserPackage(normalizedKey)) {
+            return null
+        }
+
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val jsonStr = prefs.getString(key, null) ?: return null
+        val jsonStr = prefs.getString(normalizedKey, null) 
+            ?: prefs.getString(key.trim(), null) 
+            ?: return null
         return try {
             val json = JSONObject(jsonStr)
             LearnedAppEntry(
@@ -53,7 +78,9 @@ object LearnedAppRegistry {
         category: String,
         source: String = "gemini"
     ): LearnedAppEntry {
-        val existing = get(context, key)
+        val normalizedKey = key.trim().lowercase()
+        val isBrowser = isBrowserPackage(normalizedKey)
+        val existing = get(context, normalizedKey)
         val sameCategory = existing != null && existing.category.equals(category, ignoreCase = true)
         val sameName = existing != null && existing.appName.trim().equals(appName.trim(), ignoreCase = true)
 
@@ -64,8 +91,8 @@ object LearnedAppRegistry {
         }
 
         val updated = LearnedAppEntry(
-            appName = appName,
-            category = category,
+            appName = appName.trim(),
+            category = category.trim(),
             confirmCount = newCount,
             source = source,
             lastUpdatedMs = System.currentTimeMillis()
@@ -80,8 +107,18 @@ object LearnedAppRegistry {
                 put("source", updated.source)
                 put("lastUpdatedMs", updated.lastUpdatedMs)
             }
-            prefs.edit().putString(key, json.toString()).apply()
-            Log.d(TAG, "Learned entry saved: key='$key', appName='${updated.appName}', category='${updated.category}', count=$newCount, source='${updated.source}', confirmed=${newCount >= CONFIRM_THRESHOLD}")
+            val jsonString = json.toString()
+            val editor = prefs.edit()
+            if (!isBrowser) {
+                editor.putString(normalizedKey, jsonString)
+            }
+            val appNameLower = appName.trim().lowercase()
+            if (appNameLower.isNotBlank() && !isBrowserPackage(appNameLower) && appNameLower != "chrome" && appNameLower != "browser") {
+                editor.putString(appNameLower, jsonString)
+            }
+            editor.apply()
+
+            Log.d(TAG, "Learned entry saved: key='$normalizedKey', appName='${updated.appName}', category='${updated.category}', count=$newCount, source='${updated.source}'")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to persist learned entry for $key", e)
         }

@@ -1,42 +1,78 @@
 package com.example.service
 
 import android.content.Context
-import android.content.pm.ApplicationInfo
-import android.os.Build
 
-enum class AppCategory {
-    AI_CHAT,
-    MESSAGING,
-    EMAIL,
-    NOTES_DOCS,
-    OTHER;
+enum class AppCategory(val groupName: String) {
+    AI_CHAT("AI"),
+    MESSAGING("Social"),
+    EMAIL("Email"),
+    NOTES_DOCS("Work"),
+    SOCIAL("Social"),
+    OTHER("Other");
 
     companion object {
         // Backwards compatibility aliases
         val AI = AI_CHAT
-        val SOCIAL = MESSAGING
         val WORK = NOTES_DOCS
+
+        fun fromString(str: String?): AppCategory {
+            if (str.isNullOrBlank()) return OTHER
+            val upper = str.trim().uppercase()
+            return when {
+                upper.contains("AI") -> AI_CHAT
+                upper.contains("MESSAG") || upper.contains("CHAT") -> MESSAGING
+                upper.contains("EMAIL") || upper.contains("MAIL") -> EMAIL
+                upper.contains("NOTE") || upper.contains("DOC") || upper.contains("WORK") -> NOTES_DOCS
+                upper.contains("SOCIAL") -> SOCIAL
+                else -> OTHER
+            }
+        }
     }
 }
 
 /**
  * AI-Aware App Classifier:
- * 1. Identifies model-driven / rich-text editors that strictly require ACTION_PASTE (e.g. Google Keep, Docs, Notion).
- * 2. Classifies active foreground applications into semantic categories (AI_CHAT, MESSAGING, EMAIL, NOTES_DOCS, OTHER).
- * 3. Provides tailored system instructions and formatting guidance based on the active app.
+ * 1. Instant Static Dictionary (Zero Network Latency) for major AI, Messaging, Email, Notes, and Social apps.
+ * 2. Persistent Learned Registry lookup.
+ * 3. Identifies apps requiring specialized handling.
  */
 object AppClassifier {
 
+    // 1. Static Instant Dictionary (Zero Network Latency)
+    private val AI_CHAT_NAMES = setOf(
+        "gemini", "chatgpt", "claude", "grok", "copilot", "perplexity",
+        "ai studio", "google ai studio", "deepseek", "kimi", "qwen",
+        "poe", "character.ai", "v0", "notebooklm", "flow", "google flow"
+    )
+
+    private val MESSAGING_NAMES = setOf(
+        "whatsapp", "whatsapp business", "telegram", "signal", "messages",
+        "messenger", "slack", "discord", "google chat", "teams", "wechat"
+    )
+
+    private val EMAIL_NAMES = setOf(
+        "gmail", "outlook", "spark", "superhuman", "protonmail",
+        "yahoo mail", "mail", "email"
+    )
+
+    private val NOTES_DOCS_NAMES = setOf(
+        "keep notes", "google keep", "keep", "notion", "obsidian",
+        "docs", "sheets", "slides", "onenote", "evernote", "word",
+        "excel", "powerpoint", "craft", "linear", "jira", "trello", "asana"
+    )
+
+    private val SOCIAL_NAMES = setOf(
+        "instagram", "facebook", "tiktok", "x", "twitter", "reddit",
+        "snapchat", "threads", "pinterest", "linkedin"
+    )
+
     private val PASTE_REQUIRED_PACKAGES = setOf(
-        // Google Workspace & Productivity Editors
         "com.google.android.keep",
         "com.google.android.apps.docs",
         "com.google.android.apps.docs.editors.docs",
         "com.google.android.apps.docs.editors.sheets",
         "com.google.android.apps.docs.editors.slides",
-        "com.google.android.apps.dynamite", // Google Chat rich inputs
-
-        // Note-taking & Document Workspace Tools
+        "com.google.android.apps.dynamite",
         "notion.id",
         "md.obsidian",
         "com.evernote",
@@ -52,8 +88,6 @@ object AppClassifier {
         "com.simplenote",
         "com.superhuman.mail",
         "com.linear.android",
-
-        // Web and Publishing Tools
         "com.medium.reader",
         "com.substack.app",
         "com.wordpress",
@@ -70,10 +104,41 @@ object AppClassifier {
         return false
     }
 
-    fun classify(packageName: String?, resolvedAppName: String? = null): AppCategory {
-        if (packageName.isNullOrBlank() && resolvedAppName.isNullOrBlank()) return AppCategory.OTHER
+    fun isAiChatApp(packageName: String?, resolvedAppName: String? = null): Boolean {
+        return classify(packageName, resolvedAppName) == AppCategory.AI_CHAT
+    }
 
-        // Check AppRegistry native mapping
+    /**
+     * Classifies an app based on name and package:
+     * 1. Check Instant Static Dictionary by name
+     * 2. Check LearnedAppRegistry (if context provided)
+     * 3. Check AppRegistry native package map
+     * 4. Heuristic pattern fallback
+     */
+    fun classify(packageName: String?, resolvedAppName: String? = null, context: Context? = null): AppCategory {
+        val nameLower = (resolvedAppName ?: "").trim().lowercase()
+
+        // 1. Instant Static Dictionary (Zero Latency)
+        if (nameLower.isNotEmpty()) {
+            when {
+                AI_CHAT_NAMES.any { nameLower == it || nameLower.contains(it) } -> return AppCategory.AI_CHAT
+                MESSAGING_NAMES.any { nameLower == it || nameLower.contains(it) } -> return AppCategory.MESSAGING
+                EMAIL_NAMES.any { nameLower == it || nameLower.contains(it) } -> return AppCategory.EMAIL
+                NOTES_DOCS_NAMES.any { nameLower == it || nameLower.contains(it) } -> return AppCategory.NOTES_DOCS
+                SOCIAL_NAMES.any { nameLower == it || nameLower.contains(it) } -> return AppCategory.SOCIAL
+            }
+        }
+
+        // 2. Check Learned Registry if cached
+        if (context != null) {
+            val key = packageName ?: resolvedAppName ?: ""
+            val learned = LearnedAppRegistry.get(context, key) ?: if (nameLower.isNotEmpty()) LearnedAppRegistry.get(context, nameLower) else null
+            if (learned != null) {
+                return AppCategory.fromString(learned.category)
+            }
+        }
+
+        // 3. Check AppRegistry native package mapping
         if (!packageName.isNullOrBlank()) {
             AppRegistry.NATIVE_APP_MAP[packageName]?.let {
                 return when (it.group) {
@@ -86,91 +151,28 @@ object AppClassifier {
             }
         }
 
-        // Check web app heuristics
-        val candidateName = resolvedAppName ?: ""
-        AppRegistry.matchWebApp(candidateName)?.let {
-            return when (it.group) {
-                "AI" -> AppCategory.AI_CHAT
-                "Social" -> AppCategory.MESSAGING
-                "Work" -> AppCategory.NOTES_DOCS
-                "Email" -> AppCategory.EMAIL
-                else -> AppCategory.OTHER
-            }
-        }
-
+        // 4. Package name heuristics
         val pkgLower = (packageName ?: "").lowercase()
-        val nameLower = candidateName.lowercase()
+        return when {
+            pkgLower.contains("gemini") || pkgLower.contains("bard") || pkgLower.contains("chatgpt") ||
+            pkgLower.contains("openai") || pkgLower.contains("claude") || pkgLower.contains("anthropic") ||
+            pkgLower.contains("grok") || pkgLower.contains("perplexity") || pkgLower.contains("deepseek") ||
+            pkgLower.contains("copilot") || pkgLower.contains("qwen") || pkgLower.contains("kimi") -> AppCategory.AI_CHAT
 
-        // 1. AI category
-        if (pkgLower.contains("qwen") || pkgLower.contains("tongyi") ||
-            pkgLower.contains("grok") || pkgLower.contains("x.ai") ||
-            pkgLower.contains("openai") || pkgLower.contains("chatgpt") ||
-            pkgLower.contains("anthropic") || pkgLower.contains("claude") ||
-            pkgLower.contains("bard") || pkgLower.contains("gemini") ||
-            pkgLower.contains("perplexity") || pkgLower.contains("copilot") ||
-            pkgLower.contains("poe") || pkgLower.contains("character.ai") ||
-            pkgLower.contains("deepseek") ||
-            nameLower.contains("ai studio") || nameLower.contains("chatgpt") ||
-            nameLower.contains("claude") || nameLower.contains("gemini") ||
-            nameLower.contains("bard") || nameLower.contains("grok") ||
-            nameLower.contains("perplexity") || nameLower.contains("deepseek") ||
-            nameLower.contains("copilot") || nameLower.contains("qwen")
-        ) {
-            return AppCategory.AI_CHAT
+            pkgLower.contains("whatsapp") || pkgLower.contains("telegram") || pkgLower.contains("signal") ||
+            pkgLower.contains("messaging") || pkgLower.contains("mms") || pkgLower.contains("discord") ||
+            pkgLower.contains("slack") -> AppCategory.MESSAGING
+
+            pkgLower.contains("gmail") || pkgLower.contains("outlook") || pkgLower.contains("superhuman") ||
+            pkgLower.contains("protonmail") || pkgLower.contains("email") || pkgLower.contains(".mail") -> AppCategory.EMAIL
+
+            pkgLower.contains("keep") || pkgLower.contains("notion") || pkgLower.contains("obsidian") ||
+            pkgLower.contains("docs") || pkgLower.contains("notes") || pkgLower.contains("onenote") -> AppCategory.NOTES_DOCS
+
+            pkgLower.contains("instagram") || pkgLower.contains("facebook") || pkgLower.contains("twitter") ||
+            pkgLower.contains("tiktok") || pkgLower.contains("reddit") || pkgLower.contains("pinterest") -> AppCategory.SOCIAL
+
+            else -> AppCategory.OTHER
         }
-
-        // 2. Email category
-        if (pkgLower.contains("gmail") || pkgLower.contains("outlook") ||
-            pkgLower.contains("superhuman") || pkgLower.contains("protonmail") ||
-            pkgLower.contains("email") || pkgLower.contains(".mail") ||
-            nameLower.contains("gmail") || nameLower.contains("outlook") ||
-            nameLower.contains("superhuman") || nameLower.contains("mail")
-        ) {
-            return AppCategory.EMAIL
-        }
-
-        // 3. Notes & Docs category
-        if (pkgLower.contains("keep") || pkgLower.contains("notion") ||
-            pkgLower.contains("obsidian") || pkgLower.contains("docs") ||
-            pkgLower.contains("sheets") || pkgLower.contains("slides") ||
-            pkgLower.contains("word") || pkgLower.contains("onenote") ||
-            pkgLower.contains("notes") || pkgLower.contains("evernote") ||
-            pkgLower.contains("linear") || pkgLower.contains("jira") ||
-            pkgLower.contains("trello") || pkgLower.contains("asana") ||
-            nameLower.contains("keep") || nameLower.contains("notion") ||
-            nameLower.contains("obsidian") || nameLower.contains("docs") ||
-            nameLower.contains("notes") || nameLower.contains("word")
-        ) {
-            return AppCategory.NOTES_DOCS
-        }
-
-        // 4. Messaging & Social category
-        if (pkgLower.contains("messaging") || pkgLower.contains("mms") ||
-            pkgLower.contains("whatsapp") || pkgLower.contains("telegram") ||
-            pkgLower.contains("instagram") || pkgLower.contains("messenger") ||
-            pkgLower.contains("tiktok") || pkgLower.contains("twitter") ||
-            pkgLower.contains("snapchat") || pkgLower.contains("reddit") ||
-            pkgLower.contains("discord") || pkgLower.contains("pinterest") ||
-            pkgLower.contains("signal") || pkgLower.contains("linkedin") ||
-            pkgLower.contains("facebook") || pkgLower.contains("threads") ||
-            pkgLower.contains("viber") || pkgLower.contains("line") ||
-            pkgLower.contains("slack") || pkgLower.contains("dynamite") ||
-            nameLower.contains("whatsapp") || nameLower.contains("telegram") ||
-            nameLower.contains("instagram") || nameLower.contains("tiktok") ||
-            nameLower.contains("twitter") || nameLower.contains("discord") ||
-            nameLower.contains("messages") || nameLower.contains("signal") ||
-            nameLower.contains("slack")
-        ) {
-            return AppCategory.MESSAGING
-        }
-
-        return AppCategory.OTHER
-    }
-
-    /**
-     * Determines whether the given package or app represents an AI chat app.
-     */
-    fun isAiChatApp(packageName: String?, resolvedAppName: String? = null): Boolean {
-        return classify(packageName, resolvedAppName) == AppCategory.AI_CHAT
     }
 }

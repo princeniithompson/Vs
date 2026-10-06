@@ -32,10 +32,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.automirrored.filled.Input
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material3.Card
@@ -48,6 +50,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -88,7 +91,8 @@ enum class DiagnosticSubScreen {
     LIVE,
     HISTORY,
     AUDIO,
-    NOTES
+    NOTES,
+    APP_DETECTION
 }
 
 /**
@@ -207,10 +211,12 @@ fun DiagnosticsBottomSheet(
             ) { subScreen ->
                 when (subScreen) {
                     DiagnosticSubScreen.HUB -> {
+                        val appDetectionEvents by com.example.data.AppDetectionLogRepository.events.collectAsState()
                         DiagnosticsHubView(
                             eventCount = diagnosticEntries.size,
                             noteCount = notes.size,
                             recordingCount = recordings.size,
+                            appDetectionCount = appDetectionEvents.size,
                             connectionState = connectionState,
                             isAnalyzingSmartVocab = isAnalyzingSmartVocab,
                             onSimulateWeeklySmartVocab = onSimulateWeeklySmartVocab,
@@ -220,6 +226,11 @@ fun DiagnosticsBottomSheet(
                             onRequestClear = { showClearConfirmationDialog = true },
                             onDismiss = onDismiss,
                             onNavigateTo = { destination -> currentSubScreen = destination }
+                        )
+                    }
+                    DiagnosticSubScreen.APP_DETECTION -> {
+                        com.example.ui.screens.AppDetectionDiagnosticsScreen(
+                            onBackClick = { currentSubScreen = DiagnosticSubScreen.HUB }
                         )
                     }
                     DiagnosticSubScreen.LIVE -> {
@@ -299,6 +310,7 @@ private fun DiagnosticsHubView(
     eventCount: Int,
     noteCount: Int,
     recordingCount: Int,
+    appDetectionCount: Int,
     connectionState: ConnectionState,
     isAnalyzingSmartVocab: Boolean,
     onSimulateWeeklySmartVocab: () -> Unit,
@@ -335,7 +347,23 @@ private fun DiagnosticsHubView(
             )
         }
 
-        // 1. Live Protocol Monitor Card
+        // 1. App Detection Diagnostics Card (Prominent Card at Top)
+        item {
+            DiagnosticSectionNavCard(
+                title = "App Detection Diagnostics",
+                subtitle = "Raw metadata extracted during bubble activation (packageName, title, nodes, AI prompt/response)",
+                badgeText = "$appDetectionCount events",
+                badgeBg = Color(0xFFE0F2FE),
+                badgeFg = Color(0xFF0284C7),
+                icon = Icons.Filled.AutoAwesome,
+                iconBg = Color(0xFF0284C7),
+                onClick = { onNavigateTo(DiagnosticSubScreen.APP_DETECTION) },
+                testTag = "nav_card_app_detection"
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        // 2. Live Protocol Monitor Card
         item {
             val liveStateLabel = when (connectionState) {
                 is ConnectionState.Idle -> "IDLE"

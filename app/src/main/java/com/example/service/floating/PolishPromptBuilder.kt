@@ -30,6 +30,8 @@ CRITICAL RULES:
                 "CONTEXT: The user is speaking to an AI Assistant ($safeAppName). If the user is dictating a task or question for the AI, format it as a crisp, well-structured instruction while keeping all original constraints, examples, and details intact. If the user is just casually chatting with the AI, keep it natural."
             AppCategory.MESSAGING ->
                 "CONTEXT: Direct Messaging ($safeAppName). Keep sentences natural, punchy, and conversational. Use contractions naturally. Do NOT use stiff corporate language or bullet points unless explicitly requested."
+            AppCategory.SOCIAL ->
+                "CONTEXT: Social Media ($safeAppName). Keep tone expressive, punchy, and natural with appropriate punctuation and engaging pacing."
             AppCategory.EMAIL ->
                 "CONTEXT: Email drafting ($safeAppName). Use proper paragraph spacing, clean grammar, and standard punctuation. Do NOT add fake greetings or sign-offs unless the user spoke them."
             AppCategory.NOTES_DOCS ->

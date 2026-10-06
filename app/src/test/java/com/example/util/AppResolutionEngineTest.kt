@@ -221,10 +221,10 @@ class AppResolutionEngineTest {
         val result = resolver.resolveWithEvidence(evidence)
 
         assertNotNull(result)
-        assertEquals("AI Assistant", result?.name)
+        assertEquals("SuperAI", result?.name)
         assertEquals("AI", result?.category)
         assertTrue(result?.isAiApp == true)
-        assertEquals("AI · AI Assistant", result?.formatted)
+        assertEquals("AI · SuperAI", result?.formatted)
         assertEquals(ResolvedCategory.AI_ASSISTANT, result?.resolvedCategory)
     }
 

@@ -49,10 +49,12 @@ class VoxStreamAccessibilityService : AccessibilityService() {
                 AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
 
+        // FLAG_RETRIEVE_INTERACTIVE_WINDOWS: Required to extract window titles across all active foreground applications
         // FLAG_REPORT_VIEW_IDS: Required to resolve view resource IDs in target editable fields for direct text injection
         // FLAG_INCLUDE_NOT_IMPORTANT_VIEWS: Required to access nested or custom editor view hierarchies in rich text and messaging inputs
         // FLAG_INPUT_METHOD_EDITOR: Connects directly to the active editor's InputConnection (Wispr Flow architecture)
-        var flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+        var flags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                 AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             flags = flags or AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
@@ -203,120 +205,104 @@ class VoxStreamAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Injects transcribed text into the target active editable field using the Hybrid Input Engine:
-     * 1. Priority 1 (Android 13+ AccessibilityInputConnection):
-     *    Uses inputMethod.currentInputConnection.commitText(text, 1, null) directly at the blinking caret!
-     * 2. Priority 2 (Companion VoxStreamInputMethodService):
-     *    Uses VoxStreamInputMethodService.commitText(text) via the live InputConnection.
-     * 3. Priority 3 (Direct Caret ActionSetText):
-     *    Uses injectTextSafely(targetNode, newText) with cursor bounds checking and length > 15 safety.
-     * 4. Zero clipboard usage: Leaves user's clipboard and keyboard history completely untouched!
+     * Injects transcribed text directly into the target active editable field using direct node editing (ACTION_SET_TEXT):
+     * 1. Resolves active focused editable node (via FOCUS_INPUT, rootInActiveWindow, or window search).
+     * 2. Executes direct node injection via injectTextSafely (ACTION_SET_TEXT) with cursor & hint handling.
+     * 3. Zero clipboard interference when a text field is present.
      */
-    fun injectText(newText: String): Boolean {
-        if (newText.isEmpty()) return false
+    fun injectTextDetailed(newText: String): com.example.data.InjectionEvent {
+        val startTime = android.os.SystemClock.elapsedRealtime()
+        val wordCount = newText.trim().split("\\s+".toRegex()).count { it.isNotBlank() }
+        val rawPreview = newText.take(40)
+
+        if (newText.isEmpty()) {
+            return com.example.data.InjectionEvent(
+                textLength = 0,
+                wordCount = 0,
+                rawTextPreview = "",
+                finalOutcome = "FAILED",
+                injectionMethod = "NONE",
+                resultDetails = "SKIPPED: Text is empty"
+            )
+        }
+
         if (FloatingBubbleManager.isCurrentAppSensitive.value) {
             Log.w(TAG, "injectText blocked: Smart Safe Mode is active")
-            return false
-        }
-
-        // Cancel any pending asynchronous paste before starting a new injection
-        com.example.service.floating.FloatingTextInjector.cancelPendingPaste(mainHandler)
-
-        // Priority 1: Direct Android 13+ AccessibilityInputConnection (Wispr Flow architecture)
-        if (commitTextViaInputMethod(newText)) {
-            Log.d(TAG, "AccessibilityInputConnection committed text successfully")
-            return true
-        }
-
-        // Priority 2: Companion VoxStreamInputMethodService
-        if (VoxStreamInputMethodService.commitText(newText)) {
-            Log.d(TAG, "VoxStreamInputMethodService committed text successfully")
-            return true
-        }
-
-        // Priority 3: Direct node editing via injectTextSafely
-        val targetNode = getActiveEditableNode()
-        if (targetNode != null) {
-            val targetPkg = targetNode.packageName?.toString() ?: ""
-            Log.d(TAG, "Executing direct node injection for $targetPkg")
-            val injected = injectTextSafely(targetNode, newText)
-            if (injected) return true
-
-            // Fallback: If direct node edit failed on custom editors (e.g. rich text), use paste injection
-            if (AppClassifier.isPasteRequired(targetPkg)) {
-                return com.example.service.floating.FloatingTextInjector.performPasteInjection(targetNode, newText, this, mainHandler)
+            val targetPkg = try { getActivePackageName() } catch (_: Throwable) { null } ?: "Unknown"
+            val appName = try {
+                AppContextResolver.resolve(this, targetPkg)?.appName ?: "App"
+            } catch (_: Throwable) {
+                "App"
             }
+            return com.example.data.InjectionEvent(
+                targetPackage = targetPkg,
+                targetAppName = appName,
+                textLength = newText.length,
+                wordCount = wordCount,
+                rawTextPreview = rawPreview,
+                finalOutcome = "FAILED",
+                injectionMethod = "BLOCKED_SAFE_MODE",
+                resultDetails = "BLOCKED: Smart Safe Mode active"
+            )
         }
 
-        return false
+        val targetNode = getActiveEditableNode()
+        val (finalOutcome, injectionMethod, resultDetails) = if (targetNode != null) {
+            val safeResult = injectTextSafely(targetNode, newText)
+            if (safeResult) {
+                Triple("SUCCESS", "DIRECT_ACTION_SET_TEXT", "SUCCESS: Direct ACTION_SET_TEXT performed at cursor")
+            } else {
+                // Direct fallback performAction on node
+                val args = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, newText)
+                }
+                val directResult = try {
+                    targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error performing ACTION_SET_TEXT: ${e.message}")
+                    false
+                }
+                if (directResult) {
+                    Triple("SUCCESS", "DIRECT_ACTION_SET_TEXT", "SUCCESS: Direct ACTION_SET_TEXT performed")
+                } else {
+                    Triple("FAILED", "DIRECT_ACTION_SET_TEXT", "FAILED: Node rejected ACTION_SET_TEXT")
+                }
+            }
+        } else {
+            Triple("FAILED", "NO_TARGET_NODE", "FAILED: No active editable node found")
+        }
+
+        val elapsed = android.os.SystemClock.elapsedRealtime() - startTime
+        val nodeToInspect = targetNode ?: lastFocusedEditableNode
+        val nodePkg = try { nodeToInspect?.packageName?.toString() ?: getActivePackageName() ?: "Unknown" } catch (_: Throwable) { "Unknown" }
+        val appName = try { AppContextResolver.resolve(this, nodePkg)?.appName ?: "App" } catch (_: Throwable) { "App" }
+
+        return com.example.data.InjectionEvent(
+            targetPackage = nodePkg,
+            targetAppName = appName,
+            targetNodeClass = nodeToInspect?.className?.toString(),
+            isFocused = nodeToInspect?.isFocused ?: false,
+            isEditable = nodeToInspect?.let { isEditableNode(it) } ?: false,
+            windowId = nodeToInspect?.windowId ?: -1,
+            textLength = newText.length,
+            wordCount = wordCount,
+            injectionMethod = injectionMethod,
+            resultDetails = resultDetails,
+            finalOutcome = finalOutcome,
+            durationMs = elapsed,
+            rawTextPreview = rawPreview
+        )
+    }
+
+    fun injectText(newText: String): Boolean {
+        val trace = injectTextDetailed(newText)
+        return trace.finalOutcome == "SUCCESS"
     }
 
     @androidx.annotation.VisibleForTesting(otherwise = androidx.annotation.VisibleForTesting.PRIVATE)
     internal fun commitTextViaInputMethod(text: String): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            Log.d(TAG, "InputConnection unavailable: Android version < 13")
-            return false
-        }
-
-        return try {
-            val im = inputMethod
-            if (im == null || !im.currentInputStarted) {
-                Log.d(TAG, "InputConnection unavailable: inputMethod is null or not started")
-                return false
-            }
-
-            val ic = im.currentInputConnection
-            if (ic == null) {
-                Log.d(TAG, "InputConnection unavailable: currentInputConnection is null")
-                return false
-            }
-
-            val target = lastFocusedEditableNode ?: getActiveEditableNode()
-            target?.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-
-            val beforeSurrounding = try {
-                ic.getSurroundingText(text.length + 64, 64, 0)?.text?.toString()
-            } catch (_: Throwable) {
-                null
-            }
-            val beforeNodeText = target?.text?.toString()
-
-            ic.commitText(text, 1, null)
-
-            val afterSurrounding = try {
-                ic.getSurroundingText(text.length + 64, 64, 0)?.text?.toString()
-            } catch (_: Throwable) {
-                null
-            }
-            target?.refresh()
-            val afterNodeText = target?.text?.toString()
-
-            val commitSucceeded = when {
-                afterSurrounding != null && afterSurrounding.contains(text) -> true
-                afterNodeText != null && afterNodeText.contains(text) -> true
-                afterSurrounding != null && beforeSurrounding != null && afterSurrounding != beforeSurrounding -> true
-                afterNodeText != null && beforeNodeText != null && afterNodeText != beforeNodeText -> true
-                afterSurrounding != null && beforeSurrounding != null && afterSurrounding == beforeSurrounding -> {
-                    Log.w(TAG, "InputConnection commit rejected: surrounding text unchanged after commit")
-                    false
-                }
-                else -> {
-                    Log.d(TAG, "InputConnection commit dispatched cleanly without explicit text feedback (preventing duplicate insertion)")
-                    true
-                }
-            }
-
-            if (commitSucceeded) {
-                Log.d(TAG, "InputConnection commit succeeded, len=${text.length}")
-                true
-            } else {
-                Log.w(TAG, "InputConnection commit failed: editor did not reflect committed text")
-                false
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "InputConnection commit threw an exception: ${e.message}", e)
-            false
-        }
+        Log.d(TAG, "commitTextViaInputMethod called (deprecated, direct node injection is active)")
+        return false
     }
 
     private fun getActiveEditableNode(): AccessibilityNodeInfo? {

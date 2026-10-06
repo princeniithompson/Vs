@@ -2,6 +2,7 @@ package com.example.service
 
 import android.content.Context
 import android.util.Log
+import com.example.config.VoxStreamConfig
 import com.example.util.AppResolutionEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +24,8 @@ class GeminiApiException(val statusCode: Int, message: String) : IOException(mes
 
 object AppDetector {
     private const val TAG = "AppDetector"
-    private const val MODEL_NAME = "gemini-3.1-flash-lite"
+    private const val PRIMARY_MODEL = "gemini-3.5-flash-lite"
+    private const val FALLBACK_MODEL = "gemini-3.8-flash"
 
     // In-Memory Session Cache (keyed by learnedRegistryKey)
     private val sessionCache = mutableMapOf<String, AppInfo>()
@@ -44,7 +46,7 @@ object AppDetector {
      * Hybrid Detection Entrypoint:
      * - Stage A: Multi-signal evidence & local display name computed synchronously
      * - Stage B: Fast local lookup (static maps, learned cache, heuristics) -> 0 network calls
-     * - Stage C: Live Google Search grounded Gemini classification only for unknown apps/sites
+     * - Stage C: Lightweight single-query classification with gemini-3.5-flash-lite saved permanently
      */
     suspend fun detectAppHybrid(
         evidence: AppResolutionEngine.AppEvidence,
@@ -56,7 +58,18 @@ object AppDetector {
         synchronized(sessionCache) {
             val cached = sessionCache[cacheKey]
             if (cached != null) {
-                Log.d(TAG, "[HybridDetector] Cache HIT (Session Cache): key='$cacheKey', appName='${cached.appName}', category='${cached.category}', localLabel='${evidence.localDisplayName}' -> Gemini called: FALSE")
+                Log.d(TAG, "[HybridDetector] Cache HIT (Session Cache): key='$cacheKey', appName='${cached.appName}', category='${cached.category}'")
+                com.example.data.AppDetectionLogRepository.logEvent(
+                    com.example.data.AppDetectionEvent(
+                        rawPackageName = evidence.packageName,
+                        rawWindowTitle = evidence.windowTitle,
+                        packageManagerLabel = evidence.appLabel,
+                        topScreenTexts = (evidence.visibleNodeTexts + evidence.contentDescriptions).distinct().take(5),
+                        resolvedAppName = cached.appName,
+                        classificationSource = "LEARNED_CACHE",
+                        finalCategory = cached.category
+                    )
+                )
                 return@withContext cached
             }
         }
@@ -72,14 +85,23 @@ object AppDetector {
             synchronized(sessionCache) {
                 sessionCache[cacheKey] = localResult
             }
-            val learnedEntry = LearnedAppRegistry.get(context, cacheKey)
-            Log.d(TAG, "[HybridDetector] Cache HIT (Stage B / Learned Registry): key='$cacheKey', appName='${localResult.appName}' (learned='${learnedEntry?.appName}', local='${evidence.localDisplayName}'), category='${localResult.category}', confirmCount=${learnedEntry?.confirmCount ?: 0} -> Gemini called: FALSE")
+            com.example.data.AppDetectionLogRepository.logEvent(
+                com.example.data.AppDetectionEvent(
+                    rawPackageName = evidence.packageName,
+                    rawWindowTitle = evidence.windowTitle,
+                    packageManagerLabel = evidence.appLabel,
+                    topScreenTexts = (evidence.visibleNodeTexts + evidence.contentDescriptions).distinct().take(5),
+                    resolvedAppName = localResult.appName,
+                    classificationSource = "STATIC_DICTIONARY",
+                    finalCategory = localResult.category
+                )
+            )
             return@withContext localResult
         }
 
-        Log.d(TAG, "[HybridDetector] Cache MISS: key='$cacheKey', localLabel='${evidence.localDisplayName}' -> Proceeding to Stage C with Google Search Grounding")
+        Log.d(TAG, "[HybridDetector] Cache MISS: key='$cacheKey', localLabel='${evidence.localDisplayName}' -> Proceeding to Stage C with $PRIMARY_MODEL")
 
-        // 3. Stage C: Category unknown locally -> Call Gemini with Live Search Grounding
+        // 3. Stage C: Category unknown locally -> Call gemini-3.5-flash-lite
         val coroutineJob = coroutineContext[Job]
 
         synchronized(this) {
@@ -104,69 +126,38 @@ object AppDetector {
             Log.w(TAG, "Gemini API Key missing/placeholder. Falling back to local name '${evidence.localDisplayName}' -> Other")
             val fallback = AppInfo(appName = evidence.localDisplayName, category = "Other", isLocallyResolved = true)
             synchronized(sessionCache) { sessionCache[cacheKey] = fallback }
+            com.example.data.AppDetectionLogRepository.logEvent(
+                com.example.data.AppDetectionEvent(
+                    rawPackageName = evidence.packageName,
+                    rawWindowTitle = evidence.windowTitle,
+                    packageManagerLabel = evidence.appLabel,
+                    topScreenTexts = (evidence.visibleNodeTexts + evidence.contentDescriptions).distinct().take(5),
+                    resolvedAppName = fallback.appName,
+                    classificationSource = "DEFAULT_FALLBACK",
+                    finalCategory = fallback.category
+                )
+            )
             return@withContext fallback
         }
 
+        val prompt = "Classify the application '${evidence.localDisplayName}' into exactly one category: AI_CHAT, MESSAGING, EMAIL, NOTES, SOCIAL, OTHER. Output ONLY the category name."
+        var rawCategory = ""
         try {
-            Log.d(TAG, "Stage C: Calling Gemini for $cacheKey with localDisplayName='${evidence.localDisplayName}' (Google Search Grounding ON) -> Gemini called: TRUE")
+            rawCategory = executeGeminiClassification(apiKey, prompt)
+            val mappedCategory = mapCategoryStringToGroup(rawCategory)
 
-            val systemInstruction = """
-You classify the Android foreground app/site. You may use Google Search.
-
-Input: package name, localDisplayName (from PackageManager / WebAPK meta), optional URL, window title, activity, on-screen text.
-
-Output JSON ONLY:
-{ "appName": string, "category": "AI"|"Social"|"Work"|"Other" }
-
-Rules:
-- Prefer CURRENT product name from Search / Play / official sources over discontinued or old Labs names.
-- Example: com.google.android.apps.labs.whisk and labels related to Whisk/Flow → appName "Google Flow" (or "Flow"), category "AI". Do NOT use the old standalone "Whisk" name if sources say it migrated into Flow.
-- If localDisplayName is specific and non-generic (not Chrome, Browser, Web Application, App), prefer it unless Search clearly shows a rename/rebrand to a current product.
-- category:
-  - AI: assistants, LLM apps, AI image/video studios (Gemini, ChatGPT, Claude, Grok, Google AI Studio, Google Flow, Perplexity, Kimi, Qwen, DeepSeek, NotebookLM, v0, …)
-  - Social: messaging/social
-  - Work: productivity/dev/office
-  - Other: browsers with no known site product, betting, games, utilities
-- Do not label plain Google Search as AI.
-- Do not label the browser as the product when URL/title names a site (AI Studio, SportyBet, etc.).
-- Prefer short official names. No marketing blurbs.
-""".trimIndent()
-
-            val userContent = evidence.buildEvidencePromptString()
-
-            val schemaJson = JSONObject().apply {
-                put("type", "OBJECT")
-                put("properties", JSONObject().apply {
-                    put("appName", JSONObject().apply { put("type", "STRING") })
-                    put("category", JSONObject().apply {
-                        put("type", "STRING")
-                        put("enum", JSONArray(listOf("AI", "Social", "Work", "Other")))
-                    })
-                })
-                put("required", JSONArray(listOf("appName", "category")))
-            }
-
-            // Execute Grounding with automatic fallback chain if schema conflicts with search tools
-            val (parsedName, parsedCategory) = executeStageCGeminiClassification(
-                apiKey = apiKey,
-                systemInstruction = systemInstruction,
-                userContent = userContent,
-                schemaJson = schemaJson,
-                defaultName = evidence.localDisplayName
-            )
-
-            // Persist into LearnedAppRegistry with source = "gemini" and update confirmation count
-            val learned = LearnedAppRegistry.recordConfirmation(
+            // Persist into LearnedAppRegistry permanently
+            LearnedAppRegistry.recordConfirmation(
                 context = context,
                 key = cacheKey,
-                appName = parsedName,
-                category = parsedCategory,
+                appName = evidence.localDisplayName,
+                category = mappedCategory,
                 source = "gemini"
             )
 
             val result = AppInfo(
-                appName = parsedName,
-                category = parsedCategory,
+                appName = evidence.localDisplayName,
+                category = mappedCategory,
                 isLocallyResolved = false
             )
 
@@ -174,15 +165,45 @@ Rules:
                 sessionCache[cacheKey] = result
             }
 
-            Log.d(TAG, "[HybridDetector] Stage C Succeeded: key='$cacheKey' -> learned.appName='${learned.appName}', category='${learned.category}', confirmCount=${learned.confirmCount}, source='${learned.source}', localLabel='${evidence.localDisplayName}' -> Gemini called: TRUE")
+            // Notify bubble manager to update UI seamlessly
+            FloatingBubbleManager.updateLearnedAppContext(evidence.localDisplayName, mappedCategory)
+
+            com.example.data.AppDetectionLogRepository.logEvent(
+                com.example.data.AppDetectionEvent(
+                    rawPackageName = evidence.packageName,
+                    rawWindowTitle = evidence.windowTitle,
+                    packageManagerLabel = evidence.appLabel,
+                    topScreenTexts = (evidence.visibleNodeTexts + evidence.contentDescriptions).distinct().take(5),
+                    resolvedAppName = result.appName,
+                    classificationSource = "AI_MODEL",
+                    aiPromptSent = prompt,
+                    aiRawResponse = rawCategory,
+                    finalCategory = result.category
+                )
+            )
+
+            Log.d(TAG, "[HybridDetector] Stage C Learned successfully: appName='${result.appName}', category='${result.category}'")
             return@withContext result
 
         } catch (e: Exception) {
-            Log.w(TAG, "Stage C Gemini call failed for $cacheKey: ${e.message}. Falling back to local name.", e)
+            Log.w(TAG, "Stage C Gemini call failed for $cacheKey: ${e.message}. Defaulting to Other.", e)
             val fallback = AppInfo(appName = evidence.localDisplayName, category = "Other", isLocallyResolved = true)
             synchronized(sessionCache) {
                 sessionCache[cacheKey] = fallback
             }
+            com.example.data.AppDetectionLogRepository.logEvent(
+                com.example.data.AppDetectionEvent(
+                    rawPackageName = evidence.packageName,
+                    rawWindowTitle = evidence.windowTitle,
+                    packageManagerLabel = evidence.appLabel,
+                    topScreenTexts = (evidence.visibleNodeTexts + evidence.contentDescriptions).distinct().take(5),
+                    resolvedAppName = fallback.appName,
+                    classificationSource = "AI_MODEL_FALLBACK",
+                    aiPromptSent = prompt,
+                    aiRawResponse = "Error: ${e.message}",
+                    finalCategory = fallback.category
+                )
+            )
             return@withContext fallback
         } finally {
             synchronized(this) {
@@ -194,234 +215,49 @@ Rules:
         }
     }
 
-    /**
-     * Executes classification via Live Search Grounding with an ordered fallback chain:
-     * 1. Primary: Grounding ON + JSON Mode + Schema
-     * 2. Fallback A: Grounding ON + JSON Mode (no schema)
-     * 3. Fallback B: Grounding ON + Plain Text Mode (regex/json extraction)
-     * 4. Fallback C: Grounding OFF + Schema (offline knowledge fallback)
-     */
-    private suspend fun executeStageCGeminiClassification(
-        apiKey: String,
-        systemInstruction: String,
-        userContent: String,
-        schemaJson: JSONObject,
-        defaultName: String
-    ): Pair<String, String> {
-        // 1. Primary Attempt: Grounding ON + JSON Mode + Schema
-        try {
-            val text = callGeminiWithRetry(
-                apiKey = apiKey,
-                systemInstruction = systemInstruction,
-                userContent = userContent,
-                enableGoogleSearch = true,
-                responseMimeType = "application/json",
-                responseSchema = schemaJson
-            )
-            val parsed = parseJsonAppInfo(text, defaultName)
-            if (parsed != null) {
-                Log.d(TAG, "Stage C Succeeded via Primary Path (Grounding ON + JSON Schema)")
-                return parsed
-            }
+    private fun mapCategoryStringToGroup(raw: String): String {
+        val upper = raw.trim().uppercase()
+        return when {
+            upper.contains("AI") -> "AI"
+            upper.contains("MESSAG") || upper.contains("CHAT") -> "Social"
+            upper.contains("EMAIL") || upper.contains("MAIL") -> "Email"
+            upper.contains("NOTE") || upper.contains("DOC") || upper.contains("WORK") -> "Notes"
+            upper.contains("SOCIAL") -> "Social"
+            else -> "Other"
+        }
+    }
+
+    private suspend fun executeGeminiClassification(apiKey: String, prompt: String): String {
+        return try {
+            callGeminiREST(PRIMARY_MODEL, apiKey, prompt)
         } catch (e: Exception) {
-            Log.w(TAG, "Stage C Primary Path failed (${e.message}). Trying Fallback A (Grounding ON + JSON without schema)...")
+            Log.w(TAG, "Primary model $PRIMARY_MODEL failed (${e.message}). Retrying with $FALLBACK_MODEL...")
+            callGeminiREST(FALLBACK_MODEL, apiKey, prompt)
         }
-
-        // 2. Fallback A: Grounding ON + JSON Mode without Schema
-        try {
-            val text = callGeminiWithRetry(
-                apiKey = apiKey,
-                systemInstruction = systemInstruction,
-                userContent = userContent,
-                enableGoogleSearch = true,
-                responseMimeType = "application/json",
-                responseSchema = null
-            )
-            val parsed = parseJsonAppInfo(text, defaultName)
-            if (parsed != null) {
-                Log.d(TAG, "Stage C Succeeded via Fallback Path A (Grounding ON + JSON Mode)")
-                return parsed
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Stage C Fallback Path A failed (${e.message}). Trying Fallback B (Grounding ON + Plain Text)...")
-        }
-
-        // 3. Fallback B: Grounding ON + Plain Text Mode
-        try {
-            val text = callGeminiWithRetry(
-                apiKey = apiKey,
-                systemInstruction = systemInstruction,
-                userContent = userContent,
-                enableGoogleSearch = true,
-                responseMimeType = null,
-                responseSchema = null
-            )
-            val parsed = parseJsonAppInfo(text, defaultName)
-            if (parsed != null) {
-                Log.d(TAG, "Stage C Succeeded via Fallback Path B (Grounding ON + Plain Text)")
-                return parsed
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Stage C Fallback Path B failed (${e.message}). Trying Fallback C (Grounding OFF + Schema)...")
-        }
-
-        // 4. Fallback C: Grounding OFF + Schema (Offline knowledge)
-        val text = callGeminiWithRetry(
-            apiKey = apiKey,
-            systemInstruction = systemInstruction,
-            userContent = userContent,
-            enableGoogleSearch = false,
-            responseMimeType = "application/json",
-            responseSchema = schemaJson
-        )
-        val parsed = parseJsonAppInfo(text, defaultName)
-        if (parsed != null) {
-            Log.d(TAG, "Stage C Succeeded via Fallback Path C (Grounding OFF + Schema)")
-            return parsed
-        }
-
-        throw IOException("Failed to parse valid app info from Gemini response")
     }
 
-    private fun parseJsonAppInfo(rawResponse: String?, defaultName: String): Pair<String, String>? {
-        if (rawResponse.isNullOrBlank()) return null
-        val trimmed = rawResponse.trim()
-
-        // Direct JSON object attempt
-        try {
-            val obj = JSONObject(trimmed)
-            val name = obj.optString("appName", "").trim().ifBlank { defaultName }
-            val cat = obj.optString("category", "").trim().ifBlank { "Other" }
-            return Pair(name, cat)
-        } catch (_: Exception) {}
-
-        // Regex JSON extraction from Markdown codeblocks or surrounding text
-        try {
-            val jsonPattern = Regex("""\{[\s\S]*?"appName"[\s\S]*?"category"[\s\S]*?\}""")
-            val match = jsonPattern.find(trimmed)?.value
-            if (match != null) {
-                val obj = JSONObject(match)
-                val name = obj.optString("appName", "").trim().ifBlank { defaultName }
-                val cat = obj.optString("category", "").trim().ifBlank { "Other" }
-                return Pair(name, cat)
-            }
-        } catch (_: Exception) {}
-
-        return null
-    }
-
-    /**
-     * Backward-compatible convenience method.
-     */
-    suspend fun detectApp(
-        packageName: String,
-        extraEvidence: String? = null,
-        context: Context? = null
-    ): AppInfo {
-        val ctx = context ?: FloatingBubbleService.instance?.applicationContext
-        if (ctx == null) {
-            return AppInfo(appName = packageName, category = "Other", isLocallyResolved = true)
-        }
-        val evidence = AppResolutionEngine.defaultInstance.collectEvidence(
-            context = ctx,
-            packageName = packageName
-        )
-        return detectAppHybrid(evidence, ctx)
-    }
-
-    private suspend fun callGeminiWithRetry(
-        apiKey: String,
-        systemInstruction: String,
-        userContent: String,
-        enableGoogleSearch: Boolean,
-        responseMimeType: String?,
-        responseSchema: JSONObject?
-    ): String {
-        val maxAttempts = 3
-        var backoffMs = 1000L
-        var lastException: Exception? = null
-
-        for (attempt in 1..maxAttempts) {
-            try {
-                return callGeminiREST(
-                    apiKey = apiKey,
-                    systemInstruction = systemInstruction,
-                    userContent = userContent,
-                    enableGoogleSearch = enableGoogleSearch,
-                    responseMimeType = responseMimeType,
-                    responseSchema = responseSchema
-                )
-            } catch (e: GeminiApiException) {
-                lastException = e
-                val isTransient = e.statusCode == 429 || (e.statusCode in 500..599)
-                if (isTransient && attempt < maxAttempts) {
-                    Log.w(TAG, "Transient HTTP ${e.statusCode} on attempt $attempt. Retrying in ${backoffMs}ms: ${e.message}")
-                    kotlinx.coroutines.delay(backoffMs)
-                    backoffMs *= 2
-                    continue
-                } else {
-                    throw e
-                }
-            } catch (e: IOException) {
-                lastException = e
-                if (attempt < maxAttempts) {
-                    Log.w(TAG, "Network IOException on attempt $attempt. Retrying in ${backoffMs}ms: ${e.message}")
-                    kotlinx.coroutines.delay(backoffMs)
-                    backoffMs *= 2
-                    continue
-                } else {
-                    throw e
-                }
-            }
-        }
-        throw lastException ?: IOException("Request failed after $maxAttempts attempts")
-    }
-
-    private fun callGeminiREST(
-        apiKey: String,
-        systemInstruction: String,
-        userContent: String,
-        enableGoogleSearch: Boolean,
-        responseMimeType: String?,
-        responseSchema: JSONObject?
-    ): String {
-        val urlString = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_NAME:generateContent"
+    private fun callGeminiREST(modelName: String, apiKey: String, prompt: String): String {
+        val urlString = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=${apiKey.trim()}"
         var connection: HttpURLConnection? = null
         try {
             val url = URL(urlString)
             val jsonBody = JSONObject().apply {
-                put("systemInstruction", JSONObject().apply {
-                    put("parts", JSONArray().put(JSONObject().put("text", systemInstruction)))
-                })
                 put("contents", JSONArray().put(
                     JSONObject().apply {
                         put("role", "user")
-                        put("parts", JSONArray().put(JSONObject().put("text", userContent)))
+                        put("parts", JSONArray().put(JSONObject().put("text", prompt)))
                     }
                 ))
-
-                if (enableGoogleSearch) {
-                    put("tools", JSONArray().put(JSONObject().apply {
-                        put("googleSearch", JSONObject())
-                    }))
-                }
-
-                val generationConfig = JSONObject().apply {
+                put("generationConfig", JSONObject().apply {
                     put("temperature", 0.1)
-                    if (responseMimeType != null) {
-                        put("responseMimeType", responseMimeType)
-                    }
-                    if (responseSchema != null) {
-                        put("responseSchema", responseSchema)
-                    }
-                }
-                put("generationConfig", generationConfig)
+                    put("maxOutputTokens", 32)
+                })
             }.toString()
 
             connection = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                setRequestProperty("x-goog-api-key", apiKey)
+                setRequestProperty("x-goog-api-key", apiKey.trim())
                 connectTimeout = 10000
                 readTimeout = 12000
                 doOutput = true
@@ -441,55 +277,38 @@ Rules:
                     val content = firstCandidate.optJSONObject("content")
                     val parts = content?.optJSONArray("parts")
                     if (parts != null && parts.length() > 0) {
-                        val sb = StringBuilder()
-                        for (i in 0 until parts.length()) {
-                            val partObj = parts.getJSONObject(i)
-                            val text = partObj.optString("text", "")
-                            if (text.isNotEmpty()) {
-                                sb.append(text)
-                            }
-                        }
-                        val resultText = sb.toString().trim()
-                        if (resultText.isNotEmpty()) {
-                            return resultText
+                        val text = parts.getJSONObject(0).optString("text", "")
+                        if (text.isNotBlank()) {
+                            return text.trim()
                         }
                     }
                 }
-                throw IOException("Gemini returned HTTP 200 with no candidate text parts")
+                throw IOException("Gemini returned HTTP 200 with empty text parts")
             } else {
-                val errorStreamText = try {
-                    connection.errorStream?.bufferedReader()?.use { it.readText() }
-                } catch (_: Throwable) { null }
-                val finalBody = errorStreamText ?: ""
-                val parsedMsg = parseGeminiErrorMessage(responseCode, finalBody)
-                throw GeminiApiException(responseCode, parsedMsg)
+                val errorBody = try {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                } catch (_: Throwable) { "" }
+                throw GeminiApiException(responseCode, "HTTP $responseCode: $errorBody")
             }
         } finally {
             connection?.disconnect()
         }
     }
 
-    private fun parseGeminiErrorMessage(responseCode: Int, errorBody: String): String {
-        if (errorBody.isBlank()) return "HTTP $responseCode (empty error body)"
-        try {
-            val root = JSONObject(errorBody)
-            val errObj = root.optJSONObject("error")
-            if (errObj != null) {
-                val message = errObj.optString("message", "")
-                val status = errObj.optString("status", "")
-                return if (status.isNotEmpty() && message.isNotEmpty()) {
-                    "HTTP $responseCode [$status]: $message"
-                } else if (message.isNotEmpty()) {
-                    "HTTP $responseCode: $message"
-                } else {
-                    "HTTP $responseCode: $errorBody"
-                }
-            }
-        } catch (_: Exception) {
-            // Not JSON
+    suspend fun detectApp(
+        packageName: String,
+        extraEvidence: String? = null,
+        context: Context? = null
+    ): AppInfo {
+        val ctx = context ?: FloatingBubbleService.instance?.applicationContext
+        if (ctx == null) {
+            return AppInfo(appName = packageName, category = "Other", isLocallyResolved = true)
         }
-        val snippet = if (errorBody.length > 200) errorBody.take(200) + "..." else errorBody
-        return "HTTP $responseCode: $snippet"
+        val evidence = AppResolutionEngine.defaultInstance.collectEvidence(
+            context = ctx,
+            packageName = packageName
+        )
+        return detectAppHybrid(evidence, ctx)
     }
 
     fun clearCache() {

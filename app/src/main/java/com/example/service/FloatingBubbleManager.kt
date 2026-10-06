@@ -13,6 +13,7 @@ import android.widget.Toast
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Coordinates communication between:
@@ -221,6 +222,9 @@ object FloatingBubbleManager {
         _isRecording.value = recording
     }
 
+    private var backgroundLearningJob: kotlinx.coroutines.Job? = null
+    private val managerScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob())
+
     fun updateCurrentForegroundPackage(pkg: String?, context: Context? = null) {
         if (!AppContextResolver.isIgnoredPackage(context, pkg)) {
             _currentForegroundPackage.value = pkg
@@ -239,6 +243,22 @@ object FloatingBubbleManager {
                 _currentResolvedAppContext.value = resolved
                 val isAi = resolved?.isAiApp ?: AppClassifier.isAiChatApp(pkg, resolved?.name)
                 _isCurrentAppAi.value = isAi
+
+                // If app is not in local dictionary and context is available, trigger background learning once
+                if (context != null && !pkg.isNullOrBlank() && resolved?.category == "Other") {
+                    backgroundLearningJob?.cancel()
+                    backgroundLearningJob = managerScope.launch {
+                        try {
+                            val evidence = com.example.util.AppResolutionEngine.defaultInstance.collectEvidence(
+                                context = context,
+                                packageName = pkg,
+                                windowInfo = a11y?.getActiveApplicationWindow(),
+                                rootNode = a11y?.rootInActiveWindow
+                            )
+                            AppDetector.detectAppHybrid(evidence, context)
+                        } catch (_: Exception) {}
+                    }
+                }
             } else {
                 _currentResolvedAppContext.value = null
                 _isCurrentAppAi.value = false
@@ -255,6 +275,20 @@ object FloatingBubbleManager {
                 FloatingBubbleService.instance?.onSensitiveAppEntered(pkg)
             }
         }
+    }
+
+    fun updateLearnedAppContext(appName: String, category: String) {
+        val current = _currentResolvedAppContext.value
+        val isAi = category.equals("AI", ignoreCase = true)
+        val updated = com.example.util.AppResolutionEngine.AppContext(
+            name = appName.ifBlank { current?.name ?: "App" },
+            category = category,
+            isAiApp = isAi,
+            isLocallyResolved = false
+        )
+        _currentResolvedAppContext.value = updated
+        _isCurrentAppAi.value = isAi
+        Log.d(TAG, "Updated learned app context in bubble: ${updated.formatted}")
     }
 
     fun setAiPolishMode(mode: com.example.service.floating.AiPolishMode) {

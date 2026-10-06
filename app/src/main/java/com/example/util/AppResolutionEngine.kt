@@ -341,6 +341,7 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         val webApkMetaName = getWebApkMetaName(context, packageName)
         val webApkScopeUrl = getWebApkScopeUrl(context, packageName)
         val appLabel = getAppLabel(context, packageName)
+        val rootNodeText = (nodeTexts + contentDescs).joinToString(" ")
 
         val localDisplayName = computeLocalDisplayName(
             packageName = packageName,
@@ -348,7 +349,8 @@ class AppResolutionEngine(cacheSize: Int = 150) {
             webApkMetaName = webApkMetaName,
             urlOrDomain = urlOrDomain,
             domain = domain,
-            windowTitle = winTitle
+            windowTitle = winTitle,
+            rootNodeText = rootNodeText
         )
 
         val isBrowser = isBrowserOrPwa(packageName.lowercase())
@@ -378,10 +380,12 @@ class AppResolutionEngine(cacheSize: Int = 150) {
 
     /**
      * Computes the display name locally based on priority:
-     * 1. WebAPK meta name if present
-     * 2. Else if browser + recognizable site product -> site product name
-     * 3. Else appLabel if non-generic
-     * 4. Else tokenized brand from package
+     * 1. Gemini special check (quicksearchbox / bard with Gemini title or on-screen content)
+     * 2. WebAPK user-facing label from PackageManager / metadata (e.g. AI Studio, Pinterest)
+     * 3. Browser site product name from domain/title
+     * 4. Window title first segment for web tabs
+     * 5. Standard PackageManager label
+     * 6. Tokenized package fallback
      */
     fun computeLocalDisplayName(
         packageName: String,
@@ -389,14 +393,49 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         webApkMetaName: String?,
         urlOrDomain: String?,
         domain: String?,
-        windowTitle: String?
+        windowTitle: String?,
+        rootNodeText: String? = null
     ): String {
-        // Priority 1: WebAPK metadata name
-        if (!webApkMetaName.isNullOrBlank()) {
-            return webApkMetaName.trim()
+        val pkgLower = packageName.lowercase()
+        // Priority 1: WebAPK Check (e.g. org.chromium.webapk.*)
+        if (pkgLower.startsWith("org.chromium.webapk") || pkgLower.contains(".webapk")) {
+            if (!appLabel.isNullOrBlank()) {
+                val cleanLabel = appLabel.trim()
+                if (!cleanLabel.startsWith("org.chromium", ignoreCase = true) && !cleanLabel.equals("Chrome", ignoreCase = true)) {
+                    return cleanLabel
+                }
+            }
+            if (!webApkMetaName.isNullOrBlank()) {
+                val cleanMeta = webApkMetaName.trim()
+                if (!cleanMeta.startsWith("org.chromium", ignoreCase = true) && !cleanMeta.equals("Chrome", ignoreCase = true)) {
+                    return cleanMeta
+                }
+            }
         }
 
-        // Priority 2: Browser site product name if recognizable from domain/title
+        // Priority 2: Gemini Special Check (QuickSearchBox / Bard)
+        if (pkgLower == "com.google.android.googlequicksearchbox" || pkgLower == "com.google.android.apps.bard" || pkgLower == "com.google.android.apps.gemini") {
+            val titleLower = (windowTitle ?: "").lowercase()
+            val textLower = (rootNodeText ?: "").lowercase()
+            if (titleLower.contains("gemini") || textLower.contains("gemini") || textLower.contains("ask gemini") || textLower.contains("chat with gemini") || textLower.contains("bard")) {
+                return "Gemini"
+            }
+            if (pkgLower == "com.google.android.apps.gemini" || pkgLower == "com.google.android.apps.bard") {
+                return "Gemini"
+            }
+            return "Google"
+        }
+
+        // Priority 3: General Installed Native Applications (Non-browser apps return PackageManager label first)
+        val isBrowserPackage = isBrowserOrPwa(pkgLower)
+        if (!isBrowserPackage && !appLabel.isNullOrBlank()) {
+            val labelTrimmed = appLabel.trim()
+            if (labelTrimmed.isNotBlank()) {
+                return labelTrimmed
+            }
+        }
+
+        // Priority 4: Browser site product name if recognizable from domain/title
         val domainLower = (domain ?: urlOrDomain ?: "").lowercase()
         val titleLower = (windowTitle ?: "").lowercase()
 
@@ -417,18 +456,16 @@ class AppResolutionEngine(cacheSize: Int = 150) {
             domainLower.contains("web.telegram.org") -> return "Telegram"
         }
 
-        // Priority 3: Android PackageManager label (if not generic placeholder)
-        if (!appLabel.isNullOrBlank()) {
-            val labelTrimmed = appLabel.trim()
-            val labelLower = labelTrimmed.lowercase()
-            val isGenericBrowser = labelLower in listOf("chrome", "browser", "internet", "web browser", "google chrome", "samsung internet", "firefox", "edge")
-            val isGenericContainer = labelLower in listOf("web application", "app", "application")
-            if (!isGenericBrowser && !isGenericContainer && !labelTrimmed.contains(".")) {
-                return labelTrimmed
+        // Priority 5: Browser fallback label
+        if (isBrowserPackage) {
+            return if (!appLabel.isNullOrBlank() && !appLabel.startsWith("org.chromium", ignoreCase = true)) {
+                appLabel.trim()
+            } else {
+                "Chrome"
             }
         }
 
-        // Priority 4: Fallback to tokenized brand from package
+        // Priority 6: Tokenized brand from package
         return tokenizeBrand(packageName)
     }
 
@@ -477,7 +514,7 @@ class AppResolutionEngine(cacheSize: Int = 150) {
 
         // 4. Check Persisted Learned Registry (confirmed entries)
         if (context != null) {
-            val learned = LearnedAppRegistry.get(context, cacheKey)
+            val learned = LearnedAppRegistry.get(context, cacheKey) ?: LearnedAppRegistry.get(context, evidence.localDisplayName)
             if (learned != null && learned.confirmCount >= LearnedAppRegistry.CONFIRM_THRESHOLD) {
                 val isAi = learned.category.equals("AI", ignoreCase = true)
                 // PRECEDENCE: learned > Gemini fresh > local label. Always preserve learned.appName!
@@ -498,7 +535,22 @@ class AppResolutionEngine(cacheSize: Int = 150) {
             }
         }
 
-        // 5. Heuristic check on package / name (e.g. chatgpt, claude, grok, kimi, qwen, deepseek)
+        // 5. Instant Static Dictionary Check (Zero Latency)
+        val classified = com.example.service.AppClassifier.classify(evidence.packageName, evidence.localDisplayName, context)
+        if (classified != com.example.service.AppCategory.OTHER) {
+            val group = classified.groupName
+            val isAi = (classified == com.example.service.AppCategory.AI_CHAT)
+            val result = AppContext(
+                name = evidence.localDisplayName,
+                category = group,
+                isAiApp = isAi,
+                isLocallyResolved = true
+            )
+            appCache.put(cacheKey, result)
+            return result
+        }
+
+        // 6. Heuristic check on package / name (e.g. chatgpt, claude, grok, kimi, qwen, deepseek)
         val heuristic = evaluateHeuristics(evidence)
         if (heuristic != null) {
             appCache.put(cacheKey, heuristic)
@@ -753,8 +805,8 @@ class AppResolutionEngine(cacheSize: Int = 150) {
                 @Suppress("DEPRECATION")
                 pm.getApplicationInfo(packageName, 0)
             }
-            val label = pm.getApplicationLabel(appInfo).toString()
-            if (label.isNotBlank() && !label.contains(".")) label else null
+            val label = pm.getApplicationLabel(appInfo).toString().trim()
+            if (label.isNotBlank()) label else null
         } catch (_: Throwable) { null }
     }
 

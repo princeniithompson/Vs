@@ -10,17 +10,15 @@ import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
-import com.example.service.AppClassifier
 import com.example.service.FloatingBubbleManager
 import com.example.service.VoxStreamAccessibilityService
-import com.example.service.VoxStreamInputMethodService
 
 /**
  * Dedicated text-injection engine for VoxStream:
- * - Direct caret manipulation via ACTION_SET_TEXT (zero clipboard impact)
+ * - Direct node editing via ACTION_SET_TEXT (zero clipboard impact)
  * - Intelligent hint & placeholder stripping via extractGenuineText
- * - Paste fallback for non-standard editors with automated clipboard restoration
- * - Clipboard fallback when no input node is active
+ * - Preserves existing user drafts while safely ignoring hints (>15 chars safety check)
+ * - Safe fallback to clipboard ONLY when literally no active text field is on screen
  */
 object FloatingTextInjector {
 
@@ -41,7 +39,7 @@ object FloatingTextInjector {
      * Determines whether the given node contains real, genuine user text versus an empty
      * field or a placeholder/hint string.
      * Safety check: Ignores isShowingHintText when content length exceeds 15 characters,
-     * ensuring that long text in apps like Chrome or WhatsApp is never identified as a hint and overwritten.
+     * ensuring that long text in apps like Chrome, AI Studio, or WhatsApp is never identified as a hint and overwritten.
      */
     fun extractGenuineText(node: AccessibilityNodeInfo): String {
         val rawText = node.text?.toString() ?: ""
@@ -87,7 +85,7 @@ object FloatingTextInjector {
     }
 
     /**
-     * Injects transcribed text into the target active editable field via direct node editing (ACTION_SET_TEXT):
+     * Injects transcribed text directly into the target active editable field (ACTION_SET_TEXT):
      * 1. Uses extractGenuineText to preserve existing user drafts while safely ignoring hints.
      * 2. Determines cursor position safely without clobbering existing text.
      * 3. Splices the dictated text into the existing text at cursor.
@@ -135,221 +133,71 @@ object FloatingTextInjector {
         return false
     }
 
-    private val nextPasteOperationId = java.util.concurrent.atomic.AtomicLong(0)
-    @Volatile
-    private var activePasteOperationId = 0L
-    private var savedUserOriginalClip: ClipData? = null
-
-    fun getActivePasteOperationId(): Long = activePasteOperationId
-
-    private var pendingPasteRunnable: Runnable? = null
-    private var pendingRetryRunnable: Runnable? = null
-    private var pendingRestoreRunnable: Runnable? = null
-
     /**
-     * Cancels any pending asynchronous paste and clipboard-restoration callbacks
-     * to ensure an asynchronous paste or old restoration never fires after another
-     * injection method has already succeeded or a new injection has started.
-     */
-    fun cancelPendingPaste(handler: Handler = mainHandler) {
-        activePasteOperationId = 0L
-        pendingPasteRunnable?.let {
-            handler.removeCallbacks(it)
-            pendingPasteRunnable = null
-        }
-        pendingRetryRunnable?.let {
-            handler.removeCallbacks(it)
-            pendingRetryRunnable = null
-        }
-        pendingRestoreRunnable?.let {
-            handler.removeCallbacks(it)
-            pendingRestoreRunnable = null
-        }
-    }
-
-    /**
-     * Executes clipboard-assisted paste injection for custom/rich-text editors.
-     * Restores previous clipboard content safely after a delayed window (~450ms).
-     */
-    fun performPasteInjection(
-        targetNode: AccessibilityNodeInfo,
-        newText: String,
-        context: Context,
-        handler: Handler = mainHandler
-    ): Boolean {
-        cancelPendingPaste(handler)
-
-        val operationId = nextPasteOperationId.incrementAndGet()
-        activePasteOperationId = operationId
-        val operationLabel = "VoxStream Dictation #$operationId"
-
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        val currentClip = try {
-            clipboard?.primaryClip
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not read existing clipboard: ${e.message}")
-            null
-        }
-
-        val isInternalDictationClip = currentClip?.description?.label?.toString()?.startsWith("VoxStream Dictation") == true
-        val originalClip = if (isInternalDictationClip) {
-            savedUserOriginalClip
-        } else {
-            savedUserOriginalClip = currentClip
-            currentClip
-        }
-
-        Log.d(TAG, "Executing paste-injection #$operationId for pkg=${targetNode.packageName}, textLen=${newText.length}")
-
-        // 1. Ensure target node receives both ACTION_FOCUS and ACTION_ACCESSIBILITY_FOCUS
-        try {
-            targetNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-            targetNode.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-        } catch (e: Exception) {
-            Log.w(TAG, "Notice requesting focus before paste: ${e.message}")
-        }
-
-        // 2. Short delay (≈100 ms) so editor is ready, then set clipboard, paste, and restore after ~450ms
-        val focusReadyDelayMs = 100L
-        val pasteRetryDelayMs = 100L
-        val clipboardRestoreDelayMs = 450L
-
-        val pasteRunnable = Runnable {
-            pendingPasteRunnable = null
-            if (activePasteOperationId != operationId) {
-                Log.d(TAG, "Paste operation #$operationId cancelled before dispatch")
-                return@Runnable
-            }
-
-            val dictationClip = ClipData.newPlainText(operationLabel, newText)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                try {
-                    val extras = android.os.PersistableBundle().apply {
-                        putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
-                    }
-                    dictationClip.description.extras = extras
-                } catch (_: Throwable) {}
-            }
-
-            try {
-                clipboard?.setPrimaryClip(dictationClip)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed setting dictation clip for #$operationId", e)
-                return@Runnable
-            }
-
-            var initialPasteResult = false
-            try {
-                initialPasteResult = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-                Log.d(TAG, "Initial ACTION_PASTE dispatch for #$operationId: $initialPasteResult")
-            } catch (e: Exception) {
-                Log.w(TAG, "Initial ACTION_PASTE dispatch error for #$operationId: ${e.message}")
-            }
-
-            if (!initialPasteResult) {
-                // Retry once after a short delay
-                val retryRunnable = Runnable {
-                    pendingRetryRunnable = null
-                    if (activePasteOperationId != operationId) return@Runnable
-                    try {
-                        targetNode.refresh()
-                        val retryPasteResult = targetNode.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-                        Log.d(TAG, "Retry ACTION_PASTE dispatch for #$operationId: $retryPasteResult")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Retry ACTION_PASTE dispatch error for #$operationId: ${e.message}")
-                    }
-                }
-                pendingRetryRunnable = retryRunnable
-                handler.postDelayed(retryRunnable, pasteRetryDelayMs)
-            }
-
-            val restoreRunnable = Runnable {
-                pendingRestoreRunnable = null
-                safeRestoreOriginalClipboard(clipboard, originalClip, newText, operationId, operationLabel)
-            }
-            pendingRestoreRunnable = restoreRunnable
-            handler.postDelayed(restoreRunnable, clipboardRestoreDelayMs)
-        }
-
-        pendingPasteRunnable = pasteRunnable
-        handler.postDelayed(pasteRunnable, focusReadyDelayMs)
-
-        return true
-    }
-
-    private fun safeRestoreOriginalClipboard(
-        clipboard: ClipboardManager?,
-        originalClip: ClipData?,
-        expectedDictationText: String,
-        operationId: Long,
-        operationLabel: String
-    ) {
-        if (activePasteOperationId != operationId) {
-            Log.i(TAG, "Paste operation #$operationId is obsolete (active is #$activePasteOperationId). Skipping restoration.")
-            return
-        }
-
-        try {
-            val currentClip = try { clipboard?.primaryClip } catch (_: Exception) { null }
-
-            val isStillOurDictationClip = if (currentClip != null && currentClip.itemCount > 0) {
-                val currentText = currentClip.getItemAt(0)?.text?.toString() ?: ""
-                val label = currentClip.description?.label?.toString() ?: ""
-                label == operationLabel && currentText == expectedDictationText
-            } else {
-                false
-            }
-
-            if (isStillOurDictationClip) {
-                if (originalClip != null) {
-                    clipboard?.setPrimaryClip(originalClip)
-                    Log.d(TAG, "Restored original user clipboard safely for operation #$operationId")
-                } else {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        clipboard?.clearPrimaryClip()
-                    } else {
-                        clipboard?.setPrimaryClip(ClipData.newPlainText("", ""))
-                    }
-                    Log.d(TAG, "Cleared temporary dictation clip from clipboard for operation #$operationId")
-                }
-            } else {
-                Log.i(TAG, "User or new operation copied new data during paste window. Preserving current clipboard.")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error in safeRestoreOriginalClipboard: ${e.message}")
-        } finally {
-            if (activePasteOperationId == operationId) {
-                activePasteOperationId = 0L
-                savedUserOriginalClip = null
-            }
-        }
-    }
-
-    /**
-     * Injects text into the active field, or falls back to clipboard if no active field is accessible.
+     * Injects text directly into the active field via AccessibilityService.
+     * Falls back to clipboard ONLY if no active text field is present on screen.
      */
     fun injectOrFallbackToClipboard(context: Context, text: String): Boolean {
         if (text.isBlank()) return false
+        val startTime = android.os.SystemClock.elapsedRealtime()
 
-        val injected = VoxStreamAccessibilityService.instance?.injectText(text) ?: false
+        val a11y = VoxStreamAccessibilityService.instance
+        val trace = if (a11y != null) {
+            a11y.injectTextDetailed(text)
+        } else {
+            val wordCount = text.trim().split("\\s+".toRegex()).count { it.isNotBlank() }
+            val currentPkg = FloatingBubbleManager.currentForegroundPackage.value ?: "Unknown"
+            val appName = com.example.service.AppContextResolver.resolve(context, currentPkg)?.appName ?: "App"
+            com.example.data.InjectionEvent(
+                targetPackage = currentPkg,
+                targetAppName = appName,
+                textLength = text.length,
+                wordCount = wordCount,
+                rawTextPreview = text.take(40),
+                injectionMethod = "FALLBACK_CLIPBOARD",
+                resultDetails = "FAILED: Accessibility Service not connected",
+                finalOutcome = "FAILED",
+                durationMs = android.os.SystemClock.elapsedRealtime() - startTime
+            )
+        }
 
-        if (injected) {
+        if (trace.finalOutcome == "SUCCESS") {
+            com.example.data.InjectionLogRepository.logInjection(trace)
             mainHandler.post {
                 Toast.makeText(context, "Text inserted into active field!", Toast.LENGTH_SHORT).show()
             }
             return true
         } else {
-            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            if (clipboard != null) {
-                val clip = ClipData.newPlainText("VoxStream Transcription", text)
-                clipboard.setPrimaryClip(clip)
-            }
-            mainHandler.post {
-                Toast.makeText(
-                    context,
-                    "Copied to clipboard (no active text field found)",
-                    Toast.LENGTH_LONG
-                ).show()
+            // Only fallback to clipboard if there is no active target node or service was disconnected
+            val isNoNode = trace.targetNodeClass == null || trace.resultDetails.contains("No active editable node")
+            if (isNoNode) {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                if (clipboard != null) {
+                    val clip = ClipData.newPlainText("VoxStream Transcription", text)
+                    clipboard.setPrimaryClip(clip)
+                }
+                val finalTrace = trace.copy(
+                    injectionMethod = "FALLBACK_CLIPBOARD",
+                    durationMs = maxOf(trace.durationMs, android.os.SystemClock.elapsedRealtime() - startTime)
+                )
+                com.example.data.InjectionLogRepository.logInjection(finalTrace)
+                mainHandler.post {
+                    Toast.makeText(
+                        context,
+                        "No active text field found — text copied to clipboard",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            } else {
+                // A text field was present on screen, but direct action was rejected (do NOT overwrite user's clipboard)
+                com.example.data.InjectionLogRepository.logInjection(trace)
+                mainHandler.post {
+                    Toast.makeText(
+                        context,
+                        "Direct text injection could not be applied to this field",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
             }
             return false
         }

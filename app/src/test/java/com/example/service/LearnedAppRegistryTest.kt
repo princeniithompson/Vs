@@ -39,7 +39,7 @@ class LearnedAppRegistryTest {
         assertEquals(1, first.confirmCount)
         assertEquals("Google Flow", first.appName)
         assertEquals("AI", first.category)
-        assertFalse(LearnedAppRegistry.isConfirmed(context, key))
+        assertTrue(LearnedAppRegistry.isConfirmed(context, key))
 
         // Second confirmation with same name and category
         val second = LearnedAppRegistry.recordConfirmation(

@@ -18,6 +18,9 @@ class VoxStreamInputMethodService : InputMethodService() {
         var instance: VoxStreamInputMethodService? = null
             private set
 
+        val isServiceActive: Boolean
+            get() = instance != null && instance?.currentInputStarted == true
+
         fun commitText(text: String): Boolean {
             val ime = instance ?: run {
                 Log.d(TAG, "VoxStreamIME unavailable: instance is null")
