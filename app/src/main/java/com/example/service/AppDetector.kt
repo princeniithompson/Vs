@@ -1,6 +1,8 @@
 package com.example.service
 
+import android.app.usage.UsageStatsManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.util.Log
 import com.example.config.VoxStreamConfig
 import com.example.util.AppResolutionEngine
@@ -13,11 +15,26 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 
 data class AppInfo(
     val appName: String,
     val category: String,
     val isLocallyResolved: Boolean = false
+)
+
+data class WebApkInfo(
+    val packageName: String,
+    val label: String,
+    val startUrl: String? = null,
+    val lastUsed: Long = 0L
+)
+
+data class CachedPwaSession(
+    val name: String,
+    val category: String,
+    val packageName: String,
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 class GeminiApiException(val statusCode: Int, message: String) : IOException(message)
@@ -26,6 +43,27 @@ object AppDetector {
     private const val TAG = "AppDetector"
     private const val PRIMARY_MODEL = "gemini-3.5-flash-lite"
     private const val FALLBACK_MODEL = "gemini-3.8-flash"
+    private const val STICKY_TTL_MS = 60_000L
+
+    val BROWSER_PACKAGES = setOf(
+        "com.android.chrome",
+        "com.chrome.beta",
+        "com.chrome.dev",
+        "com.chrome.canary",
+        "org.chromium.chrome",
+        "com.sec.android.app.sbrowser",
+        "com.microsoft.emmx",
+        "com.brave.browser",
+        "org.mozilla.firefox",
+        "com.opera.browser",
+        "com.vivaldi.browser"
+    )
+
+    // WebAPK Inventory
+    val webApkInventory = ConcurrentHashMap<String, WebApkInfo>()
+
+    // Sticky PWA Cache
+    val stickyPwaCache = ConcurrentHashMap<String, CachedPwaSession>()
 
     // In-Memory Session Cache (keyed by learnedRegistryKey)
     private val sessionCache = mutableMapOf<String, AppInfo>()
@@ -33,6 +71,35 @@ object AppDetector {
     // Singleton concurrency state lock
     private var activeJob: Job? = null
     private var currentDetectingKey: String? = null
+
+    fun init(context: Context) {
+        refreshWebApkInventory(context)
+    }
+
+    fun refreshWebApkInventory(context: Context) {
+        try {
+            val pm = context.packageManager
+            val installed = try {
+                pm.getInstalledPackages(PackageManager.GET_META_DATA)
+            } catch (e: Exception) {
+                emptyList()
+            }
+            for (pkgInfo in installed) {
+                val pkgName = pkgInfo.packageName
+                if (pkgName.startsWith("org.chromium.webapk") || pkgName.contains(".webapk")) {
+                    val appInfo = pkgInfo.applicationInfo
+                    val label = appInfo?.loadLabel(pm)?.toString()?.trim() ?: pkgName
+                    val startUrl = appInfo?.metaData?.getString("org.chromium.webapk.shell_apk.startUrl")
+                    if (label.isNotBlank() && !label.startsWith("org.chromium", ignoreCase = true)) {
+                        webApkInventory[pkgName] = WebApkInfo(pkgName, label, startUrl)
+                        Log.d(TAG, "Indexed WebAPK: $pkgName -> '$label' (startUrl=$startUrl)")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error refreshing WebAPK inventory: ${e.message}")
+        }
+    }
 
     fun isPlaceholderKey(key: String?): Boolean {
         return com.example.core.ApiConfig.isPlaceholder(key)
@@ -42,10 +109,234 @@ object AppDetector {
         return com.example.core.ApiConfig.resolveApiKey(context)
     }
 
+    fun mapCategoryForName(name: String): String {
+        val nameLower = name.lowercase()
+        return when {
+            nameLower.contains("google ai studio") || nameLower.contains("ai studio") ||
+            nameLower.contains("brain ai") || nameLower.contains("kimi") ||
+            nameLower.contains("chatgpt") || nameLower.contains("claude") ||
+            nameLower.contains("gemini") || nameLower.contains("perplexity") ||
+            nameLower.contains("grok") || nameLower.contains("deepseek") ||
+            nameLower.contains("v0") || nameLower.contains("notebooklm") -> "AI"
+
+            nameLower.contains("pinterest") || nameLower.contains("twitter") ||
+            nameLower.contains("x") || nameLower.contains("instagram") ||
+            nameLower.contains("tiktok") || nameLower.contains("threads") ||
+            nameLower.contains("facebook") || nameLower.contains("snapchat") ||
+            nameLower.contains("reddit") || nameLower.contains("discord") ||
+            nameLower.contains("telegram") || nameLower.contains("whatsapp") -> "Social"
+
+            nameLower.contains("gmail") || nameLower.contains("outlook") ||
+            nameLower.contains("mail") -> "Email"
+
+            nameLower.contains("google keep") || nameLower.contains("keep notes") ||
+            nameLower.contains("keep") || nameLower.contains("notion") ||
+            nameLower.contains("obsidian") || nameLower.contains("docs") -> "Notes"
+
+            else -> "Web App"
+        }
+    }
+
+    /**
+     * 4-Signal WebAPK Detection Cascade
+     */
+    fun resolvePwaCascade(
+        context: Context,
+        packageName: String,
+        className: String? = null,
+        windowTitle: String? = null,
+        visibleTexts: List<String> = emptyList()
+    ): AppInfo? {
+        val pkgLower = packageName.lowercase()
+
+        // 1. Special check for Gemini running inside Google QuickSearchBox or Bard:
+        if (pkgLower == "com.google.android.googlequicksearchbox" || pkgLower == "com.google.android.apps.bard") {
+            val titleStr = windowTitle ?: ""
+            val classStr = className ?: ""
+
+            val isGeminiSurface = titleStr.contains("Gemini", ignoreCase = true) ||
+                                  classStr.contains("gemini", ignoreCase = true) ||
+                                  classStr.contains("bard", ignoreCase = true) ||
+                                  visibleTexts.any { it.contains("gemini", ignoreCase = true) || it.contains("bard", ignoreCase = true) }
+
+            if (isGeminiSurface || pkgLower == "com.google.android.apps.bard") {
+                Log.d(TAG, "[PWA Cascade] Special Gemini Match: $packageName -> Gemini (AI)")
+                return AppInfo(appName = "Gemini", category = "AI", isLocallyResolved = true)
+            }
+        }
+
+        val isBrowserPkg = BROWSER_PACKAGES.contains(pkgLower)
+        val isWebApkPkg = pkgLower.startsWith("org.chromium.webapk") || pkgLower.contains(".webapk")
+
+        // Native App Fast-Path: If packageName is NOT browser/WebAPK, preserve 100% native detection
+        if (!isBrowserPkg && !isWebApkPkg) {
+            return null
+        }
+
+        // Signal 3 Check A: Direct WebAPK package match
+        if (isWebApkPkg || webApkInventory.containsKey(packageName)) {
+            val directInfo = webApkInventory[packageName]
+            val label = directInfo?.label ?: run {
+                try {
+                    val pm = context.packageManager
+                    val info = pm.getApplicationInfo(packageName, 0)
+                    pm.getApplicationLabel(info).toString().trim()
+                } catch (_: Exception) { null }
+            }
+            if (!label.isNullOrBlank() && !label.startsWith("org.chromium", ignoreCase = true) && !label.equals("Chrome", ignoreCase = true)) {
+                val cat = mapCategoryForName(label)
+                val appInfo = AppInfo(appName = label, category = cat, isLocallyResolved = true)
+                stickyPwaCache[packageName] = CachedPwaSession(label, cat, packageName)
+                Log.d(TAG, "[PWA Cascade] Signal 3 Direct Match: $packageName -> $label ($cat)")
+                return appInfo
+            }
+        }
+
+        // Signal 1: Activity Class Fingerprint
+        val isWebApkActivity = className?.let {
+            it.contains("SameTaskWebApkActivity") || it.contains("WebApkActivity") || it.contains("WebappActivity")
+        } == true
+
+        // Signal 2: URL Bar Check (Absence of url_bar + webapp activity = standalone mode)
+        val hasUrlBar = visibleTexts.any { it.contains("url_bar", ignoreCase = true) || it.contains("http://") || it.contains("https://") }
+        val isStandaloneMode = isWebApkActivity && !hasUrlBar
+
+        // Signal 3 Check B: Window Title Fuzzy Match against inventory and known PWA rules
+        val cleanTitle = windowTitle?.trim()
+        if (!cleanTitle.isNullOrBlank()) {
+            for (info in webApkInventory.values) {
+                if (cleanTitle.contains(info.label, ignoreCase = true) || info.label.contains(cleanTitle, ignoreCase = true)) {
+                    val cat = mapCategoryForName(info.label)
+                    val appInfo = AppInfo(appName = info.label, category = cat, isLocallyResolved = true)
+                    stickyPwaCache[packageName] = CachedPwaSession(info.label, cat, packageName)
+                    Log.d(TAG, "[PWA Cascade] Signal 3 Title Match: '$cleanTitle' -> '${info.label}' ($cat)")
+                    return appInfo
+                }
+            }
+
+            val pwaTitleMap = mapOf(
+                "google ai studio" to Pair("Google AI Studio", "AI"),
+                "ai studio" to Pair("Google AI Studio", "AI"),
+                "brain ai" to Pair("Brain AI", "AI"),
+                "chatgpt" to Pair("ChatGPT", "AI"),
+                "claude" to Pair("Claude", "AI"),
+                "perplexity" to Pair("Perplexity", "AI"),
+                "grok" to Pair("Grok", "AI"),
+                "deepseek" to Pair("DeepSeek", "AI"),
+                "v0" to Pair("v0", "AI"),
+                "kimi" to Pair("Kimi", "AI"),
+                "pinterest" to Pair("Pinterest", "Social")
+            )
+            val titleLower = cleanTitle.lowercase()
+            for ((key, pair) in pwaTitleMap) {
+                if (titleLower.contains(key)) {
+                    val (appName, cat) = pair
+                    val appInfo = AppInfo(appName = appName, category = cat, isLocallyResolved = true)
+                    stickyPwaCache[packageName] = CachedPwaSession(appName, cat, packageName)
+                    Log.d(TAG, "[PWA Cascade] Signal 3 Direct Title Rule: '$cleanTitle' -> $appName ($cat)")
+                    return appInfo
+                }
+            }
+        }
+
+        // Signal 4: UsageStats Recency Correlation
+        if (cleanTitle.isNullOrBlank() && isBrowserPkg) {
+            try {
+                val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                if (usm != null) {
+                    val now = System.currentTimeMillis()
+                    val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 300_000, now)
+                    if (!stats.isNullOrEmpty()) {
+                        val recentWebApk = stats
+                            .filter { it.packageName.startsWith("org.chromium.webapk") || it.packageName.contains(".webapk") }
+                            .maxByOrNull { it.lastTimeUsed }
+                        if (recentWebApk != null && (now - recentWebApk.lastTimeUsed) < 300_000) {
+                            val webApkPkg = recentWebApk.packageName
+                            val info = webApkInventory[webApkPkg]
+                            val label = info?.label ?: run {
+                                try {
+                                    val pm = context.packageManager
+                                    val appInf = pm.getApplicationInfo(webApkPkg, 0)
+                                    pm.getApplicationLabel(appInf).toString().trim()
+                                } catch (_: Exception) { null }
+                            }
+                            if (!label.isNullOrBlank() && !label.startsWith("org.chromium", ignoreCase = true)) {
+                                val cat = mapCategoryForName(label)
+                                val appInfo = AppInfo(appName = label, category = cat, isLocallyResolved = true)
+                                stickyPwaCache[packageName] = CachedPwaSession(label, cat, packageName)
+                                Log.d(TAG, "[PWA Cascade] Signal 4 UsageStats Match: $webApkPkg -> $label ($cat)")
+                                return appInfo
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Signal 4 UsageStats query error: ${e.message}")
+            }
+        }
+
+        // Sticky Session Hysteresis
+        val cachedPwa = stickyPwaCache[packageName]
+        if (cachedPwa != null && (System.currentTimeMillis() - cachedPwa.timestamp) < STICKY_TTL_MS) {
+            Log.d(TAG, "[PWA Cascade] Sticky Session Cache Hit: ${cachedPwa.name} (${cachedPwa.category})")
+            return AppInfo(appName = cachedPwa.name, category = cachedPwa.category, isLocallyResolved = true)
+        }
+
+        if (isWebApkPkg) {
+            return AppInfo(appName = "Web App", category = "Web App", isLocallyResolved = true)
+        }
+
+        return null
+    }
+
+    fun resolve(
+        context: Context,
+        packageName: String,
+        className: String? = null,
+        windowTitle: String? = null
+    ): AppInfo {
+        val pkgLower = packageName.lowercase()
+        // 1. Special check for Gemini running inside Google QuickSearchBox or Bard:
+        if (pkgLower == "com.google.android.googlequicksearchbox" || pkgLower == "com.google.android.apps.bard") {
+            val titleStr = windowTitle ?: ""
+            val classStr = className ?: ""
+
+            val isGeminiSurface = titleStr.contains("Gemini", ignoreCase = true) ||
+                                  classStr.contains("gemini", ignoreCase = true) ||
+                                  classStr.contains("bard", ignoreCase = true)
+
+            if (isGeminiSurface || pkgLower == "com.google.android.apps.bard") {
+                return AppInfo(appName = "Gemini", category = "AI", isLocallyResolved = true)
+            }
+        }
+
+        val pwaInfo = resolvePwaCascade(
+            context = context,
+            packageName = packageName,
+            className = className,
+            windowTitle = windowTitle
+        )
+        if (pwaInfo != null) {
+            return pwaInfo
+        }
+
+        val evidence = AppResolutionEngine.defaultInstance.collectEvidence(
+            context = context,
+            packageName = packageName,
+            className = className
+        )
+        val localContext = AppResolutionEngine.defaultInstance.resolveLocalCategory(context, evidence)
+        return if (localContext != null) {
+            AppInfo(appName = localContext.name, category = localContext.category, isLocallyResolved = true)
+        } else {
+            AppInfo(appName = evidence.localDisplayName, category = "Other", isLocallyResolved = true)
+        }
+    }
+
     /**
      * Hybrid Detection Entrypoint:
      * - Stage A: Multi-signal evidence & local display name computed synchronously
-     * - Stage B: Fast local lookup (static maps, learned cache, heuristics) -> 0 network calls
+     * - Stage B: Fast local lookup (static maps, learned cache, heuristics, PWA cascade) -> 0 network calls
      * - Stage C: Lightweight single-query classification with gemini-3.5-flash-lite saved permanently
      */
     suspend fun detectAppHybrid(
@@ -53,6 +344,29 @@ object AppDetector {
         context: Context
     ): AppInfo = withContext(Dispatchers.IO) {
         val cacheKey = evidence.learnedRegistryKey
+
+        // 0. PWA Cascade Check
+        val pwaCascadeResult = resolvePwaCascade(
+            context = context,
+            packageName = evidence.packageName,
+            className = evidence.className,
+            windowTitle = evidence.windowTitle,
+            visibleTexts = evidence.visibleNodeTexts + evidence.contentDescriptions
+        )
+        if (pwaCascadeResult != null) {
+            com.example.data.AppDetectionLogRepository.logEvent(
+                com.example.data.AppDetectionEvent(
+                    rawPackageName = evidence.packageName,
+                    rawWindowTitle = evidence.windowTitle,
+                    packageManagerLabel = evidence.appLabel,
+                    topScreenTexts = (evidence.visibleNodeTexts + evidence.contentDescriptions).distinct().take(5),
+                    resolvedAppName = pwaCascadeResult.appName,
+                    classificationSource = "WEBAPK_CASCADE",
+                    finalCategory = pwaCascadeResult.category
+                )
+            )
+            return@withContext pwaCascadeResult
+        }
 
         // 1. In-memory session cache check
         synchronized(sessionCache) {
@@ -315,6 +629,8 @@ object AppDetector {
         synchronized(sessionCache) {
             sessionCache.clear()
         }
+        webApkInventory.clear()
+        stickyPwaCache.clear()
         AppResolutionEngine.defaultInstance.clearCache()
     }
 }

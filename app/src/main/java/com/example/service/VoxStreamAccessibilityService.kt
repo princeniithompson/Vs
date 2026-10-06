@@ -33,11 +33,36 @@ class VoxStreamAccessibilityService : AccessibilityService() {
         checkAndNotifyKeyboard()
     }
 
+    private val packageReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: android.content.Intent?) {
+            if (context != null) {
+                AppDetector.refreshWebApkInventory(context)
+            }
+        }
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         FloatingBubbleManager.setAccessibilityConnected(true)
         Log.d(TAG, "VoxStreamAccessibilityService connected and active")
+
+        AppDetector.init(this)
+        try {
+            val packageFilter = android.content.IntentFilter().apply {
+                addAction(android.content.Intent.ACTION_PACKAGE_ADDED)
+                addAction(android.content.Intent.ACTION_PACKAGE_REMOVED)
+                addAction(android.content.Intent.ACTION_PACKAGE_REPLACED)
+                addDataScheme("package")
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(packageReceiver, packageFilter, RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(packageReceiver, packageFilter)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error registering package update receiver: ${e.message}")
+        }
 
         val info = serviceInfo ?: AccessibilityServiceInfo()
         info.eventTypes = AccessibilityEvent.TYPE_VIEW_FOCUSED or
@@ -78,6 +103,30 @@ class VoxStreamAccessibilityService : AccessibilityService() {
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             lastSeenClassName = event.className?.toString()
+            val eventPkg = event.packageName?.toString()
+            if (!eventPkg.isNullOrBlank() && !AppContextResolver.isIgnoredPackage(this, eventPkg)) {
+                val winTitle = getActiveApplicationWindow()?.title?.toString()
+                    ?: event.text.firstOrNull()?.toString()
+                val resolvedApp = AppDetector.resolve(
+                    context = this,
+                    packageName = eventPkg,
+                    className = lastSeenClassName,
+                    windowTitle = winTitle
+                )
+                FloatingBubbleManager.updateLearnedAppContext(resolvedApp.appName, resolvedApp.category)
+                com.example.data.AppDetectionLogRepository.logEvent(
+                    com.example.data.AppDetectionEvent(
+                        rawPackageName = eventPkg,
+                        rawWindowTitle = winTitle,
+                        packageManagerLabel = try {
+                            packageManager.getApplicationLabel(packageManager.getApplicationInfo(eventPkg, 0)).toString()
+                        } catch (_: Throwable) { null },
+                        resolvedAppName = resolvedApp.appName,
+                        classificationSource = if (resolvedApp.isLocallyResolved) "4_SIGNAL_CASCADE" else "AI_MODEL",
+                        finalCategory = resolvedApp.category
+                    )
+                )
+            }
         }
 
         val detectedPkg = getActivePackageName() ?: run {
@@ -186,6 +235,9 @@ class VoxStreamAccessibilityService : AccessibilityService() {
             instance = null
             FloatingBubbleManager.setAccessibilityConnected(false)
         }
+        try {
+            unregisterReceiver(packageReceiver)
+        } catch (_: Exception) {}
         lastFocusedEditableNode = null
         Log.d(TAG, "VoxStreamAccessibilityService destroyed")
     }

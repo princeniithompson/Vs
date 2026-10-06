@@ -397,8 +397,12 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         rootNodeText: String? = null
     ): String {
         val pkgLower = packageName.lowercase()
-        // Priority 1: WebAPK Check (e.g. org.chromium.webapk.*)
-        if (pkgLower.startsWith("org.chromium.webapk") || pkgLower.contains(".webapk")) {
+        // Priority 1: WebAPK Check (e.g. org.chromium.webapk.* or in webApkInventory)
+        if (pkgLower.startsWith("org.chromium.webapk") || pkgLower.contains(".webapk") || com.example.service.AppDetector.webApkInventory.containsKey(packageName)) {
+            val registeredLabel = com.example.service.AppDetector.webApkInventory[packageName]?.label
+            if (!registeredLabel.isNullOrBlank()) {
+                return registeredLabel
+            }
             if (!appLabel.isNullOrBlank()) {
                 val cleanLabel = appLabel.trim()
                 if (!cleanLabel.startsWith("org.chromium", ignoreCase = true) && !cleanLabel.equals("Chrome", ignoreCase = true)) {
@@ -486,6 +490,28 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         }
         val cached = appCache.get(cacheKey)
         if (cached != null) return cached
+
+        // 0. Check 4-Signal PWA Cascade
+        if (context != null) {
+            val pwaCascadeInfo = com.example.service.AppDetector.resolvePwaCascade(
+                context = context,
+                packageName = evidence.packageName,
+                className = evidence.className,
+                windowTitle = evidence.windowTitle,
+                visibleTexts = evidence.visibleNodeTexts + evidence.contentDescriptions
+            )
+            if (pwaCascadeInfo != null) {
+                val isAi = pwaCascadeInfo.category.equals("AI", ignoreCase = true)
+                val result = AppContext(
+                    name = pwaCascadeInfo.appName,
+                    category = pwaCascadeInfo.category,
+                    isAiApp = isAi,
+                    isLocallyResolved = true
+                )
+                appCache.put(cacheKey, result)
+                return result
+            }
+        }
 
         // 1. Check Exact Known Native Package Mapping
         NATIVE_APP_MAP[pkg]?.let { mapped ->
@@ -652,7 +678,7 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         val weakAiMatchCount = weakAiKeywords.count { allNodeText.contains(it) || titleLower.contains(it) || pkgLower.contains(it) || nameLower.contains(it) }
 
         if (strongAiMatchCount >= 2 || (strongAiMatchCount >= 1 && weakAiMatchCount >= 2) || (pkgLower.contains("ai") && strongAiMatchCount >= 1)) {
-            val displayName = if (evidence.localDisplayName.isBlank() || evidence.localDisplayName == "SuperAI" || evidence.localDisplayName == "App") "AI Assistant" else evidence.localDisplayName
+            val displayName = if (evidence.localDisplayName.isBlank() || evidence.localDisplayName == "App") "AI Assistant" else evidence.localDisplayName
             return AppContext(displayName, "AI", true, ResolvedIdentity.UNKNOWN, ResolvedCategory.AI_ASSISTANT)
         }
 

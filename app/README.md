@@ -23,6 +23,9 @@ VoxStream is an Android floating voice dictation and app context detection syste
   - `screens/AppDetectionDiagnosticsScreen.kt`: Dedicated App Detection Diagnostics screen inspecting raw package names, window titles, extracted node text, classification sources, and AI prompts/responses.
 
 ## Recent Updates
+- Fixed Gemini detection in `AppDetector.kt` when running inside Google QuickSearchBox or Bard while preserving WebAPK cascade and native app detection.
 - Replaced Text Injection Diagnostics with a dedicated App Detection Diagnostics Page.
+- Implemented 4-Signal WebAPK Detection Cascade (Activity fingerprinting, URL bar presence check, WebAPK Inventory matching, and UsageStats recency correlation with sticky session hysteresis).
+- Added `PACKAGE_USAGE_STATS` permission and package installation broadcast receiver to dynamically index WebAPKs (`org.chromium.webapk.*`).
 - Integrated `AppDetectionLogRepository` to capture every bubble activation, window title query, and classification attempt.
 - Added "Copy Event", "Copy All", and "Clear Logs" actions to the App Detection Diagnostics view.
