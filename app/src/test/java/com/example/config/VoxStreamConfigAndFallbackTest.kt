@@ -21,19 +21,18 @@ class VoxStreamConfigAndFallbackTest {
     @Test
     fun `config constants match required system defaults`() {
         assertEquals(3200, VoxStreamConfig.AUDIO_CHUNK_SIZE)
-        assertEquals(120f, VoxStreamConfig.HPF_CUTOFF_HZ, 0.001f)
-        assertEquals(45L, VoxStreamConfig.PING_INTERVAL_SECONDS)
+        assertEquals(75f, VoxStreamConfig.HPF_CUTOFF_HZ, 0.001f)
+        assertEquals(25L, VoxStreamConfig.PING_INTERVAL_SECONDS)
         assertEquals(800L, VoxStreamConfig.POLISH_DEBOUNCE_MS)
         assertEquals(3, VoxStreamConfig.MAX_RECONNECT_ATTEMPTS)
         assertEquals("models/gemini-2.0-flash-exp", VoxStreamConfig.DEFAULT_LIVE_MODEL)
         assertEquals("MY_GEMINI_API_KEY", VoxStreamConfig.PLACEHOLDER_API_KEY)
+        assertEquals("gemini-3.5-flash-lite", VoxStreamConfig.POLISH_PRIMARY_MODEL)
 
         val fallbacks = VoxStreamConfig.GEMINI_MODEL_FALLBACKS
-        assertEquals(4, fallbacks.size)
-        assertEquals("gemini-2.5-flash", fallbacks[0])
-        assertEquals("gemini-2.5-flash-lite", fallbacks[1])
-        assertEquals("gemini-2.0-flash", fallbacks[2])
-        assertEquals("gemini-1.5-flash", fallbacks[3])
+        assertEquals(2, fallbacks.size)
+        assertEquals("gemini-3.5-flash-lite", fallbacks[0])
+        assertEquals("gemini-3.8-flash", fallbacks[1])
     }
 
     @Test
@@ -53,8 +52,8 @@ class VoxStreamConfigAndFallbackTest {
     @Test
     fun `model fallback order iterates through VoxStreamConfig fallbacks when models fail`() {
         val attemptedModels = mutableListOf<String>()
-        val failingModels = setOf("gemini-2.5-flash", "gemini-2.5-flash-lite")
-        val winningModel = "gemini-2.0-flash"
+        val failingModels = setOf("gemini-3.5-flash-lite")
+        val winningModel = "gemini-3.8-flash"
 
         // Simulate REST model fallback execution
         val result = runModelFallbackChain(
@@ -71,7 +70,7 @@ class VoxStreamConfigAndFallbackTest {
         val expectedFallbackOrder = VoxStreamConfig.GEMINI_MODEL_FALLBACKS
         assertEquals(
             "Attempted models must follow VoxStreamConfig fallback order",
-            listOf("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"),
+            listOf("gemini-3.5-flash-lite", "gemini-3.8-flash"),
             attemptedModels
         )
     }

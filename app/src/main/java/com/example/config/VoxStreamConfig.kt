@@ -28,7 +28,7 @@ object VoxStreamConfig {
     const val DEFAULT_LIVE_MODEL: String = "models/gemini-2.0-flash-exp"
 
     /** Primary Gemini REST/Polish Model */
-    const val POLISH_PRIMARY_MODEL: String = "gemini-2.5-flash-lite"
+    const val POLISH_PRIMARY_MODEL: String = "gemini-3.5-flash-lite"
 
     /** Placeholder API key template value */
     const val PLACEHOLDER_API_KEY: String = "MY_GEMINI_API_KEY"
@@ -37,9 +37,8 @@ object VoxStreamConfig {
      * Gemini REST/Polish Model Fallback Chain in prioritized order.
      */
     val GEMINI_MODEL_FALLBACKS: List<String> = listOf(
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-flash",
-        "gemini-3.1-flash-lite-preview"
+        "gemini-3.5-flash-lite",
+        "gemini-3.8-flash"
     )
 
     /**

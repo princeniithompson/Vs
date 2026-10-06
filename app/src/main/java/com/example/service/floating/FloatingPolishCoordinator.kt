@@ -8,6 +8,7 @@ import com.example.core.ApiConfig
 import com.example.data.AppLogRepository
 import com.example.data.DiagnosticSource
 import com.example.data.DiagnosticType
+import com.example.data.HistoryRepository
 import com.example.data.LogLevel
 import com.example.service.AppCategory
 import com.example.service.AppClassifier
@@ -91,6 +92,18 @@ class FloatingPolishCoordinator {
                     "Transcript length: ${rawTranscript.length} chars"
                 )
 
+                val currentPkg = FloatingBubbleManager.lockedSessionContext.value
+                    ?: FloatingBubbleManager.currentForegroundPackage.value
+                val category = if (com.example.config.VoxStreamConfig.IS_APP_DETECTION_ENABLED) {
+                    val appContext = AppContextResolver.resolve(context, currentPkg)
+                    AppClassifier.classify(currentPkg, appContext?.appName)
+                } else {
+                    AppCategory.OTHER
+                }
+                val targetAppName = if (com.example.config.VoxStreamConfig.IS_APP_DETECTION_ENABLED) {
+                    AppContextResolver.resolve(context, currentPkg)?.appName ?: "App"
+                } else "App"
+
                 if (ApiConfig.isPlaceholder(apiKey)) {
                     val err = "API key is missing or default placeholder. Please set GEMINI_API_KEY in app Settings."
                     Log.e(TAG, "Polish Error: $err")
@@ -102,16 +115,6 @@ class FloatingPolishCoordinator {
                     )
                     result = PolishResult(null, err)
                 } else {
-                    val currentPkg = FloatingBubbleManager.currentForegroundPackage.value
-                    val category = if (com.example.config.VoxStreamConfig.IS_APP_DETECTION_ENABLED) {
-                        val appContext = AppContextResolver.resolve(context, currentPkg)
-                        AppClassifier.classify(currentPkg, appContext?.appName)
-                    } else {
-                        AppCategory.OTHER
-                    }
-                    val appName = if (com.example.config.VoxStreamConfig.IS_APP_DETECTION_ENABLED) {
-                        AppContextResolver.resolve(context, currentPkg)?.appName ?: "App"
-                    } else "App"
                     val isAiApp = category == AppCategory.AI
                     val aiMode = if (isAiApp) FloatingBubbleManager.selectedAiPolishMode.value else null
 
@@ -120,7 +123,7 @@ class FloatingPolishCoordinator {
                             apiKey = apiKey,
                             rawTranscript = rawTranscript,
                             category = category,
-                            appName = appName,
+                            appName = targetAppName,
                             aiPolishMode = aiMode
                         )
                     }
@@ -139,10 +142,20 @@ class FloatingPolishCoordinator {
                         DiagnosticType.POLISH_SUCCESS,
                         "Result: ${polishedText.take(60)}..."
                     )
+                    HistoryRepository.saveEntry(
+                        text = polishedText,
+                        mode = "POLISHED",
+                        appName = targetAppName
+                    )
                     FloatingTextInjector.injectOrFallbackToClipboard(context, polishedText)
                     Toast.makeText(context, "Polished ✨", Toast.LENGTH_SHORT).show()
                 } else {
                     if (rawTranscript.isNotBlank()) {
+                        HistoryRepository.saveEntry(
+                            text = rawTranscript,
+                            mode = "VERBATIM",
+                            appName = targetAppName
+                        )
                         FloatingTextInjector.injectOrFallbackToClipboard(context, rawTranscript)
                     }
                     val errorMsg = result?.errorDetail ?: "Unknown error"

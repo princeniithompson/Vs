@@ -53,15 +53,6 @@ object FloatingPolishClient {
                 put("generationConfig", JSONObject().apply {
                     put("temperature", 0.15)
                     put("maxOutputTokens", 2048)
-                    if (modelName.contains("3.")) {
-                        put("thinkingConfig", JSONObject().apply {
-                            put("thinkingLevel", "MINIMAL")
-                        })
-                    } else {
-                        put("thinkingConfig", JSONObject().apply {
-                            put("thinkingBudget", 0)
-                        })
-                    }
                 })
             }.toString()
         }
@@ -93,8 +84,8 @@ object FloatingPolishClient {
                     setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                     setRequestProperty("x-goog-api-key", trimmedKey)
                     setRequestProperty("Connection", "keep-alive")
-                    connectTimeout = 6000
-                    readTimeout = 10000
+                    connectTimeout = 15000
+                    readTimeout = 20000
                     doOutput = true
                 }
 

@@ -152,6 +152,14 @@ object HistoryRepository {
         return newItem
     }
 
+    /**
+     * Convenience method to save a history entry with explicit mode and appName tags.
+     */
+    fun saveEntry(text: String, mode: String = "POLISHED", appName: String = "App", durationSeconds: Int = 0): HistoryItem? {
+        val contextTag = if (mode.isNotBlank()) "$appName · $mode" else appName
+        return addHistoryItem(text = text, appContext = contextTag, durationSeconds = durationSeconds)
+    }
+
     fun deleteHistoryItem(id: String): Boolean {
         val current = _historyItems.value.toMutableList()
         val removed = current.removeAll { it.id == id }
