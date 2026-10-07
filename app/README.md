@@ -37,6 +37,7 @@ VoxStream is a native Android floating-bubble voice assistant designed for high-
 ### E. Diagnostics & System Hubs
 - **App Detection Diagnostics**: A dedicated diagnostic view providing live inspection of raw package names, window titles, extracted accessibility nodes, classification sources, and raw AI prompts/responses.
 - **Audio Diagnostics**: On-device WAV recording verification for acoustic capture and high-pass filter auditing.
+- **Keyboard-Tied Bubble Lifecycle**: Bubble visibility is governed strictly by the presence of the IME soft keyboard (`AccessibilityWindowInfo.TYPE_INPUT_METHOD`). Appears instantly on keyboard focus and fades out smoothly over 150ms when the keyboard closes.
 
 ---
 

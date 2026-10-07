@@ -196,15 +196,6 @@ class VoxStreamAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Fallback: If getWindows() does not report IME directly without interactive windows flag,
-        // verify if an editable input node currently has focus
-        if (!isImePresent) {
-            val inputFocused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            if (inputFocused != null && isEditableNode(inputFocused)) {
-                isImePresent = true
-            }
-        }
-
         if (lastReportedKeyboardVisible != isImePresent) {
             Log.d(TAG, "Keyboard visibility changed -> $isImePresent | Seen windows: [$windowTypesSeen]")
             lastReportedKeyboardVisible = isImePresent

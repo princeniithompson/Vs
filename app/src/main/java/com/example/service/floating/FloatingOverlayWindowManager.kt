@@ -321,6 +321,8 @@ class FloatingOverlayWindowManager(private val context: Context) {
         mainHandler.post {
             val root = overlayView ?: return@post
             if (isVisible) {
+                root.animate().cancel()
+                root.alpha = 1f
                 if (!overlayRecording.value && !overlayExpanded.value) {
                     collapsePanel()
                 }
@@ -330,7 +332,14 @@ class FloatingOverlayWindowManager(private val context: Context) {
             } else {
                 if (!isSessionActive) {
                     collapsePanel()
-                    root.visibility = View.GONE
+                    root.animate()
+                        .alpha(0f)
+                        .setDuration(150L)
+                        .withEndAction {
+                            root.visibility = View.GONE
+                            root.alpha = 1f
+                        }
+                        .start()
                 } else {
                     root.visibility = View.VISIBLE
                 }
