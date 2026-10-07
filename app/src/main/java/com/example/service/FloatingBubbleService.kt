@@ -653,6 +653,7 @@ class FloatingBubbleService : Service() {
             stopVoiceTyping()
             sessionManager.release()
         }
+        FloatingBubbleManager.setNetworkProblem(false)
         if (::overlayWindowManager.isInitialized) {
             overlayWindowManager.onDestroy()
         }
@@ -661,5 +662,15 @@ class FloatingBubbleService : Service() {
         if (instance == this) {
             instance = null
         }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.d(TAG, "FloatingBubbleService onTaskRemoved: executing deterministic teardown")
+        if (::sessionManager.isInitialized) {
+            stopVoiceTyping()
+            sessionManager.release()
+        }
+        FloatingBubbleManager.setNetworkProblem(false)
     }
 }

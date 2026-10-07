@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -66,6 +67,7 @@ fun FloatingCollapsedBubble(
     modifier: Modifier = Modifier
 ) {
     val palette = rememberDynamicAuroraPalette()
+    val isNetworkProblem by com.example.service.FloatingBubbleManager.isNetworkProblem.collectAsState()
     val infiniteTransition = rememberInfiniteTransition(label = "collapsedGlow")
 
     val pulse by infiniteTransition.animateFloat(
@@ -220,10 +222,15 @@ fun FloatingCollapsedBubble(
             } else {
                 // 2. Standard Lifebuoy Bubble
                 if (isRecording) {
+                    val recordingGlow = if (isNetworkProblem) {
+                        Color(0xFFFF3B30).copy(alpha = 0.55f)
+                    } else {
+                        palette.primaryVibrant.copy(alpha = 0.35f)
+                    }
                     Box(
                         modifier = Modifier
                             .size(animatedBubbleSize * 0.95f * pulse)
-                            .background(palette.primaryVibrant.copy(alpha = 0.35f), CircleShape)
+                            .background(recordingGlow, CircleShape)
                     )
                 }
                 Image(

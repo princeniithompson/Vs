@@ -9,11 +9,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.ui.components.overlay.AuroraColorPalette
 import com.example.ui.components.overlay.NotchedContainerShape
+import com.example.ui.components.overlay.toDangerPalette
 import com.example.ui.components.overlay.getDynamicTonePalette as getDynamicTonePaletteFromOverlay
 import com.example.ui.components.overlay.rememberDynamicAuroraPalette as rememberDynamicAuroraPaletteFromOverlay
 import com.example.ui.components.overlay.sections.FloatingAuroraGlowSection
@@ -85,7 +88,9 @@ fun FloatingDictationPopup(
     onDragEnd: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val palette = rememberDynamicAuroraPalette()
+    val isNetworkProblem by com.example.service.FloatingBubbleManager.isNetworkProblem.collectAsState()
+    val basePalette = rememberDynamicAuroraPalette()
+    val palette = if (isNetworkProblem) basePalette.toDangerPalette() else basePalette
     val state = rememberFloatingDictationPopupState(
         transcriptText = transcriptText,
         isRecording = isRecording,

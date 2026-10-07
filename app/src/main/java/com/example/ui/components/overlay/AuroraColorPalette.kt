@@ -169,3 +169,11 @@ fun isColorDark(color: Color): Boolean {
     val darkness = 1 - (0.299 * color.red + 0.587 * color.green + 0.114 * color.blue)
     return darkness >= 0.5
 }
+
+fun AuroraColorPalette.toDangerPalette(): AuroraColorPalette = AuroraColorPalette(
+    primary = Color(0xFFD32F2F),
+    primaryLight = Color(0xFFFF5252),
+    primaryVibrant = Color(0xFFFF1744),
+    secondary = Color(0xFFFF5252),
+    deep = Color(0xFFB71C1C)
+)

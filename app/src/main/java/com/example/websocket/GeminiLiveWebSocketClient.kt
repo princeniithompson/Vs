@@ -20,6 +20,11 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.random.Random
 
 /**
  * Structured error types for Gemini Live WebSocket communication.
@@ -40,15 +45,31 @@ class GeminiLiveWebSocketClient(
     private val onLog: (LogLevel, String, String, String?) -> Unit,
     private val onError: (String) -> Unit,
     okHttpClient: OkHttpClient? = null,
-    private val onStructuredError: ((GeminiLiveError) -> Unit)? = null
+    private val onStructuredError: ((GeminiLiveError) -> Unit)? = null,
+    private val isSessionActive: () -> Boolean = { false }
 ) {
     companion object {
         private const val TAG = "GeminiLiveWS"
         const val DEFAULT_MODEL = "models/gemini-3.5-transcribe-live"
         const val WS_BASE_URL =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-        private const val MAX_RECONNECT_ATTEMPTS = 3
-        private const val PING_INTERVAL_SECONDS = 25L
+        const val MAX_RECONNECT_ATTEMPTS = 10
+        const val PING_INTERVAL_SECONDS = 45L
+
+        // Single-connection enforcement and instance tracking
+        private val activeSocketCount = AtomicInteger(0)
+        private val currentActiveClient = AtomicReference<GeminiLiveWebSocketClient?>(null)
+
+        fun getActiveSocketCount(): Int = activeSocketCount.get()
+
+        fun terminateActiveLiveSockets() {
+            val client = currentActiveClient.getAndSet(null)
+            try {
+                client?.disconnect()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error in terminateActiveLiveSockets", e)
+            }
+        }
 
         fun buildWebSocketRequest(apiKey: String): Request {
             val trimmedKey = apiKey.trim()
@@ -71,6 +92,7 @@ class GeminiLiveWebSocketClient(
     private val isSetupComplete = AtomicBoolean(false)
     private val isConnectingGuard = AtomicBoolean(false)
     private val isExplicitlyClosed = AtomicBoolean(false)
+    private val hasDisconnected = AtomicBoolean(false)
     private val reconnectAttempts = AtomicInteger(0)
     private var activeModel: String = DEFAULT_MODEL
     private var lastApiKey: String = ""
@@ -120,6 +142,17 @@ class GeminiLiveWebSocketClient(
             return
         }
 
+        // Single-connection enforcement: Terminate any previously active client instance across the app
+        val previousClient = currentActiveClient.getAndSet(this)
+        if (previousClient != null && previousClient !== this) {
+            Log.w(TAG, "[SingleConnection] Disconnecting prior Gemini Live client instance to enforce single live connection")
+            try {
+                previousClient.disconnect()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error terminating previous client instance", e)
+            }
+        }
+
         // Cancel any pending auto-reconnect before initiating a new connection
         cancelPendingReconnect()
 
@@ -132,6 +165,7 @@ class GeminiLiveWebSocketClient(
         activeModel = resolvedModel
         isSmartMode = smartMode
         customVocabularyList = customVocabulary
+        hasDisconnected.set(false)
         isExplicitlyClosed.set(false)
         reconnectAttempts.set(0)
         isSetupComplete.set(false)
@@ -182,9 +216,12 @@ class GeminiLiveWebSocketClient(
                     return
                 }
 
+                val currentLiveCount = activeSocketCount.incrementAndGet()
                 activeTurnText.clear()
-                Log.i(TAG, "[ConnectionState] CONNECTED: WebSocket open (HTTP ${response.code}). Sending initial setup JSON...")
-                onLog(LogLevel.INFO, TAG, "WebSocket connected successfully (HTTP ${response.code}). Sending initial setup payload ($modeLabel, vocab=$vocabCount)...", null)
+                val timeStr = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
+                val openMsg = "[$timeStr] WebSocket open (HTTP ${response.code}). Active live sockets: $currentLiveCount"
+                Log.i(TAG, "[ConnectionState] CONNECTED: $openMsg")
+                onLog(LogLevel.INFO, TAG, "WebSocket connected successfully (HTTP ${response.code}). Active sockets: $currentLiveCount. Sending initial setup payload ($modeLabel, vocab=$vocabCount)...", null)
                 notifyStateChanged(ConnectionState.ConnectedWaitingSetup)
 
                 // Step A: Send initial setup JSON
@@ -274,8 +311,9 @@ class GeminiLiveWebSocketClient(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                val currentLiveCount = activeSocketCount.decrementAndGet().coerceAtLeast(0)
                 val reasonDetail = if (reason.isNotBlank()) reason else "No reason provided"
-                Log.i(TAG, "[ConnectionState] DISCONNECTED: WebSocket closed (code: $code, reason: $reasonDetail)")
+                Log.i(TAG, "[SingleConnection] WebSocket closed (code: $code, reason: $reasonDetail). Active live sockets: $currentLiveCount")
                 isSetupComplete.set(false)
 
                 if (isExplicitlyClosed.get()) {
@@ -289,6 +327,9 @@ class GeminiLiveWebSocketClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                val currentLiveCount = activeSocketCount.decrementAndGet().coerceAtLeast(0)
+                Log.i(TAG, "[SingleConnection] WebSocket failure: ${t.message}. Active live sockets: $currentLiveCount")
+
                 val primaryMsg = t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
                 val isPingPongTimeout = primaryMsg.contains("ping", ignoreCase = true) ||
                                        primaryMsg.contains("pong", ignoreCase = true) ||
@@ -327,24 +368,33 @@ class GeminiLiveWebSocketClient(
 
         isSetupComplete.set(false)
 
+        val sessionStillActive = isSessionActive()
         val attempts = reconnectAttempts.incrementAndGet()
-        if (attempts <= MAX_RECONNECT_ATTEMPTS && lastApiKey.isNotBlank()) {
-            // Exponential backoff: attempt 1 = 1000ms, attempt 2 = 2000ms, attempt 3 = 4000ms (up to 30000ms max)
-            val backoffMs = (1000L * (1L shl (attempts - 1))).coerceAtMost(30000L)
+        val maxAttempts = if (sessionStillActive) Int.MAX_VALUE else MAX_RECONNECT_ATTEMPTS
 
-            val reconnectLog = "WebSocket connection dropped ($errorDetails). Scheduling auto-reconnect (attempt $attempts/$MAX_RECONNECT_ATTEMPTS in ${backoffMs}ms)..."
+        if (attempts <= maxAttempts && lastApiKey.isNotBlank()) {
+            // True exponential backoff with jitter:
+            // delay = min(30000, base * 2^(attempt-1)) + random(0..500 ms)
+            // base starts at 1000 ms.
+            val attemptExponent = (attempts - 1).coerceIn(0, 15)
+            val rawBackoff = (1000L * (1L shl attemptExponent)).coerceAtMost(30000L)
+            val jitter = Random.nextLong(0, 501)
+            val backoffMs = (rawBackoff + jitter).coerceAtMost(30500L)
+
+            val timeStr = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
+            val reconnectLog = "[$timeStr][Reconnect] Attempt $attempts (delay: ${backoffMs}ms, base: ${rawBackoff}ms, jitter: ${jitter}ms) | sessionActive: $sessionStillActive | activeSockets: ${activeSocketCount.get()} | reason: $errorDetails"
             Log.i(TAG, "[ConnectionState] RECONNECTING: $reconnectLog")
             onLog(LogLevel.INFO, TAG, reconnectLog, null)
             AppLogRepository.logEvent(
-                DiagnosticSource.APP,
+                DiagnosticSource.BUBBLE,
                 DiagnosticType.SESSION_RECONNECT,
-                "Attempting auto-reconnect ($attempts/$MAX_RECONNECT_ATTEMPTS in ${backoffMs}ms) due to: ${errorDetails.take(120)}"
+                reconnectLog
             )
             notifyStateChanged(ConnectionState.Connecting)
 
             cancelPendingReconnect()
             val runnable = Runnable {
-                if (!isExplicitlyClosed.get()) {
+                if (!isExplicitlyClosed.get() && (isSessionActive() || reconnectAttempts.get() <= MAX_RECONNECT_ATTEMPTS)) {
                     connectInternal()
                 } else {
                     isConnectingGuard.set(false)
@@ -355,16 +405,17 @@ class GeminiLiveWebSocketClient(
             return
         }
 
-        // Retries exhausted or non-retryable fatal error
+        // Retries exhausted (only when session was not active) or non-retryable fatal error
         isConnectingGuard.set(false)
         lastApiKey = ""
-        val fatalMsg = "ended_reason: connection_failed_after_retries | $errorDetails"
-        Log.e(TAG, "[ConnectionState] FAILED: WebSocket failed permanently after $MAX_RECONNECT_ATTEMPTS attempts: $fatalMsg", throwable)
+        val timeStr = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
+        val fatalMsg = "[$timeStr][Reconnect] Failed permanently after $attempts attempts: $errorDetails"
+        Log.e(TAG, "[ConnectionState] FAILED: $fatalMsg", throwable)
         onLog(LogLevel.ERROR, TAG, fatalMsg, null)
         AppLogRepository.logEvent(
-            DiagnosticSource.APP,
+            DiagnosticSource.BUBBLE,
             DiagnosticType.ERROR,
-            "WebSocket failed permanently after $MAX_RECONNECT_ATTEMPTS reconnect attempts: ${errorDetails.take(120)}"
+            "WebSocket failed permanently after $attempts reconnect attempts: ${errorDetails.take(120)}"
         )
         notifyStateChanged(ConnectionState.Error(fatalMsg))
         notifyError(fatalMsg, GeminiLiveError.NetworkFailure(fatalMsg, throwable))
@@ -378,14 +429,23 @@ class GeminiLiveWebSocketClient(
             if (json.has("setupComplete")) {
                 isSetupComplete.set(true)
                 val wasReconnecting = reconnectAttempts.get() > 0
+                val attemptsUsed = reconnectAttempts.get()
                 reconnectAttempts.set(0)
                 Log.i(TAG, "[ConnectionState] STREAMING: setupComplete acknowledged by Gemini Live server!")
+                val timeStr = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
                 val ackMsg = if (wasReconnecting) {
-                    "setupComplete acknowledged! Session resumed after reconnect."
+                    "[$timeStr][Reconnect] Successfully recovered and reconnected after $attemptsUsed attempts! Active sockets: ${activeSocketCount.get()}"
                 } else {
-                    "setupComplete acknowledged by Gemini Live!"
+                    "setupComplete acknowledged by Gemini Live server!"
                 }
                 onLog(LogLevel.RECEIVED, TAG, ackMsg, rawJson)
+                if (wasReconnecting) {
+                    AppLogRepository.logEvent(
+                        DiagnosticSource.BUBBLE,
+                        DiagnosticType.SESSION_START,
+                        ackMsg
+                    )
+                }
                 notifyStateChanged(ConnectionState.Streaming)
                 notifySetupComplete()
                 return
@@ -495,8 +555,7 @@ class GeminiLiveWebSocketClient(
             }
             ws.send(chunkJson.toString())
         } catch (e: Exception) {
-            Log.e(TAG, "Error sending audio chunk", e)
-            notifyError("Error sending audio chunk: ${e.message}", GeminiLiveError.ProtocolError("Send audio chunk failed", e))
+            Log.w(TAG, "Error sending audio chunk (socket disconnected or buffer full): ${e.message}")
             false
         }
     }
@@ -531,11 +590,17 @@ class GeminiLiveWebSocketClient(
     }
 
     fun disconnect() {
-        Log.i(TAG, "[ConnectionState] DISCONNECT requested by client")
+        if (!hasDisconnected.compareAndSet(false, true)) {
+            Log.d(TAG, "[ConnectionState] disconnect() already invoked; skipping duplicate call")
+            return
+        }
+        Log.i(TAG, "[ConnectionState] DISCONNECT requested by client (deterministic teardown)")
         isExplicitlyClosed.set(true)
         reconnectAttempts.set(MAX_RECONNECT_ATTEMPTS)
         cancelPendingReconnect()
         closeExistingWebSocket()
+
+        currentActiveClient.compareAndSet(this, null)
 
         isSetupComplete.set(false)
         isConnectingGuard.set(false)
@@ -555,6 +620,11 @@ class GeminiLiveWebSocketClient(
         webSocket = null
         if (existing != null) {
             try {
+                val count = activeSocketCount.decrementAndGet().coerceAtLeast(0)
+                Log.i(TAG, "[SingleConnection] Existing WebSocket cancelled. Active live sockets: $count")
+                try {
+                    existing.close(1000, "Session ended")
+                } catch (_: Exception) {}
                 existing.cancel()
             } catch (e: Exception) {
                 Log.w(TAG, "Error cancelling existing WebSocket: ${e.message}")

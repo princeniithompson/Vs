@@ -11,10 +11,13 @@ import com.example.data.DiagnosticSource
 import com.example.data.DiagnosticType
 import com.example.data.LiveStats
 import com.example.data.LogLevel
+import com.example.service.FloatingBubbleManager
 import com.example.websocket.GeminiLiveWebSocketClient
+import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -47,6 +50,10 @@ class FloatingDictationSessionManager(
     private val audioQueue = ConcurrentLinkedQueue<ByteArray>()
     private var webSocketClient: GeminiLiveWebSocketClient? = null
     private var wakeLock: PowerManager.WakeLock? = null
+
+    private var sessionJob: CompletableJob? = null
+    private var sessionScope: CoroutineScope? = null
+    private var drainJob: Job? = null
 
     private var durationJob: Job? = null
     var durationSeconds: Int = 0
@@ -239,6 +246,34 @@ class FloatingDictationSessionManager(
         }
     }
 
+    private fun drainAudioQueue(ws: GeminiLiveWebSocketClient, scope: CoroutineScope) {
+        drainJob?.cancel()
+        drainJob = scope.launch(Dispatchers.IO) {
+            while (isActive && ws.setupComplete && audioQueue.isNotEmpty()) {
+                val chunk = audioQueue.poll() ?: break
+                val sent = ws.sendAudioChunk(chunk)
+                if (sent) {
+                    sessionChunksSent++
+                    sessionBytesSent += chunk.size
+                    AppLogRepository.updateLiveStats {
+                        it.copy(
+                            source = DiagnosticSource.BUBBLE,
+                            chunksSent = sessionChunksSent,
+                            bytesSent = sessionBytesSent,
+                            chunksBuffered = audioQueue.size
+                        )
+                    }
+                    if (audioQueue.isNotEmpty()) {
+                        delay(20)
+                    }
+                } else {
+                    enqueueAudioChunk(chunk)
+                    break
+                }
+            }
+        }
+    }
+
     fun startSession(
         context: Context,
         scope: CoroutineScope,
@@ -248,6 +283,14 @@ class FloatingDictationSessionManager(
     ) {
         if (isRecording) return
         isRecording = true
+
+        sessionJob?.cancel()
+        val sJob = SupervisorJob()
+        sessionJob = sJob
+        val currentSessionScope = CoroutineScope(Dispatchers.Main + sJob)
+        sessionScope = currentSessionScope
+
+        FloatingBubbleManager.setNetworkProblem(false)
 
         finalizedTranscript.clear()
         interimTranscript = ""
@@ -302,15 +345,16 @@ class FloatingDictationSessionManager(
             Log.w(TAG, "Could not acquire WakeLock", e)
         }
 
-        // Start Audio Recorder
+        // Start Audio Recorder tied to session scope
         audioRecorder.start(
-            scope,
+            currentSessionScope,
             source = DiagnosticSource.BUBBLE
         )
 
         // Start WebSocket
         webSocketClient = GeminiLiveWebSocketClient(
             onSetupComplete = {
+                FloatingBubbleManager.setNetworkProblem(false)
                 AppLogRepository.updateLiveStats {
                     it.copy(
                         source = DiagnosticSource.BUBBLE,
@@ -319,27 +363,7 @@ class FloatingDictationSessionManager(
                 }
                 val ws = webSocketClient
                 if (ws != null && ws.setupComplete) {
-                    scope.launch(Dispatchers.IO) {
-                        while (isActive && ws.setupComplete && audioQueue.isNotEmpty()) {
-                            val chunk = audioQueue.poll() ?: break
-                            val sent = ws.sendAudioChunk(chunk)
-                            if (sent) {
-                                sessionChunksSent++
-                                sessionBytesSent += chunk.size
-                                AppLogRepository.updateLiveStats {
-                                    it.copy(
-                                        source = DiagnosticSource.BUBBLE,
-                                        chunksSent = sessionChunksSent,
-                                        bytesSent = sessionBytesSent,
-                                        chunksBuffered = audioQueue.size
-                                    )
-                                }
-                                if (audioQueue.isNotEmpty()) {
-                                    delay(25)
-                                }
-                            }
-                        }
-                    }
+                    drainAudioQueue(ws, currentSessionScope)
                 }
             },
             onInterimTranscription = { text ->
@@ -377,6 +401,9 @@ class FloatingDictationSessionManager(
                 }
             },
             onStateChanged = { state ->
+                val isProblem = (state is ConnectionState.Error) ||
+                    (state is ConnectionState.Connecting && (webSocketClient?.isReconnecting == true))
+                FloatingBubbleManager.setNetworkProblem(isProblem)
                 onConnectionStateChanged(state)
                 AppLogRepository.updateConnectionState(state, DiagnosticSource.BUBBLE)
             },
@@ -386,21 +413,24 @@ class FloatingDictationSessionManager(
             onError = { err ->
                 Log.e(TAG, "WebSocket error: $err")
                 AppLogRepository.updateLiveStats { it.copy(lastError = err) }
+                FloatingBubbleManager.setNetworkProblem(true)
                 onError(err)
-            }
+            },
+            isSessionActive = { isRecording }
         ).apply {
             val customVocab = CustomVocabularyRepository.getVocabulary()
             try {
                 connect(apiKey = apiKey, model = model, smartMode = smartMode, customVocabulary = customVocab)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to connect WebSocket: ${e.message}")
+                FloatingBubbleManager.setNetworkProblem(true)
                 onError(e.message ?: "Connection error")
             }
         }
 
-        // Duration timer
+        // Duration timer tied to session scope
         durationJob?.cancel()
-        durationJob = scope.launch {
+        durationJob = currentSessionScope.launch {
             while (isActive && isRecording) {
                 delay(1000)
                 durationSeconds++
@@ -412,9 +442,12 @@ class FloatingDictationSessionManager(
     fun stopSession(scope: CoroutineScope, endedReason: String = "completed") {
         if (!isRecording) return
         isRecording = false
+        FloatingBubbleManager.setNetworkProblem(false)
 
         durationJob?.cancel()
         durationJob = null
+        drainJob?.cancel()
+        drainJob = null
 
         val durationAtEnd = durationSeconds
         val chunksAtEnd = sessionChunksSent
@@ -425,6 +458,10 @@ class FloatingDictationSessionManager(
         webSocketClient = null
         val wl = wakeLock
         wakeLock = null
+
+        sessionJob?.cancel()
+        sessionJob = null
+        sessionScope = null
 
         scope.launch(Dispatchers.IO) {
             try {
@@ -491,8 +528,14 @@ class FloatingDictationSessionManager(
 
     fun release() {
         isRecording = false
+        FloatingBubbleManager.setNetworkProblem(false)
         durationJob?.cancel()
         durationJob = null
+        drainJob?.cancel()
+        drainJob = null
+        sessionJob?.cancel()
+        sessionJob = null
+        sessionScope = null
         try {
             audioRecorder.stop()
             webSocketClient?.disconnect()

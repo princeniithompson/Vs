@@ -255,12 +255,15 @@ fun FloatingActionRow(
             }
         }
 
-        // Context Status (e.g. "AI · Google AI Studio", "AI · Gemini")
+        // Context Status (e.g. "AI · Google AI Studio", "AI · Gemini", or "Offline · Network problem" on connection drop)
         val sessionContext by FloatingBubbleManager.lockedSessionContext.collectAsState()
         val currentAppContext by FloatingBubbleManager.currentResolvedAppContext.collectAsState()
         val currentPkg by FloatingBubbleManager.currentForegroundPackage.collectAsState()
+        val isNetworkProblem by FloatingBubbleManager.isNetworkProblem.collectAsState()
         val context = LocalContext.current
-        val displayContext = if (com.example.config.VoxStreamConfig.IS_APP_DETECTION_ENABLED) {
+        val displayContext = if (isNetworkProblem) {
+            "⚠️ Offline · Network problem"
+        } else if (com.example.config.VoxStreamConfig.IS_APP_DETECTION_ENABLED) {
             sessionContext ?: currentAppContext?.formatted ?: remember(currentPkg) {
                 AppContextResolver.resolve(context, currentPkg)?.formatted
             }
@@ -277,10 +280,10 @@ fun FloatingActionRow(
                 Text(
                     text = displayContext,
                     style = TextStyle(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                        color = if (isNetworkProblem) Color(0xFFFF5252) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                         fontSize = 10.5.sp,
                         fontFamily = FontFamily.SansSerif,
-                        fontWeight = FontWeight.Normal,
+                        fontWeight = if (isNetworkProblem) FontWeight.SemiBold else FontWeight.Normal,
                         letterSpacing = 0.2.sp
                     ),
                     maxLines = 1,

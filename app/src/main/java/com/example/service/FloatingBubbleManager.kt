@@ -83,6 +83,13 @@ object FloatingBubbleManager {
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
+    private val _isNetworkProblem = MutableStateFlow(false)
+    val isNetworkProblem: StateFlow<Boolean> = _isNetworkProblem.asStateFlow()
+
+    fun setNetworkProblem(hasProblem: Boolean) {
+        _isNetworkProblem.value = hasProblem
+    }
+
     private var initialized = false
 
     private fun bypassHiddenApiRestrictions() {

@@ -207,7 +207,8 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             if (_isRecording.value) {
                 stopRecording(endedReason = endedReasonTag)
             }
-        }
+        },
+        isSessionActive = { _isRecording.value }
     )
 
     private var appWakeLock: android.os.PowerManager.WakeLock? = null
