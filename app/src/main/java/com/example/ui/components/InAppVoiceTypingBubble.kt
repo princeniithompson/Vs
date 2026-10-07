@@ -171,10 +171,10 @@ fun InAppVoiceTypingBubble(
         label = "glowPulse"
     )
     val idleBreathing by infiniteTransition.animateFloat(
-        initialValue = 0.04f,
-        targetValue = 0.16f,
+        initialValue = 0.08f,
+        targetValue = 0.18f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2200, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "idleBreathing"
@@ -228,7 +228,12 @@ fun InAppVoiceTypingBubble(
                 )
 
                 // Render Aurora Glow (strictly clipped inside container)
-                val baseAmp = if (isRecording) maxOf(amplitude, idleBreathing) else 0.06f
+                val voiceWeight = (amplitude / 0.18f).coerceIn(0f, 1f)
+                val baseAmp = if (isRecording) {
+                    ((1f - voiceWeight) * idleBreathing + amplitude).coerceIn(0.08f, 1f)
+                } else {
+                    0.06f
+                }
                 val glowBrightness = 0.38f + 0.62f * baseAmp
 
                 if (glowBrightness > 0.005f) {

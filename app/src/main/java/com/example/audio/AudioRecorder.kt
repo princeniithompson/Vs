@@ -158,17 +158,65 @@ class AudioRecorder(
 
                 audioRecord = rec
 
-                // Dedicated Clean Voice Baseline: Hardware AEC, NoiseSuppressor, and AGC are intentionally
-                // disabled to capture pure, uncompressed vocal acoustics without clipping whispered speech.
+                // 1. Enable Android hardware NoiseSuppressor if available on device.
+                // Keep AcousticEchoCanceler and AutomaticGainControl disabled (AEC is unnecessary without playback, AGC can clip quiet speech).
+                val sessionId = rec.audioSessionId
+                try {
+                    if (NoiseSuppressor.isAvailable()) {
+                        noiseSuppressor = NoiseSuppressor.create(sessionId)?.apply {
+                            enabled = true
+                        }
+                        if (noiseSuppressor?.enabled == true) {
+                            Log.i(TAG, "NoiseSuppressor enabled (audioSessionId=$sessionId)")
+                            AppLogRepository.addLog(
+                                LogLevel.INFO,
+                                TAG,
+                                "NoiseSuppressor enabled (session=$sessionId)",
+                                payload = null,
+                                source = currentSource
+                            )
+                        } else {
+                            Log.w(TAG, "NoiseSuppressor create returned null or failed to enable on session $sessionId")
+                            AppLogRepository.addLog(
+                                LogLevel.INFO,
+                                TAG,
+                                "NoiseSuppressor could not be enabled on session $sessionId",
+                                payload = null,
+                                source = currentSource
+                            )
+                        }
+                    } else {
+                        Log.i(TAG, "NoiseSuppressor not supported on this device hardware (falling back to software 75Hz HPF)")
+                        AppLogRepository.addLog(
+                            LogLevel.INFO,
+                            TAG,
+                            "NoiseSuppressor not supported on device (using software 75Hz HPF)",
+                            payload = null,
+                            source = currentSource
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error initializing NoiseSuppressor", e)
+                    AppLogRepository.addLog(
+                        LogLevel.ERROR,
+                        TAG,
+                        "NoiseSuppressor init error: ${e.message}",
+                        payload = null,
+                        source = currentSource
+                    )
+                }
 
                 rec.startRecording()
                 _state.value = AudioRecorderState.Recording
                 val hpfCutoff = highPassFilter.cutoffHz.toInt()
-                Log.d(TAG, "AudioRecord started recording at 16000Hz PCM 16-bit (Audio diagnostic baseline: VOICE_RECOGNITION, AEC/NS/AGC disabled, gentle HPF=${hpfCutoff}Hz)")
+                val nsLabel = if (noiseSuppressor?.enabled == true) "NoiseSuppressor enabled" else "NS unavailable/fallback"
+                Log.d(TAG, "AudioRecord started recording at 16000Hz PCM 16-bit (Audio pipeline: VOICE_RECOGNITION, $nsLabel, gentle HPF=${hpfCutoff}Hz)")
                 AppLogRepository.addLog(
                     LogLevel.INFO,
                     TAG,
-                    "Audio diagnostic baseline: VOICE_RECOGNITION, AEC/NS/AGC disabled, gentle HPF=${hpfCutoff}Hz"
+                    "Audio pipeline active: VOICE_RECOGNITION, $nsLabel, gentle HPF=${hpfCutoff}Hz",
+                    payload = null,
+                    source = currentSource
                 )
 
                 val chunkBuffer = ByteArray(CHUNK_SIZE_BYTES)

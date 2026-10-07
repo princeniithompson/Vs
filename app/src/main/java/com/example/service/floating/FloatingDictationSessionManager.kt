@@ -190,14 +190,24 @@ class FloatingDictationSessionManager(
                     }
                 }
 
-                // 3. Transient dampening for visualizer:
-                // An isolated transient spike (< 60ms) without sustained speech does not jerk the visualizer to max
-                val targetAmp = if (isSpeechActive || isAboveThreshold) {
+                // 3. Visualizer amplitude path:
+                // While voice is active (isSpeechActive == true or within 700ms hangover) or frame exceeds threshold,
+                // pass real voice amplitude smoothly without over-clamping.
+                // When speech is gated/silent, decay smoothly to 0f so resting breathing pulse takes over cleanly.
+                val now = System.currentTimeMillis()
+                val isHangoverActive = lastSustainedSpeechTimestamp > 0L &&
+                    (now - lastSustainedSpeechTimestamp) < VAD_HANGOVER_MS
+                val isVoiceActive = isSpeechActive || isHangoverActive
+
+                val targetAmp = if (isVoiceActive || isAboveThreshold) {
                     clamped
                 } else {
-                    clamped.coerceAtMost(0.04f)
+                    0f
                 }
-                smoothedAmp = (smoothedAmp * 0.7f) + (targetAmp * 0.3f)
+
+                // Smooth attack on speech onset (0.45 weight), smooth release on pause (0.25 weight)
+                val smoothingFactor = if (targetAmp > smoothedAmp) 0.45f else 0.25f
+                smoothedAmp = (smoothedAmp * (1f - smoothingFactor)) + (targetAmp * smoothingFactor)
                 onAmplitudeChanged(smoothedAmp.coerceIn(0f, 1f))
             } else {
                 smoothedAmp = 0f

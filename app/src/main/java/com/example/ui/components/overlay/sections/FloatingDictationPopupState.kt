@@ -44,7 +44,10 @@ class FloatingDictationPopupState(
     private val onLocalCompleteTriggered: () -> Unit
 ) {
     val effectiveAmp: Float
-        get() = maxOf(animatedAmplitude, idleBreathing)
+        get() {
+            val voiceWeight = (animatedAmplitude / 0.18f).coerceIn(0f, 1f)
+            return ((1f - voiceWeight) * idleBreathing + animatedAmplitude).coerceIn(0.08f, 1f)
+        }
 
     fun markLocalComplete() {
         onLocalCompleteTriggered()
@@ -111,10 +114,10 @@ fun rememberFloatingDictationPopupState(
     }
 
     val idleBreathing by infiniteTransition.animateFloat(
-        initialValue = 0.12f,
-        targetValue = 0.24f,
+        initialValue = 0.08f,
+        targetValue = 0.18f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = FastOutSlowInEasing),
+            animation = tween(2400, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "idleBreathing"

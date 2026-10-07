@@ -8,11 +8,12 @@ VoxStream is a native Android floating-bubble voice assistant designed for high-
 
 ## Key Architectural Pillars
 
-### A. Audio Pipeline (Acoustic Integrity & VAD Stream Gating)
+### A. Audio Pipeline (Acoustic Integrity, NoiseSuppressor & VAD Stream Gating)
 - **Audio Source**: Configured with `MediaRecorder.AudioSource.VOICE_RECOGNITION` to bypass invasive carrier speech tuning.
-- **75Hz IIR High-Pass Filter (HPF)**: Applies a gentle first-order IIR HPF to remove low-frequency handling thuds and fan motor resonance while retaining vocal body and unvoiced whisper formants.
-- **Disabled Hardware DSP**: Acoustic Echo Cancellation (AEC), Noise Suppression (NS), and Automatic Gain Control (AGC) are explicitly disabled to prevent voice ducking and "underwater" phase artifacts during close-proximity whispering.
+- **Hardware NoiseSuppressor**: Android platform `NoiseSuppressor` is initialized on the active `audioSessionId` before recording starts to eliminate fan/background acoustic noise while keeping AEC and AGC disabled.
+- **75Hz IIR High-Pass Filter (HPF)**: Applies a gentle first-order IIR HPF to remove low-frequency handling thuds and motor resonance while retaining vocal body and unvoiced whisper formants.
 - **Client-Side VAD Stream Gating**: In `FloatingDictationSessionManager.kt`, audio chunks are only sent to the WebSocket when `isSpeechActive == true` or within a 700ms syllable hangover (`System.currentTimeMillis() - lastSustainedSpeechTimestamp < 700L`). When speech is inactive, raw fan/ambient noise is strictly suppressed; a 100ms zero-padding keep-alive chunk is sent at most once per second to maintain the Gemini Live connection without hallucinations, and a `NOISY_ENVIRONMENT` diagnostic event is emitted every 5 seconds of continuous non-speech gating.
+- **Voice-Reactive Glow & Resting Pulse**: When speaking, the visualizer glow intensity tracks real vocal amplitude smoothly without over-clamping. When paused or noise-gated, a subtle resting breathing pulse (~0.08–0.18 amplitude) confirms active listening without going flatline.
 - **Streaming Protocol**: Streams 16kHz 16-bit Mono PCM audio over a bidirectional WebSocket to the Gemini Multimodal Live API.
 
 ### B. Hybrid App Detection & 4-Signal WebAPK Cascade
