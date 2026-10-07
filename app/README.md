@@ -1,31 +1,116 @@
-# VoxStream - Voice Typing & App Context Diagnostics
+# VoxStream
 
-VoxStream is an Android floating voice dictation and app context detection system built with Kotlin, Jetpack Compose, and Material 3.
+> **Native Android AI Voice Typing & Polishing System**
 
-## Overview & Architecture
+VoxStream is a native Android floating-bubble voice assistant designed for high-precision streaming transcription, context-aware AI text polishing via Gemini 3.5 Flash Lite, and deterministic direct text injection into active input fields without system clipboard corruption.
 
-- **`com.example.service`**:
-  - `FloatingBubbleService.kt`: Core overlay service managing floating dictation controls and bubble interaction.
-  - `VoxStreamAccessibilityService.kt`: Accessibility service capturing active window titles, text node hierarchies, and interactive input fields.
-  - `AppDetector.kt`: Multi-stage hybrid detector analyzing packages, window titles, and screen text to classify target apps.
-  - `AppClassifier.kt`: Classifies detected apps using static rules, cached learnings, or Gemini AI prompts.
-  - `FloatingTextInjector.kt`: Injects dictation text directly into target fields via accessibility node actions.
+---
 
-- **`com.example.data`**:
-  - `AppDetectionLogRepository.kt`: Persistent repository recording granular app detection and classification events.
-  - `HistoryRepository.kt`: Local dictation session history.
-  - `AudioRecordingRepository.kt`: Handles high-pass filtered audio recording for speech recognition.
-  - `CustomVocabularyRepository.kt`: Manages user vocabulary replacements.
+## Key Architectural Pillars
 
-- **`com.example.ui`**:
-  - `VoiceTypingScreen.kt` & `HomeScreen.kt`: Primary UI screens for voice controls, vocabulary, and history.
-  - `components/DiagnosticsSheet.kt`: Primary Diagnostics Hub providing access to diagnostic tools.
-  - `screens/AppDetectionDiagnosticsScreen.kt`: Dedicated App Detection Diagnostics screen inspecting raw package names, window titles, extracted node text, classification sources, and AI prompts/responses.
+### A. Audio Pipeline (Acoustic Integrity for Whispers)
+- **Audio Source**: Configured with `MediaRecorder.AudioSource.VOICE_RECOGNITION` to bypass invasive carrier speech tuning.
+- **75Hz IIR High-Pass Filter (HPF)**: Applies a gentle first-order IIR HPF to remove low-frequency handling thuds and fan motor resonance while retaining vocal body and unvoiced whisper formants.
+- **Disabled Hardware DSP**: Acoustic Echo Cancellation (AEC), Noise Suppression (NS), and Automatic Gain Control (AGC) are explicitly disabled to prevent voice ducking and "underwater" phase artifacts during close-proximity whispering.
+- **Streaming Protocol**: Continuously streams 16kHz 16-bit Mono PCM audio over a bidirectional WebSocket to the Gemini Multimodal Live API.
 
-## Recent Updates
-- Fixed Gemini detection in `AppDetector.kt` when running inside Google QuickSearchBox or Bard while preserving WebAPK cascade and native app detection.
-- Replaced Text Injection Diagnostics with a dedicated App Detection Diagnostics Page.
-- Implemented 4-Signal WebAPK Detection Cascade (Activity fingerprinting, URL bar presence check, WebAPK Inventory matching, and UsageStats recency correlation with sticky session hysteresis).
-- Added `PACKAGE_USAGE_STATS` permission and package installation broadcast receiver to dynamically index WebAPKs (`org.chromium.webapk.*`).
-- Integrated `AppDetectionLogRepository` to capture every bubble activation, window title query, and classification attempt.
-- Added "Copy Event", "Copy All", and "Clear Logs" actions to the App Detection Diagnostics view.
+### B. Hybrid App Detection & 4-Signal WebAPK Cascade
+- **Native Applications**: Resolved directly via `PackageManager` label inspection supported by `<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />`.
+- **Containerized Apps (Gemini)**: Performs surface-level activity class and window title inspection to differentiate the Gemini surface from the host `com.google.android.googlequicksearchbox` package.
+- **WebAPKs & PWAs (e.g., Google AI Studio, Brain AI, Pinterest)**: Uses a 4-signal detection cascade:
+  1. **Activity Class Fingerprint**: Detects `SameTaskWebApkActivity`, `WebApkActivity`, or `WebappActivity`.
+  2. **URL-Bar Absence Check**: Verifies the absence of address bar UI elements (`url_bar`), confirming standalone display mode.
+  3. **WebAPK Inventory**: Enumerates installed `org.chromium.webapk.*` shell packages and extracts metadata (`org.chromium.webapk.shell_apk.startUrl`).
+  4. **UsageStats Recency Correlation**: Utilizes `PACKAGE_USAGE_STATS` to match empty browser windows to the most recently used WebAPK shell.
+  5. **Sticky Session Hysteresis**: Implements a 60-second TTL sticky cache to maintain app identity when window titles temporarily drop during soft keyboard transitions.
+
+### C. "Chef & Spice" Context-Aware AI Polishing
+- **Polishing Engine**: Powered by Gemini 3.5 Flash Lite via REST API.
+- **Layer 1 (Golden Rules - "Chef")**: Enforces a strict non-conversational editor contract. It strips vocal fillers, preserves numbers and uncertainty, and resolves verbal self-corrections (e.g., *"three, no, four"* -> *"Four"*).
+- **Layer 2 (Category Modifier - "Spice")**: Dynamically adapts the polishing style based on target app context (`AI_CHAT` for structured prompt engineering, `MESSAGING` for concise natural chat, `EMAIL` for professional formatting, `NOTES` for scannable lists).
+- **Session Origin Anchoring**: Locks the target app context at the start of dictation so switching apps mid-sentence retains the intended target formatting persona.
+
+### D. Deterministic Direct Text Injection
+- **Focused Node Injection**: Resolves active focused editable fields via `AccessibilityService` and injects polished text directly using `AccessibilityNodeInfo.ACTION_SET_TEXT`.
+- **Zero Clipboard Tampering**: Preserves system clipboard contents during input field insertion. Text is copied to the clipboard only as a fallback when no editable text field is active on screen.
+
+### E. Diagnostics & System Hubs
+- **App Detection Diagnostics**: A dedicated diagnostic view providing live inspection of raw package names, window titles, extracted accessibility nodes, classification sources, and raw AI prompts/responses.
+- **Audio Diagnostics**: On-device WAV recording verification for acoustic capture and high-pass filter auditing.
+
+---
+
+## Detailed Project Structure
+
+```
+app/src/main/java/com/example/
+├── MainActivity.kt
+├── audio/
+│   ├── AudioRecorder.kt
+│   └── HighPassFilter.kt
+├── config/
+│   └── VoxStreamConfig.kt
+├── core/
+│   └── ApiConfig.kt
+├── data/
+│   ├── AppDetectionLogRepository.kt
+│   ├── AppLogRepository.kt
+│   ├── AudioRecordingRepository.kt
+│   ├── CustomVocabularyRepository.kt
+│   ├── HistoryRepository.kt
+│   └── InjectionLogRepository.kt
+├── service/
+│   ├── AppClassifier.kt
+│   ├── AppContextResolver.kt
+│   ├── AppDetector.kt
+│   ├── FloatingBubbleManager.kt
+│   ├── FloatingBubbleService.kt
+│   ├── LearnedAppRegistry.kt
+│   ├── SafeModeClassifier.kt
+│   ├── VoxStreamAccessibilityService.kt
+│   ├── VoxStreamInputMethodService.kt
+│   └── floating/
+│       ├── FloatingDictationSessionManager.kt
+│       ├── FloatingHapticManager.kt
+│       ├── FloatingPolishClient.kt
+│       ├── FloatingPolishCoordinator.kt
+│       └── FloatingTextInjector.kt
+├── ui/
+│   ├── HomeScreen.kt
+│   ├── VoiceTypingScreen.kt
+│   ├── components/
+│   │   ├── DiagnosticsBottomSheet.kt
+│   │   ├── DiagnosticsSheet.kt
+│   │   └── diagnostics/
+│   │       ├── DiagnosticsAudioSection.kt
+│   │       ├── DiagnosticsHistorySection.kt
+│   │       ├── DiagnosticsLiveSection.kt
+│   │       └── DiagnosticsNotesSection.kt
+│   ├── screens/
+│   │   ├── AppDetectionDiagnosticsScreen.kt
+│   │   ├── SettingsScreen.kt
+│   │   └── VocabularyScreen.kt
+│   └── theme/
+│       ├── Color.kt
+│       ├── Gradients.kt
+│       ├── Shape.kt
+│       ├── Theme.kt
+│       └── Type.kt
+├── util/
+│   └── AppResolutionEngine.kt
+└── websocket/
+    └── GeminiLiveWebSocketClient.kt
+```
+
+---
+
+## Permissions & Technical Requirements
+
+- **Target SDK**: Android 13+ (API 33+)
+- **Required Permissions**:
+  - `android.permission.RECORD_AUDIO`: Required for microphone capture.
+  - `android.permission.SYSTEM_ALERT_WINDOW`: Required for floating overlay bubble controls.
+  - `android.permission.QUERY_ALL_PACKAGES`: Required for full native app package visibility.
+  - `android.permission.PACKAGE_USAGE_STATS`: Required for WebAPK recency correlation in Signal 4.
+  - `android.permission.BIND_ACCESSIBILITY_SERVICE`: Required for accessibility node inspection (`flagRetrieveInteractiveWindows`, `flagReportViewIds`).
+  - `android.permission.FOREGROUND_SERVICE` & `android.permission.FOREGROUND_SERVICE_MICROPHONE`: Required for continuous background dictation.
