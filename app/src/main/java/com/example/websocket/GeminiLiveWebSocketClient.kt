@@ -56,6 +56,12 @@ class GeminiLiveWebSocketClient(
         const val MAX_RECONNECT_ATTEMPTS = 10
         const val PING_INTERVAL_SECONDS = 45L
 
+        // Server-side VAD (Live API automaticActivityDetection) tuning constants
+        const val SERVER_VAD_SILENCE_DURATION_MS = 1600
+        const val SERVER_VAD_PREFIX_PADDING_MS = 200
+        const val SERVER_VAD_START_SENSITIVITY = "START_SENSITIVITY_LOW"
+        const val SERVER_VAD_END_SENSITIVITY = "END_SENSITIVITY_LOW"
+
         // Single-connection enforcement and instance tracking
         private val activeSocketCount = AtomicInteger(0)
         private val currentActiveClient = AtomicReference<GeminiLiveWebSocketClient?>(null)
@@ -269,10 +275,10 @@ class GeminiLiveWebSocketClient(
                         put("inputAudioTranscription", transcriptionConfig)
                         put("realtimeInputConfig", JSONObject().apply {
                             put("automaticActivityDetection", JSONObject().apply {
-                                put("startOfSpeechSensitivity", "START_SENSITIVITY_LOW")
-                                put("endOfSpeechSensitivity", "END_SENSITIVITY_LOW")
-                                put("prefixPaddingMs", 200)
-                                put("silenceDurationMs", 1600)
+                                put("startOfSpeechSensitivity", SERVER_VAD_START_SENSITIVITY)
+                                put("endOfSpeechSensitivity", SERVER_VAD_END_SENSITIVITY)
+                                put("prefixPaddingMs", SERVER_VAD_PREFIX_PADDING_MS)
+                                put("silenceDurationMs", SERVER_VAD_SILENCE_DURATION_MS)
                             })
                         })
                     }
@@ -282,7 +288,9 @@ class GeminiLiveWebSocketClient(
                 val payload = setupJson.toString()
                 val sent = webSocket.send(payload)
                 if (sent) {
-                    onLog(LogLevel.SENT, TAG, "Setup message sent to server", payload)
+                    val vadDiagnostics = "[Server VAD Config] automaticActivityDetection: silenceDurationMs=$SERVER_VAD_SILENCE_DURATION_MS, prefixPaddingMs=$SERVER_VAD_PREFIX_PADDING_MS, startOfSpeechSensitivity=$SERVER_VAD_START_SENSITIVITY, endOfSpeechSensitivity=$SERVER_VAD_END_SENSITIVITY"
+                    Log.i(TAG, vadDiagnostics)
+                    onLog(LogLevel.SENT, TAG, "Setup message sent to server ($vadDiagnostics)", payload)
                 } else {
                     val err = "Failed to send setup message over socket"
                     Log.e(TAG, "[ConnectionState] FAILED: $err")
