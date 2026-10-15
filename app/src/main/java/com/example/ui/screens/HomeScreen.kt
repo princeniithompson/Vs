@@ -100,12 +100,24 @@ fun HomeScreen(
             item {
                 CenterAlignedTopAppBar(
                     title = {
-                        Text(
-                            text = "|||| VoxStream",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            androidx.compose.foundation.Image(
+                                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.ic_lifebuoy_ring),
+                                contentDescription = "VoxStream Logo",
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .padding(end = 8.dp)
+                            )
+                            Text(
+                                text = "VoxStream",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
                     },
                     navigationIcon = {
                         IconButton(onClick = onOpenMenu) {

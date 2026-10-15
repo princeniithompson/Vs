@@ -2,6 +2,9 @@ package com.example.service.floating
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.example.ui.components.FloatingDictationPopup
@@ -44,7 +47,12 @@ fun FloatingOverlayContent(
     onDragEnd: () -> Unit
 ) {
     MyApplicationTheme(darkTheme = true, dynamicColor = true) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        val rootModifier = when {
+            isScanningAnimation -> Modifier.fillMaxSize()
+            isExpanded -> Modifier.fillMaxWidth().wrapContentHeight()
+            else -> Modifier.wrapContentSize()
+        }
+        Box(modifier = rootModifier) {
             if (isScanningAnimation) {
                 FloatingScreenScanOverlay(
                     isScanning = true,
@@ -53,13 +61,8 @@ fun FloatingOverlayContent(
                     originY = scanOriginY
                 )
             } else if (isCurrentAppSensitive) {
-                FloatingSafeModeShieldBadge(
-                    isSnappedToRight = isSnappedToRight,
-                    onClick = onRingClick,
-                    onDragStart = onDragStart,
-                    onDrag = onDrag,
-                    onDragEnd = onDragEnd
-                )
+                // Auto-Hide: Render empty box so no visual pixels or touch targets exist
+                Box(modifier = Modifier)
             } else if (isExpanded) {
                 FloatingDictationPopup(
                     transcriptText = transcript,

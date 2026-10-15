@@ -4,15 +4,8 @@ import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.os.Build
-import android.media.audiofx.AcousticEchoCanceler
-import android.media.audiofx.AutomaticGainControl
-import android.media.audiofx.NoiseSuppressor
 import android.util.Log
-import com.example.data.AppLogRepository
 import com.example.data.DiagnosticSource
-import com.example.data.DiagnosticType
-import com.example.data.LogLevel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,9 +16,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.sqrt
 
@@ -37,6 +27,19 @@ sealed class AudioRecorderState {
     data class Error(val message: String) : AudioRecorderState()
 }
 
+/**
+ * Whisperflow-style production audio capture pipeline for VoxStream.
+ *
+ * Characteristics:
+ * - Direct AudioSource = MediaRecorder.AudioSource.MIC (value 1)
+ * - 16 kHz sample rate, mono channel, 16-bit linear PCM
+ * - No hardware audio effects (AEC / NS / AGC) in the capture path
+ * - No software filters mutating the PCM bytes before Gemini Live
+ * - Clean 100 ms (3200 bytes) raw PCM packets delivered to [onChunkReady]
+ * - Smooth volume/energy calculation for UI visualizer without filtering audio
+ * - HeadSilenceTracker for analytics / diagnostics without muting speech
+ * - Rock-solid start/stop/release lifecycle preventing HAL microphone leaks
+ */
 class AudioRecorder(
     private val onChunkReady: (ByteArray) -> Unit,
     private val onAmplitudeChanged: (Float) -> Unit,
@@ -47,28 +50,24 @@ class AudioRecorder(
         const val SAMPLE_RATE = 16000
         const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        // 100ms of 16kHz 16-bit mono PCM = 16000 samples/sec * 0.1 sec * 2 bytes/sample = 3200 bytes
+        // 100ms at 16kHz 16-bit mono PCM = 16000 * 0.1 * 2 = 3200 bytes
         const val CHUNK_SIZE_BYTES = 3200
+        // Slices for responsive 50Hz amplitude visualizer updates (20ms = 640 bytes)
+        private const val SLICE_SIZE_BYTES = 640
+        // Head silence baseline energy threshold (0.0 .. 1.0)
+        private const val HEAD_SILENCE_THRESHOLD = 0.04f
     }
 
     private var audioRecord: AudioRecord? = null
-    private var acousticEchoCanceler: AcousticEchoCanceler? = null
-    private var noiseSuppressor: NoiseSuppressor? = null
-    private var automaticGainControl: AutomaticGainControl? = null
     @Volatile private var recordingJob: Job? = null
     private val isRecording = AtomicBoolean(false)
 
     private val _state = MutableStateFlow<AudioRecorderState>(AudioRecorderState.Idle)
     val state: StateFlow<AudioRecorderState> = _state.asStateFlow()
 
-    // Real-time gentle 75Hz IIR High-Pass Filter: reduces low-frequency rumble while preserving natural voice body
-    private val highPassFilter = HighPassFilter(cutoffHz = 75f, sampleRate = SAMPLE_RATE.toFloat())
-
-    // Noise environment metrics
-    private var currentSource: DiagnosticSource = DiagnosticSource.APP
-    private var sessionSampleCount = 0
-    private var sessionAmplitudeSum = 0.0
-    private var sessionElevatedNoiseCount = 0
+    // HeadSilenceTracker metrics (analytics only, zero audio manipulation)
+    @Volatile var headSilenceDurationMs: Long = 0L
+        private set
 
     fun isFullyReleased(): Boolean = _state.value is AudioRecorderState.Idle && !isRecording.get()
 
@@ -79,20 +78,18 @@ class AudioRecorder(
     ) {
         if (isRecording.getAndSet(true)) {
             Log.w(TAG, "Recording already in progress, restarting session cleanly")
-            recordingJob?.cancel()
-            cleanUpInternal()
-            isRecording.set(true)
+            stop()
         }
 
         _state.value = AudioRecorderState.Starting
-        currentSource = source
-        sessionSampleCount = 0
-        sessionAmplitudeSum = 0.0
-        sessionElevatedNoiseCount = 0
-        highPassFilter.reset()
+        headSilenceDurationMs = 0L
 
-        // Start background WAV recording file if enabled in settings
-        com.example.data.AudioRecordingRepository.startRecordingSession(source)
+        // Optional local diagnostics WAV recording session
+        try {
+            com.example.data.AudioRecordingRepository.startRecordingSession(source)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed starting WAV diagnostics session: ${t.message}")
+        }
 
         recordingJob = scope.launch(Dispatchers.IO) {
             val minBufferSize = AudioRecord.getMinBufferSize(
@@ -101,131 +98,54 @@ class AudioRecorder(
                 AUDIO_FORMAT
             )
 
-            if (minBufferSize == AudioRecord.ERROR || minBufferSize == AudioRecord.ERROR_BAD_VALUE) {
-                val err = "AudioRecord buffer error: Invalid minBufferSize ($minBufferSize) for 16kHz mono 16-bit PCM"
+            if (minBufferSize <= 0) {
+                val err = "AudioRecord initialization error: Invalid minBufferSize ($minBufferSize)"
+                Log.e(TAG, err)
                 _state.value = AudioRecorderState.Error(err)
                 onError(err)
                 isRecording.set(false)
                 return@launch
             }
 
-            // Size the internal buffer for low-latency capture: minBufferSize * 2
+            // Size internal buffer for smooth capture
             val internalBufferSize = maxOf(minBufferSize * 2, CHUNK_SIZE_BYTES * 2)
 
+            var recorder: AudioRecord? = null
             try {
-                // Diagnostic Baseline: Prioritize VOICE_RECOGNITION tuned for natural speech recognition
-                val candidateSources = mutableListOf(
-                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                // Whisperflow production setup: Direct Hardware MIC (AudioSource.MIC = 1)
+                recorder = AudioRecord(
                     MediaRecorder.AudioSource.MIC,
-                    MediaRecorder.AudioSource.DEFAULT,
-                    MediaRecorder.AudioSource.VOICE_COMMUNICATION
+                    SAMPLE_RATE,
+                    CHANNEL_CONFIG,
+                    AUDIO_FORMAT,
+                    internalBufferSize
                 )
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    candidateSources.add(MediaRecorder.AudioSource.UNPROCESSED)
-                }
 
-                var rec: AudioRecord? = null
-                for (sourceType in candidateSources) {
-                    try {
-                        val candidate = AudioRecord(
-                            sourceType,
-                            SAMPLE_RATE,
-                            CHANNEL_CONFIG,
-                            AUDIO_FORMAT,
-                            internalBufferSize
-                        )
-                        if (candidate.state == AudioRecord.STATE_INITIALIZED) {
-                            rec = candidate
-                            Log.d(TAG, "Successfully initialized AudioRecord with source: $sourceType")
-                            break
-                        } else {
-                            candidate.release()
-                        }
-                    } catch (t: Throwable) {
-                        Log.w(TAG, "Failed creating AudioRecord with source $sourceType: ${t.message}")
-                    }
-                }
-
-                if (rec == null || rec.state != AudioRecord.STATE_INITIALIZED) {
-                    val err = "Microphone initialization failed. Please check microphone permission or hardware."
+                if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                    val err = "Microphone initialization failed with AudioSource.MIC"
+                    Log.e(TAG, err)
                     _state.value = AudioRecorderState.Error(err)
                     onError(err)
+                    recorder.release()
                     isRecording.set(false)
-                    rec?.release()
-                    audioRecord = null
                     return@launch
                 }
 
-                audioRecord = rec
-
-                // 1. Enable Android hardware NoiseSuppressor if available on device.
-                // Keep AcousticEchoCanceler and AutomaticGainControl disabled (AEC is unnecessary without playback, AGC can clip quiet speech).
-                val sessionId = rec.audioSessionId
-                try {
-                    if (NoiseSuppressor.isAvailable()) {
-                        noiseSuppressor = NoiseSuppressor.create(sessionId)?.apply {
-                            enabled = true
-                        }
-                        if (noiseSuppressor?.enabled == true) {
-                            Log.i(TAG, "NoiseSuppressor enabled (audioSessionId=$sessionId)")
-                            AppLogRepository.addLog(
-                                LogLevel.INFO,
-                                TAG,
-                                "NoiseSuppressor enabled (session=$sessionId)",
-                                payload = null,
-                                source = currentSource
-                            )
-                        } else {
-                            Log.w(TAG, "NoiseSuppressor create returned null or failed to enable on session $sessionId")
-                            AppLogRepository.addLog(
-                                LogLevel.INFO,
-                                TAG,
-                                "NoiseSuppressor could not be enabled on session $sessionId",
-                                payload = null,
-                                source = currentSource
-                            )
-                        }
-                    } else {
-                        Log.i(TAG, "NoiseSuppressor not supported on this device hardware (falling back to software 75Hz HPF)")
-                        AppLogRepository.addLog(
-                            LogLevel.INFO,
-                            TAG,
-                            "NoiseSuppressor not supported on device (using software 75Hz HPF)",
-                            payload = null,
-                            source = currentSource
-                        )
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error initializing NoiseSuppressor", e)
-                    AppLogRepository.addLog(
-                        LogLevel.ERROR,
-                        TAG,
-                        "NoiseSuppressor init error: ${e.message}",
-                        payload = null,
-                        source = currentSource
-                    )
-                }
-
-                rec.startRecording()
+                audioRecord = recorder
+                recorder.startRecording()
                 _state.value = AudioRecorderState.Recording
-                val hpfCutoff = highPassFilter.cutoffHz.toInt()
-                val nsLabel = if (noiseSuppressor?.enabled == true) "NoiseSuppressor enabled" else "NS unavailable/fallback"
-                Log.d(TAG, "AudioRecord started recording at 16000Hz PCM 16-bit (Audio pipeline: VOICE_RECOGNITION, $nsLabel, gentle HPF=${hpfCutoff}Hz)")
-                AppLogRepository.addLog(
-                    LogLevel.INFO,
-                    TAG,
-                    "Audio pipeline active: VOICE_RECOGNITION, $nsLabel, gentle HPF=${hpfCutoff}Hz",
-                    payload = null,
-                    source = currentSource
-                )
+
+                Log.i(TAG, "Whisperflow pipeline active: AudioSource.MIC, 16kHz mono 16-bit PCM, raw transmission")
 
                 val chunkBuffer = ByteArray(CHUNK_SIZE_BYTES)
                 var bytesReadTotal = 0
-                val sliceSizeBytes = 640 // 20ms at 16kHz 16-bit mono for instant attack & 50Hz visualizer updates
+
+                var initialSilenceCount = 0
+                var firstSpeechDetected = false
 
                 while (isActive && isRecording.get()) {
-                    val bytesToRead = minOf(sliceSizeBytes, CHUNK_SIZE_BYTES - bytesReadTotal)
-                    val readResult = rec.read(
+                    val bytesToRead = minOf(SLICE_SIZE_BYTES, CHUNK_SIZE_BYTES - bytesReadTotal)
+                    val readResult = recorder.read(
                         chunkBuffer,
                         bytesReadTotal,
                         bytesToRead
@@ -239,72 +159,86 @@ class AudioRecorder(
                             AudioRecord.ERROR -> "ERROR (-1)"
                             else -> "Code $readResult"
                         }
-                        Log.e(TAG, "AudioRecord read error: $errorName")
-                        onError("AudioRecord read failure: $errorName")
+                        if (isRecording.get()) {
+                            Log.e(TAG, "AudioRecord read error: $errorName")
+                            onError("AudioRecord read failure: $errorName")
+                        }
                         break
                     }
 
                     if (readResult > 0) {
-                        // Gentle 75Hz High-Pass Filter applied in-place to reduce low-frequency environmental rumble while preserving natural voice body
-                        highPassFilter.process(chunkBuffer, bytesReadTotal, readResult)
+                        // Calculate volume meter for UI visualizer without modifying PCM data
+                        val sliceAmplitude = calculateMeterValue(chunkBuffer, bytesReadTotal, readResult)
+                        onAmplitudeChanged(sliceAmplitude)
 
-                        // Amplitude dispatch (every 20ms) from processed audio
-                        val instantAmp = calculateRmsAmplitude(chunkBuffer, bytesReadTotal, readResult)
-                        onAmplitudeChanged(instantAmp)
-
-                        // Track ambient noise conditions
-                        sessionSampleCount++
-                        sessionAmplitudeSum += instantAmp
-                        if (instantAmp > 0.22f) {
-                            sessionElevatedNoiseCount++
-                        }
+                        bytesReadTotal += readResult
                     }
 
-                    bytesReadTotal += readResult
-
                     if (bytesReadTotal >= CHUNK_SIZE_BYTES) {
-                        // We have a full 100ms chunk
-                        val readyChunk = chunkBuffer.copyOf()
+                        // Complete 100ms packet ready
+                        val rawPacket = chunkBuffer.copyOf()
                         bytesReadTotal = 0
 
-                        // Save processed PCM chunk to WAV file
+                        // HeadSilenceTracker: observe initial silence before voice onset
+                        val packetEnergy = calculateMeterValue(rawPacket, 0, rawPacket.size)
+                        if (!firstSpeechDetected) {
+                            if (packetEnergy < HEAD_SILENCE_THRESHOLD) {
+                                initialSilenceCount++
+                                headSilenceDurationMs = initialSilenceCount * 100L
+                            } else {
+                                firstSpeechDetected = true
+                                Log.d(TAG, "HeadSilenceTracker: Voice detected after ${headSilenceDurationMs}ms")
+                            }
+                        }
+
+                        // Save raw PCM to optional local WAV
                         try {
-                            com.example.data.AudioRecordingRepository.appendAudioChunk(readyChunk)
+                            com.example.data.AudioRecordingRepository.appendAudioChunk(rawPacket)
                         } catch (t: Throwable) {
                             Log.w(TAG, "AudioRecordingRepository append error: ${t.message}")
                         }
 
-                        // Deliver filtered 100ms PCM chunk to WebSocket / Gemini
-                        onChunkReady(readyChunk)
+                        // Send 100ms raw PCM to Gemini Live callback - ZERO filters, ZERO gating
+                        onChunkReady(rawPacket)
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error in AudioRecord loop", e)
-                onError("Microphone error: ${e.message ?: e.javaClass.simpleName}")
+                Log.e(TAG, "Exception in AudioRecorder loop: ${e.message}", e)
+                if (isRecording.get()) {
+                    onError("Microphone error: ${e.message ?: e.javaClass.simpleName}")
+                }
             } finally {
                 withContext(NonCancellable) {
-                    cleanUpInternal()
+                    releaseRecorderSafely(recorder)
                 }
             }
         }
     }
 
     /**
-     * Non-blocking stop signal. Signals the recording loop to terminate.
-     * The recording coroutine will exit cleanly and run cleanUpInternal() in its finally block.
+     * Terminate the recording loop and unblock any pending read call.
      */
     fun stop() {
-        isRecording.set(false)
+        if (!isRecording.getAndSet(false)) {
+            return
+        }
         _state.value = AudioRecorderState.Stopping
+        try {
+            audioRecord?.let {
+                if (it.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                    it.stop()
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error stopping AudioRecord: ${e.message}")
+        }
     }
 
     /**
-     * Suspending stop that signals the loop to exit and awaits the definitive completion
-     * of native AudioRecord and audio effect release.
+     * Stop recording and wait for background thread release to complete.
      */
     suspend fun stopAndJoin() {
-        isRecording.set(false)
-        _state.value = AudioRecorderState.Stopping
+        stop()
         val job = recordingJob
         if (job != null && job.isActive) {
             try {
@@ -315,108 +249,50 @@ class AudioRecorder(
         _state.value = AudioRecorderState.Idle
     }
 
-    private fun checkAndLogNoiseConditions() {
-        val count = sessionSampleCount
-        if (count >= 40) { // At least ~800ms of audio recorded
-            val avgAmp = (sessionAmplitudeSum / count).toFloat()
-            val elevatedRatio = sessionElevatedNoiseCount.toFloat() / count
-            if (avgAmp > 0.26f && elevatedRatio > 0.40f) {
-                val pct = (elevatedRatio * 100).toInt()
-                val warn = "Noisy environment detected (avg amplitude: ${String.format(Locale.US, "%.2f", avgAmp)}, $pct% elevated baseline noise). High-pass 75Hz; hardware NS/AGC/AEC disabled."
-                Log.w(TAG, warn)
-                AppLogRepository.logEvent(currentSource, DiagnosticType.NOISY_ENVIRONMENT, warn)
-            }
-        }
-        sessionSampleCount = 0
-        sessionAmplitudeSum = 0.0
-        sessionElevatedNoiseCount = 0
-    }
-
-    /**
-     * Internal cleanup strictly invoked on the recording thread inside the coroutine's finally block.
-     * This guarantees that read() has finished before release() is called, preventing HAL deadlocks.
-     */
-    private fun cleanUpInternal() {
+    private fun releaseRecorderSafely(recorder: AudioRecord?) {
         isRecording.set(false)
-        checkAndLogNoiseConditions()
+
         try {
             com.example.data.AudioRecordingRepository.stopRecordingSession()
         } catch (_: Exception) {}
 
         try {
-            acousticEchoCanceler?.apply {
-                enabled = false
-                release()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error releasing AcousticEchoCanceler", e)
-        } finally {
-            acousticEchoCanceler = null
-        }
-
-        try {
-            noiseSuppressor?.apply {
-                enabled = false
-                release()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error releasing NoiseSuppressor", e)
-        } finally {
-            noiseSuppressor = null
-        }
-
-        try {
-            automaticGainControl?.apply {
-                enabled = false
-                release()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error releasing AutomaticGainControl", e)
-        } finally {
-            automaticGainControl = null
-        }
-
-        try {
-            audioRecord?.apply {
+            recorder?.apply {
                 if (recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                     stop()
                 }
                 release()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error releasing AudioRecord", e)
+            Log.w(TAG, "Error releasing AudioRecord: ${e.message}")
         } finally {
             audioRecord = null
             _state.value = AudioRecorderState.Idle
             onAmplitudeChanged(0f)
+            Log.d(TAG, "Microphone released cleanly")
         }
     }
 
-    private fun calculateRmsAmplitude(pcmBytes: ByteArray, offset: Int = 0, length: Int = pcmBytes.size): Float {
-        if (length <= 0) return 0f
+    /**
+     * Whisperflow-style volume / energy meter calculation for UI visualizers.
+     * Calculates the RMS of 16-bit linear PCM samples and normalizes to [0.0 .. 1.0].
+     * Purely analytical; does not modify or gate audio in any way.
+     */
+    private fun calculateMeterValue(pcmBytes: ByteArray, offset: Int = 0, length: Int = pcmBytes.size): Float {
         val sampleCount = length / 2
-        if (sampleCount == 0) return 0f
-
-        val shortBuffer = ByteBuffer.wrap(pcmBytes, offset, length)
-            .order(ByteOrder.LITTLE_ENDIAN)
-            .asShortBuffer()
+        if (sampleCount <= 0) return 0f
 
         var sumSquares = 0.0
-        while (shortBuffer.hasRemaining()) {
-            val sample = shortBuffer.get().toDouble()
-            sumSquares += sample * sample
+        for (i in 0 until sampleCount) {
+            val idx = offset + i * 2
+            val low = pcmBytes[idx].toInt() and 0xFF
+            val high = pcmBytes[idx + 1].toInt()
+            val sample = (high shl 8) or low
+            sumSquares += sample.toDouble() * sample.toDouble()
         }
 
         val rms = sqrt(sumSquares / sampleCount)
-
-        val noiseFloor = 8.0
-        val effectiveRms = (rms - noiseFloor).coerceAtLeast(0.0)
-        if (effectiveRms <= 0.0) return 0f
-
-        val normalizedLinear = (effectiveRms / 900.0).coerceIn(0.0, 1.0)
-        val boosted = sqrt(normalizedLinear).toFloat()
-
-        return (boosted * 1.55f).coerceIn(0f, 1f)
+        val normalized = (rms / 3200.0).coerceIn(0.0, 1.0)
+        return (sqrt(normalized).toFloat() * 1.25f).coerceIn(0f, 1f)
     }
 }
-

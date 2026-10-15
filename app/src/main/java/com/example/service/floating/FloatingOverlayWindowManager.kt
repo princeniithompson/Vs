@@ -17,7 +17,12 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import com.example.data.ScreenContextRepository
 import com.example.service.FloatingBubbleManager
 import com.example.service.VoxStreamAccessibilityService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Manages the overlay WindowManager, layout parameters, lifecycle, and view composition
@@ -34,6 +39,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
     val lifecycleOwner = FloatingOverlayLifecycleOwner()
     val dragSnapHandler = FloatingDragSnapHandler(context)
 
+    private var overlayScope: CoroutineScope? = null
     private var windowManager: WindowManager? = null
     var overlayView: View? = null
         private set
@@ -191,14 +197,28 @@ class FloatingOverlayWindowManager(private val context: Context) {
         }
         overlayView = composeView
 
+        val isSensitive = FloatingBubbleManager.isCurrentAppSensitive.value
         val isKeyboardVisible = FloatingBubbleManager.isKeyboardVisible.value
-        composeView.visibility = if (isKeyboardVisible) View.VISIBLE else View.GONE
+        composeView.visibility = if (!isSensitive && isKeyboardVisible) View.VISIBLE else View.GONE
 
         try {
             windowManager?.addView(overlayView, layoutParams)
             Log.d(TAG, "Compose overlay view attached to WindowManager successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Failed adding overlay view to WindowManager", e)
+        }
+
+        overlayScope?.cancel()
+        val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+        overlayScope = scope
+        scope.launch {
+            FloatingBubbleManager.isCurrentAppSensitive.collect { sensitive ->
+                if (sensitive) {
+                    hideOverlayImmediately()
+                } else {
+                    restoreOverlayVisibility(FloatingBubbleManager.isKeyboardVisible.value)
+                }
+            }
         }
 
         resetInactivityTimer()
@@ -244,8 +264,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
         lp.height = WindowManager.LayoutParams.WRAP_CONTENT
         lp.gravity = Gravity.TOP or Gravity.START
         lp.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         lp.x = 0
         lp.y = dragSnapHandler.savedY.coerceIn(topY, maxY)
 
@@ -271,6 +290,9 @@ class FloatingOverlayWindowManager(private val context: Context) {
         lp.width = bubbleSize
         lp.height = bubbleSize
         lp.gravity = Gravity.TOP or Gravity.START
+        lp.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
         lp.x = if (dragSnapHandler.isSnappedToRight) (screenWidth - bubbleSize) else 0
         lp.y = dragSnapHandler.savedY.coerceIn(topY, maxY)
 
@@ -320,6 +342,10 @@ class FloatingOverlayWindowManager(private val context: Context) {
     fun onKeyboardVisibilityChanged(isVisible: Boolean, isSessionActive: Boolean) {
         mainHandler.post {
             val root = overlayView ?: return@post
+            if (FloatingBubbleManager.isCurrentAppSensitive.value) {
+                root.visibility = View.GONE
+                return@post
+            }
             if (isVisible) {
                 root.animate().cancel()
                 root.alpha = 1f
@@ -343,6 +369,29 @@ class FloatingOverlayWindowManager(private val context: Context) {
                 } else {
                     root.visibility = View.VISIBLE
                 }
+            }
+        }
+    }
+
+    fun hideOverlayImmediately() {
+        mainHandler.post {
+            overlayView?.visibility = View.GONE
+        }
+    }
+
+    fun restoreOverlayVisibility(isKeyboardOpen: Boolean) {
+        mainHandler.post {
+            if (FloatingBubbleManager.isCurrentAppSensitive.value) {
+                overlayView?.visibility = View.GONE
+                return@post
+            }
+            val root = overlayView ?: return@post
+            if (isKeyboardOpen || overlayRecording.value || overlayExpanded.value) {
+                root.animate().cancel()
+                root.alpha = 1f
+                root.visibility = View.VISIBLE
+            } else {
+                root.visibility = View.GONE
             }
         }
     }
@@ -372,6 +421,10 @@ class FloatingOverlayWindowManager(private val context: Context) {
     }
 
     fun updateOverlayVisibility(isSessionActive: Boolean) {
+        if (FloatingBubbleManager.isCurrentAppSensitive.value) {
+            overlayView?.visibility = View.GONE
+            return
+        }
         val isKeyboardOpen = FloatingBubbleManager.isKeyboardVisible.value
         if (!isSessionActive && !isKeyboardOpen) {
             overlayView?.visibility = View.GONE
@@ -381,6 +434,8 @@ class FloatingOverlayWindowManager(private val context: Context) {
     }
 
     fun onDestroy() {
+        overlayScope?.cancel()
+        overlayScope = null
         mainHandler.removeCallbacks(shrinkRunnable)
         dragSnapHandler.cancel()
 

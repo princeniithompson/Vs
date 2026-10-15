@@ -30,7 +30,8 @@ data class AudioRecording(
     val source: DiagnosticSource,
     val durationMs: Long,
     val sizeBytes: Long,
-    val transcriptSnippet: String?
+    val transcriptSnippet: String?,
+    val pipelineTag: String = "Raw MIC 16kHz"
 )
 
 object AudioRecordingRepository {
@@ -99,7 +100,7 @@ object AudioRecordingRepository {
                 val dir = getRecordingsDir(context)
                 val now = System.currentTimeMillis()
                 val dateStr = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(now))
-                val fileName = "${dateStr}_${source.name}.wav"
+                val fileName = "${dateStr}_${source.name}_raw_mic.wav"
                 val file = File(dir, fileName)
 
                 val fos = FileOutputStream(file)
@@ -265,12 +266,18 @@ object AudioRecordingRepository {
 
                 val list = wavFiles.map { file ->
                     val fileName = file.name
-                    val parts = fileName.removeSuffix(".wav").split("_")
-                    val sourceStr = parts.lastOrNull() ?: "APP"
-                    val source = try {
-                        DiagnosticSource.valueOf(sourceStr.uppercase())
-                    } catch (e: Exception) {
+                    val source = if (fileName.contains("_BUBBLE_", ignoreCase = true) || fileName.endsWith("_BUBBLE.wav", ignoreCase = true)) {
+                        DiagnosticSource.BUBBLE
+                    } else {
                         DiagnosticSource.APP
+                    }
+
+                    val pipelineTag = when {
+                        fileName.contains("mode_B_fixed", ignoreCase = true) -> "Legacy · Mode B"
+                        fileName.contains("mode_C_gate", ignoreCase = true) -> "Legacy · Mode C"
+                        fileName.contains("mode_D_combination", ignoreCase = true) -> "Legacy · Mode D"
+                        fileName.contains("mode_A_adaptive", ignoreCase = true) -> "Legacy · Mode A"
+                        else -> "Raw MIC · 16kHz"
                     }
 
                     val lastMod = file.lastModified()
@@ -299,7 +306,8 @@ object AudioRecordingRepository {
                         source = source,
                         durationMs = durationMs,
                         sizeBytes = file.length(),
-                        transcriptSnippet = snippet
+                        transcriptSnippet = snippet,
+                        pipelineTag = pipelineTag
                     )
                 }.sortedByDescending { it.timestamp }
 

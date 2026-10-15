@@ -56,8 +56,8 @@ class GeminiLiveWebSocketClient(
         const val MAX_RECONNECT_ATTEMPTS = 10
         const val PING_INTERVAL_SECONDS = 45L
 
-        // Server-side VAD (Live API automaticActivityDetection) tuning constants
-        const val SERVER_VAD_SILENCE_DURATION_MS = 1600
+        // Server-side VAD (Live API automaticActivityDetection) tuning constants: 5000 ms (5 seconds) silence duration
+        const val SERVER_VAD_SILENCE_DURATION_MS = 5000
         const val SERVER_VAD_PREFIX_PADDING_MS = 200
         const val SERVER_VAD_START_SENSITIVITY = "START_SENSITIVITY_LOW"
         const val SERVER_VAD_END_SENSITIVITY = "END_SENSITIVITY_LOW"

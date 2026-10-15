@@ -91,6 +91,7 @@ class FloatingBubbleService : Service() {
 
         overlayWindowManager = FloatingOverlayWindowManager(this)
         sessionManager = FloatingDictationSessionManager(
+            context = this,
             onTranscriptUpdated = { fullText ->
                 overlayWindowManager.overlayTranscript.value = fullText
                 FloatingBubbleManager.updateSmartDefaultPolishMode(fullText)
@@ -171,30 +172,32 @@ class FloatingBubbleService : Service() {
             val wasRecording = sessionManager.isRecording
             if (wasRecording) {
                 stopVoiceTyping(endedReason = "smart_safe_mode_triggered")
-                Toast.makeText(
-                    this@FloatingBubbleService,
-                    "🛡️ Smart Safe Mode: Dictation paused for privacy",
-                    Toast.LENGTH_SHORT
-                ).show()
             }
             overlayWindowManager.collapsePanel()
             resetAndCollapse()
+            overlayWindowManager.hideOverlayImmediately()
             AppLogRepository.logEvent(
                 DiagnosticSource.BUBBLE,
                 DiagnosticType.SAFE_MODE_TRIGGERED,
-                "Smart Safe Mode engaged for package: $pkg"
+                "Smart Safe Mode auto-hide engaged for package: $pkg"
+            )
+        }
+    }
+
+    fun onSensitiveAppExited() {
+        serviceScope.launch(Dispatchers.Main) {
+            val isKeyboardOpen = FloatingBubbleManager.isKeyboardVisible.value
+            overlayWindowManager.restoreOverlayVisibility(isKeyboardOpen = isKeyboardOpen)
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.SAFE_MODE_TRIGGERED,
+                "Smart Safe Mode auto-hide exited, restored visibility"
             )
         }
     }
 
     private fun onRingClicked() {
         if (FloatingBubbleManager.isCurrentAppSensitive.value) {
-            FloatingHapticManager.trigger(this, FloatingHapticType.BUBBLE_HOLD)
-            Toast.makeText(
-                this,
-                "🛡️ Smart Safe Mode Active · Dictation is paused in sensitive apps for your privacy.",
-                Toast.LENGTH_SHORT
-            ).show()
             return
         }
         if (overlayWindowManager.overlayShrunk.value) {

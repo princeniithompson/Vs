@@ -13,7 +13,8 @@ enum class FloatingHapticType {
     TRANSCRIPTION_STOP,
     BUBBLE_HOLD,
     BUBBLE_MOVE,
-    BUBBLE_SETTLE
+    BUBBLE_SETTLE,
+    CLIPBOARD_FALLBACK
 }
 
 object FloatingHapticManager {
@@ -33,6 +34,13 @@ object FloatingHapticManager {
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val effect = when (type) {
+                    FloatingHapticType.CLIPBOARD_FALLBACK -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK)
+                        } else {
+                            VibrationEffect.createWaveform(longArrayOf(0, 25, 40, 25), -1)
+                        }
+                    }
                     FloatingHapticType.TRANSCRIPTION_START -> {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK)
@@ -86,6 +94,7 @@ object FloatingHapticManager {
                     FloatingHapticType.BUBBLE_HOLD -> 30L
                     FloatingHapticType.BUBBLE_MOVE -> 12L
                     FloatingHapticType.BUBBLE_SETTLE -> 40L
+                    FloatingHapticType.CLIPBOARD_FALLBACK -> 35L
                 }
                 vibrator.vibrate(millis)
             }

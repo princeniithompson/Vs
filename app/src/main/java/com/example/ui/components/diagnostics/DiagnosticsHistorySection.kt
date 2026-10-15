@@ -188,6 +188,8 @@ fun DiagnosticEntryRow(entry: DiagnosticLogEntry, timeFormat: SimpleDateFormat) 
         DiagnosticType.NOISY_ENVIRONMENT -> Triple(Color(0xFFFFEDD5), Color(0xFFC2410C), "NOISY")
         DiagnosticType.SESSION_RECONNECT -> Triple(Color(0xFFFEF9C3), Color(0xFFA16207), "RECONNECT")
         DiagnosticType.SAFE_MODE_TRIGGERED -> Triple(Color(0xFFFEF3C7), Color(0xFFB45309), "SAFE_MODE")
+        DiagnosticType.AUDIO_STYLE_CHANGED -> Triple(Color(0xFFE0E7FF), Color(0xFF4338CA), "AUDIO_STYLE")
+        DiagnosticType.VOICE_ID_EVENT -> Triple(Color(0xFFEDE9FE), Color(0xFF6D28D9), "VOICE_ID")
     }
 
     Card(

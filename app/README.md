@@ -12,10 +12,17 @@ VoxStream is a native Android floating-bubble voice assistant designed for high-
 - **Audio Source**: Configured with `MediaRecorder.AudioSource.VOICE_RECOGNITION` to bypass invasive carrier speech tuning.
 - **Hardware NoiseSuppressor**: Android platform `NoiseSuppressor` is initialized on the active `audioSessionId` before recording starts to eliminate fan/background acoustic noise while keeping AEC and AGC disabled.
 - **75Hz IIR High-Pass Filter (HPF)**: Applies a gentle first-order IIR HPF to remove low-frequency handling thuds and motor resonance while retaining vocal body and unvoiced whisper formants.
-- **Client-Side VAD Stream Gating**: In `FloatingDictationSessionManager.kt`, audio chunks are only sent to the WebSocket when `isSpeechActive == true` or within a 700ms syllable hangover (`System.currentTimeMillis() - lastSustainedSpeechTimestamp < 700L`). When speech is inactive, raw fan/ambient noise is strictly suppressed; a 100ms zero-padding keep-alive chunk is sent at most once per second to maintain the Gemini Live connection without hallucinations, and a `NOISY_ENVIRONMENT` diagnostic event is emitted every 5 seconds of continuous non-speech gating.
+- **Client-Side VAD Stream Gating**: In `FloatingDictationSessionManager.kt`, audio chunks are only sent to the WebSocket when `isSpeechActive == true` or within a snappy 300–350ms syllable hangover (`System.currentTimeMillis() - lastSustainedSpeechTimestamp < currentStyle.hangoverMs`). When speech is inactive, raw fan/ambient noise is strictly suppressed with a snappy door closure; a 100ms zero-padding keep-alive chunk is sent at most once per second to maintain the Gemini Live connection without hallucinations.
+- **Voice Detection & Speaker Voice Lock Tuning**: Voice detection thresholds (`openSnrDb`, `minOpenRms`) and pitch matching tolerances have been optimized to be less aggressive, ensuring seamless resumption after pauses without false rejections, paired with a faster ~150ms speaker verification sample requirement.
 - **Server-Side VAD (Live API automaticActivityDetection)**: Tuned in `GeminiLiveWebSocketClient.kt` with `silenceDurationMs = 700`, `prefixPaddingMs = 200`, and `startOfSpeechSensitivity = START_SENSITIVITY_LOW` / `endOfSpeechSensitivity = END_SENSITIVITY_LOW`. Enables rapid final transcript delivery (< 1s perceived lag) upon pause while tolerating natural pauses without premature sentence cutoffs.
 - **Voice-Reactive Glow & Resting Pulse**: When speaking, the visualizer glow intensity tracks real vocal amplitude smoothly without over-clamping. When paused or noise-gated, a subtle resting breathing pulse (~0.08–0.18 amplitude) confirms active listening without going flatline.
 - **Streaming Protocol**: Streams 16kHz 16-bit Mono PCM audio over a bidirectional WebSocket to the Gemini Multimodal Live API.
+- **Gemini Hearing Modes (A / B / C / D / E)**:
+  - **Option A (Adaptive Close-Proximity)**: Gain automatically scales with acoustic proximity.
+  - **Option B (Fixed Aggressive Attenuation)**: Strong 250Hz HPF and permanently reduced digital gain.
+  - **Option C (Hard Amplitude Gate)**: Strict 0.021 RMS threshold with 7-chunk hangover and 35ms linear release fade.
+  - **Option D (Combination)**: Blends adaptive proximity with mild high-pass filtering and baseline attenuation.
+  - **Option E (Voice Frequency Lockdown)**: Starts open at 1.0x unity gain with zero initial syllable cutoff. Tracks speaker vocal frequency; natural pauses (< 2.0s) pass transparently for breathing cadence, while extended idle pauses (>= 2.0s) enter deep -20 dB background suppression, recovering instantly with fast-attack envelope upon speech resumption.
 
 ### B. WebSocket Resilience, Zombie Elimination & Connection Failure Alerts
 - **Dynamic Reconnect Policy**: Reconnect attempts are effectively unlimited while dictation is recording (`isRecording == true`), with up to 10 attempts on non-session retries. Uses true exponential backoff with jitter: `delay = min(30000, 1000 * 2^(attempt-1)) + random(0..500ms)`. While reconnecting, up to 50 chunks (5 seconds) of vocal audio continue buffering in memory and drain immediately once the socket connection recovers and setup completes.
@@ -57,6 +64,8 @@ app/src/main/java/com/example/
 ├── MainActivity.kt
 ├── audio/
 │   ├── AudioRecorder.kt
+│   ├── GeminiHearingMode.kt
+│   ├── GeminiHearingProcessor.kt
 │   └── HighPassFilter.kt
 ├── config/
 │   └── VoxStreamConfig.kt

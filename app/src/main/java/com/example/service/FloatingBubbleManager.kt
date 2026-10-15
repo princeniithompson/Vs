@@ -74,6 +74,9 @@ object FloatingBubbleManager {
     private val _isAccessibilityConnected = MutableStateFlow(false)
     val isAccessibilityConnected: StateFlow<Boolean> = _isAccessibilityConnected.asStateFlow()
 
+    private val _hasOverlayPermission = MutableStateFlow(false)
+    val hasOverlayPermission: StateFlow<Boolean> = _hasOverlayPermission.asStateFlow()
+
     private val _isFieldActive = MutableStateFlow(false)
     val isFieldActive: StateFlow<Boolean> = _isFieldActive.asStateFlow()
 
@@ -85,6 +88,21 @@ object FloatingBubbleManager {
 
     private val _isNetworkProblem = MutableStateFlow(false)
     val isNetworkProblem: StateFlow<Boolean> = _isNetworkProblem.asStateFlow()
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val _isClipboardFallbackIndicator = MutableStateFlow(false)
+    val isClipboardFallbackIndicator: StateFlow<Boolean> = _isClipboardFallbackIndicator.asStateFlow()
+
+    fun triggerClipboardFallbackIndicator() {
+        _isClipboardFallbackIndicator.value = true
+        mainHandler.postDelayed({
+            _isClipboardFallbackIndicator.value = false
+        }, 2500L)
+    }
+
+    fun resetClipboardFallbackIndicator() {
+        _isClipboardFallbackIndicator.value = false
+    }
 
     fun setNetworkProblem(hasProblem: Boolean) {
         _isNetworkProblem.value = hasProblem
@@ -117,6 +135,7 @@ object FloatingBubbleManager {
         _isSmartSafeModeEnabled.value = prefs.getBoolean(KEY_SMART_SAFE_MODE, true)
         _isAppDynamicColorEnabled.value = prefs.getBoolean(KEY_APP_DYNAMIC_COLOR, true)
         initialized = true
+        checkPermissions(context)
 
         if (_isBubbleEnabled.value && canDrawOverlays(context)) {
             startBubbleService(context)
@@ -164,14 +183,41 @@ object FloatingBubbleManager {
         } else {
             false
         }
-        _isCurrentAppSensitive.value = isSensitive
-        if (isSensitive) {
-            FloatingBubbleService.instance?.onSensitiveAppEntered(currentPkg)
-        }
+        updateSensitivity(isSensitive, "toggle_safe_mode")
     }
 
     fun canDrawOverlays(context: Context): Boolean {
         return Settings.canDrawOverlays(context)
+    }
+
+    fun isAccessibilityServiceEnabled(context: Context): Boolean {
+        return try {
+            val expectedClass = VoxStreamAccessibilityService::class.java.name
+            val enabledServices = Settings.Secure.getString(
+                context.contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            ) ?: return false
+            val colonSplitter = android.text.TextUtils.SimpleStringSplitter(':')
+            colonSplitter.setString(enabledServices)
+            while (colonSplitter.hasNext()) {
+                val componentName = colonSplitter.next()
+                if (componentName.contains(context.packageName) && componentName.contains("AccessibilityService")) {
+                    return true
+                }
+            }
+            false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun checkPermissions(context: Context) {
+        val overlay = canDrawOverlays(context)
+        _hasOverlayPermission.value = overlay
+        val a11y = isAccessibilityServiceEnabled(context) || VoxStreamAccessibilityService.instance != null
+        if (a11y) {
+            _isAccessibilityConnected.value = true
+        }
     }
 
     fun setBubbleEnabled(context: Context, enabled: Boolean) {
@@ -272,15 +318,23 @@ object FloatingBubbleManager {
             }
 
             val isSensitive = if (_isSmartSafeModeEnabled.value) {
-                SafeModeClassifier.isSensitiveApp(context, pkg)
+                SafeModeClassifier.isSensitiveApp(context, pkg, _currentResolvedAppContext.value?.name)
             } else {
                 false
             }
-            val wasSensitive = _isCurrentAppSensitive.value
-            _isCurrentAppSensitive.value = isSensitive
-            if (isSensitive && !wasSensitive) {
-                FloatingBubbleService.instance?.onSensitiveAppEntered(pkg)
-            }
+            updateSensitivity(isSensitive, "pkg_change: $pkg")
+        }
+    }
+
+    fun updateSensitivity(isSensitive: Boolean, triggerReason: String = "") {
+        val wasSensitive = _isCurrentAppSensitive.value
+        _isCurrentAppSensitive.value = isSensitive
+        if (isSensitive && !wasSensitive) {
+            Log.d(TAG, "Smart Safe Mode engaged ($triggerReason)")
+            FloatingBubbleService.instance?.onSensitiveAppEntered(_currentForegroundPackage.value)
+        } else if (!isSensitive && wasSensitive) {
+            Log.d(TAG, "Smart Safe Mode exited ($triggerReason)")
+            FloatingBubbleService.instance?.onSensitiveAppExited()
         }
     }
 
@@ -296,6 +350,11 @@ object FloatingBubbleManager {
         _currentResolvedAppContext.value = updated
         _isCurrentAppAi.value = isAi
         Log.d(TAG, "Updated learned app context in bubble: ${updated.formatted}")
+
+        val isBanking = category.equals("Banking", ignoreCase = true) || category.equals("Finance", ignoreCase = true)
+        if (isBanking && _isSmartSafeModeEnabled.value) {
+            updateSensitivity(true, "learned_banking_category: $appName")
+        }
     }
 
     fun setAiPolishMode(mode: com.example.service.floating.AiPolishMode) {

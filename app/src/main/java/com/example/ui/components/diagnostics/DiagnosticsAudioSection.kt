@@ -309,7 +309,23 @@ fun DiagnosticsAudioSection(
                                         )
                                     }
 
-                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(Color(0xFFE0F2FE))
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    ) {
+                                        Text(
+                                            text = recording.pipelineTag,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF0369A1)
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.width(8.dp))
 
                                     Text(
                                         text = dateTimeFormat.format(Date(recording.timestamp)),

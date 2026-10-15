@@ -9,6 +9,10 @@ import java.util.concurrent.TimeUnit
 object ApiConfig {
     private const val PLACEHOLDER_KEY = "MY_GEMINI_API_KEY"
 
+    const val VOICE_ID_MODEL_FILENAME = "wespeaker_emb_fp16.tflite"
+    const val VOICE_ID_MODEL_URL = "https://huggingface.co/litert-community/Speaker-Diarization-LiteRT/resolve/main/wespeaker_emb_fp16.tflite"
+    const val VOICE_ID_SIMILARITY_THRESHOLD = 0.68f
+
     /**
      * Checks if the given API key is null, blank, or matches standard placeholder tokens.
      */

@@ -3,7 +3,7 @@ package com.example.service.floating
 import com.example.audio.AudioRecorder
 
 /**
- * FloatingAudioRecorder is the specialized audio capture pipeline for the floating dictation overlay.
- * Uses clean VOICE_RECOGNITION audio source with gentle 75Hz high-pass filter for diagnostic baseline.
+ * FloatingAudioRecorder is the audio capture pipeline for the floating dictation overlay.
+ * Uses Whisperflow production pipeline with AudioSource.MIC and zero client DSP.
  */
 typealias FloatingAudioRecorder = AudioRecorder

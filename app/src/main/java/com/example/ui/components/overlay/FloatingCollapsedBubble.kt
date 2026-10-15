@@ -68,6 +68,7 @@ fun FloatingCollapsedBubble(
 ) {
     val palette = rememberDynamicAuroraPalette()
     val isNetworkProblem by com.example.service.FloatingBubbleManager.isNetworkProblem.collectAsState()
+    val isClipboardFallback by com.example.service.FloatingBubbleManager.isClipboardFallbackIndicator.collectAsState()
     val infiniteTransition = rememberInfiniteTransition(label = "collapsedGlow")
 
     val pulse by infiniteTransition.animateFloat(
@@ -232,6 +233,23 @@ fun FloatingCollapsedBubble(
                             .size(animatedBubbleSize * 0.95f * pulse)
                             .background(recordingGlow, CircleShape)
                     )
+                }
+                if (isClipboardFallback) {
+                    Canvas(modifier = Modifier.size(animatedBubbleSize)) {
+                        val center = Offset(size.width / 2f, size.height / 2f)
+                        val radius = size.minDimension / 2f - 2.dp.toPx()
+                        drawCircle(
+                            color = Color(0xFFD29922).copy(alpha = 0.35f),
+                            radius = radius * 1.15f * pulse,
+                            center = center
+                        )
+                        drawCircle(
+                            color = Color(0xFFD29922),
+                            radius = radius,
+                            center = center,
+                            style = Stroke(width = 2.5.dp.toPx())
+                        )
+                    }
                 }
                 Image(
                     painter = painterResource(id = R.drawable.ic_lifebuoy_ring),

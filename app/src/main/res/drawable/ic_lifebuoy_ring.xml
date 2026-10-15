@@ -2,233 +2,76 @@
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
+    android:viewportWidth="400"
+    android:viewportHeight="400">
 
-    <!-- 1. Soft Ambient Drop Shadow underneath (offset down-right) -->
-    <path
-        android:pathData="M 57.0 16.0 A 41.5 41.5 0 1 1 56.99 16.0 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:centerX="57.0"
-                android:centerY="58.0"
-                android:gradientRadius="41.5"
-                android:type="radial">
-                <item android:color="#35000000" android:offset="0.55" />
-                <item android:color="#1A000000" android:offset="0.75" />
-                <item android:color="#00000000" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
+    <group
+        android:translateX="-30"
+        android:translateY="-142.38">
 
-    <!-- 2. Scaled Tube-Shaded Lifebuoy Segments (55° colored arcs, 35° wide puffy white cushions) -->
+        <!-- 1. Soft Ambient Drop Shadow underneath -->
+        <path
+            android:pathData="m230,166.38 c-104.93,0 -190,85.066 -190,190 s85.066,190 190,190 190,-85.066 190,-190 -85.066,-190 -190,-190 z m0,80 c60.751,0 110,49.249 110,110 s-49.249,110 -110,110 -110,-49.249 -110,-110 49.249,-110 110,-110 z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="radial"
+                    android:centerX="230.0"
+                    android:centerY="356.38"
+                    android:gradientRadius="195.0">
+                    <item android:offset="0.0" android:color="#00000000" />
+                    <item android:offset="0.55" android:color="#1A000000" />
+                    <item android:offset="0.80" android:color="#35000000" />
+                    <item android:offset="1.0" android:color="#00000000" />
+                </gradient>
+            </aapt:attr>
+        </path>
 
-    <!-- Top Segment (Coral/Red Cushion, 55° arc: 242.5° -> 297.5°) -->
-    <path
-        android:pathData="M 39.686 26.503 A 31.0 31.0 0 0 1 68.314 26.503"
-        android:strokeWidth="17"
-        android:strokeLineCap="butt">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:startX="44.0"
-                android:startY="20.0"
-                android:endX="64.0"
-                android:endY="33.0"
-                android:type="linear">
-                <item android:color="#FFA296" android:offset="0.0" />
-                <item android:color="#FF5948" android:offset="0.45" />
-                <item android:color="#D62B18" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
+        <!-- 2. Main white/gray ring body with radial gradient -->
+        <path
+            android:pathData="m230,152.38 c-104.93,0 -190,85.066 -190,190 s85.066,190 190,190 190,-85.066 190,-190 -85.066,-190 -190,-190 z m0,80 c60.751,0 110,49.249 110,110 s-49.249,110 -110,110 -110,-49.249 -110,-110 49.249,-110 110,-110 z"
+            android:strokeColor="#A0A0A0"
+            android:strokeWidth="3">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="radial"
+                    android:centerX="230.0"
+                    android:centerY="322.4"
+                    android:gradientRadius="210.0">
+                    <item android:offset="0.0" android:color="#8C8C8C" />
+                    <item android:offset="0.42857" android:color="#9CBDCC" />
+                    <item android:offset="0.52381" android:color="#8C8C8C" />
+                    <item android:offset="0.71429" android:color="#FFFFFF" />
+                    <item android:offset="0.89474" android:color="#8C8C8C" />
+                    <item android:offset="1.0" android:color="#9CBDCC" />
+                </gradient>
+            </aapt:attr>
+        </path>
 
-    <!-- Top-Right Cushion (White, 35° arc: 297.5° -> 332.5°) -->
-    <path
-        android:pathData="M 68.314 26.503 A 31.0 31.0 0 0 1 81.497 39.686"
-        android:strokeWidth="17"
-        android:strokeLineCap="butt">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:startX="68.0"
-                android:startY="27.0"
-                android:endX="81.0"
-                android:endY="40.0"
-                android:type="linear">
-                <item android:color="#FFFFFF" android:offset="0.0" />
-                <item android:color="#F2F4F7" android:offset="0.5" />
-                <item android:color="#DCE1E7" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
+        <!-- 3. Red segments with radial gradient and red border -->
+        <path
+            android:pathData="m230,152.38 c-21.002,0 -41.206,3.395 -60.094,9.6875 l25.31,75.93 c10.932,-3.6411 22.625,-5.625 34.781,-5.625 s23.849,1.9839 34.781,5.625 l25.312,-75.938 c-18.88,-6.29 -39.09,-9.68 -60.09,-9.68 z m-180.31,129.9 c-6.293,18.89 -9.688,39.09 -9.688,60.1 0,21.002 3.395,41.206 9.6875,60.094 l75.938,-25.312 c-3.65,-10.94 -5.63,-22.63 -5.63,-34.78 0,-12.156 1.9839,-23.849 5.625,-34.781 l-75.938,-25.312 z m360.62,0 l-75.938,25.312 c3.6411,10.932 5.625,22.625 5.625,34.781 s-1.9839,23.849 -5.625,34.781 l75.938,25.312 c6.29,-18.88 9.69,-39.08 9.69,-60.08 0,-21.002 -3.395,-41.206 -9.6875,-60.094 z m-215.09,164.47 l-25.312,75.938 c18.888,6.2925 39.092,9.6875 60.094,9.6875 s41.206,-3.395 60.094,-9.6875 l-25.32,-75.94 c-10.932,3.6411 -22.625,5.625 -34.781,5.625 s-23.849,-1.9839 -34.781,-5.625 z"
+            android:strokeColor="#C80000"
+            android:strokeWidth="3"
+            android:strokeLineJoin="round"
+            android:strokeLineCap="round">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="radial"
+                    android:centerX="230.0"
+                    android:centerY="322.6"
+                    android:gradientRadius="210.0">
+                    <item android:offset="0.0" android:color="#A00000" />
+                    <item android:offset="0.42857" android:color="#B40016" />
+                    <item android:offset="0.52381" android:color="#780000" />
+                    <item android:offset="0.61905" android:color="#FF0101" />
+                    <item android:offset="0.71429" android:color="#FF4F01" />
+                    <item android:offset="0.80952" android:color="#FF0101" />
+                    <item android:offset="0.90476" android:color="#780000" />
+                    <item android:offset="1.0" android:color="#B40016" />
+                </gradient>
+            </aapt:attr>
+        </path>
 
-    <!-- Right Segment (Teal/Cyan Cushion, 55° arc: 332.5° -> 387.5°) -->
-    <path
-        android:pathData="M 81.497 39.686 A 31.0 31.0 0 0 1 81.497 68.314"
-        android:strokeWidth="17"
-        android:strokeLineCap="butt">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:startX="75.0"
-                android:startY="41.0"
-                android:endX="86.0"
-                android:endY="67.0"
-                android:type="linear">
-                <item android:color="#7FE6F8" android:offset="0.0" />
-                <item android:color="#00C7EC" android:offset="0.5" />
-                <item android:color="#0083A0" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- Bottom-Right Cushion (White / Soft Pink tint, 35° arc: 27.5° -> 62.5°) -->
-    <path
-        android:pathData="M 81.497 68.314 A 31.0 31.0 0 0 1 68.314 81.497"
-        android:strokeWidth="17"
-        android:strokeLineCap="butt">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:startX="81.0"
-                android:startY="68.0"
-                android:endX="68.0"
-                android:endY="81.0"
-                android:type="linear">
-                <item android:color="#FCECEB" android:offset="0.0" />
-                <item android:color="#F1D7D5" android:offset="0.6" />
-                <item android:color="#D6C1BF" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- Bottom Segment (Coral/Red Cushion, 55° arc: 62.5° -> 117.5°) -->
-    <path
-        android:pathData="M 68.314 81.497 A 31.0 31.0 0 0 1 39.686 81.497"
-        android:strokeWidth="17"
-        android:strokeLineCap="butt">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:startX="44.0"
-                android:startY="73.0"
-                android:endX="64.0"
-                android:endY="86.0"
-                android:type="linear">
-                <item android:color="#FF7666" android:offset="0.0" />
-                <item android:color="#FF4C38" android:offset="0.4" />
-                <item android:color="#B81E0C" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- Bottom-Left Cushion (White, 35° arc: 117.5° -> 152.5°) -->
-    <path
-        android:pathData="M 39.686 81.497 A 31.0 31.0 0 0 1 26.503 68.314"
-        android:strokeWidth="17"
-        android:strokeLineCap="butt">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:startX="40.0"
-                android:startY="81.0"
-                android:endX="27.0"
-                android:endY="68.0"
-                android:type="linear">
-                <item android:color="#FFFFFF" android:offset="0.0" />
-                <item android:color="#EAEEF2" android:offset="0.6" />
-                <item android:color="#CCD3DB" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- Left Segment (Teal/Cyan Cushion, 55° arc: 152.5° -> 207.5°) -->
-    <path
-        android:pathData="M 26.503 68.314 A 31.0 31.0 0 0 1 26.503 39.686"
-        android:strokeWidth="17"
-        android:strokeLineCap="butt">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:startX="24.0"
-                android:startY="41.0"
-                android:endX="35.0"
-                android:endY="67.0"
-                android:type="linear">
-                <item android:color="#84EBFD" android:offset="0.0" />
-                <item android:color="#00C4E6" android:offset="0.5" />
-                <item android:color="#007F9C" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- Top-Left Cushion (White / Soft Warm tint, 35° arc: 207.5° -> 242.5°) -->
-    <path
-        android:pathData="M 26.503 39.686 A 31.0 31.0 0 0 1 39.686 26.503"
-        android:strokeWidth="17"
-        android:strokeLineCap="butt">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:startX="27.0"
-                android:startY="27.0"
-                android:endX="40.0"
-                android:endY="40.0"
-                android:type="linear">
-                <item android:color="#FFFFFF" android:offset="0.0" />
-                <item android:color="#FAECEB" android:offset="0.5" />
-                <item android:color="#E0D1D0" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- 3. Depth Shadow along the Inner Edge of the Ring (Thin curved stroke, center hole remains 100% transparent) -->
-    <path
-        android:pathData="M 31.842 50.093 A 22.5 22.5 0 0 1 76.158 50.093"
-        android:strokeWidth="2.2"
-        android:strokeLineCap="round">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:startX="32.0"
-                android:startY="31.0"
-                android:endX="76.0"
-                android:endY="51.0"
-                android:type="linear">
-                <item android:color="#00000000" android:offset="0.0" />
-                <item android:color="#3B000000" android:offset="0.5" />
-                <item android:color="#00000000" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- 4. Glossy Specular Crescent Highlight on Upper Arc -->
-    <path
-        android:pathData="M 17.639 50.819 A 36.5 36.5 0 0 1 74.936 24.101"
-        android:strokeWidth="2.5"
-        android:strokeLineCap="round">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:startX="17.0"
-                android:startY="51.0"
-                android:endX="75.0"
-                android:endY="24.0"
-                android:type="linear">
-                <item android:color="#00FFFFFF" android:offset="0.0" />
-                <item android:color="#B3FFFFFF" android:offset="0.45" />
-                <item android:color="#E6FFFFFF" android:offset="0.65" />
-                <item android:color="#00FFFFFF" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- 5. Glossy Specular Highlight Spot near top/left -->
-    <path
-        android:pathData="M 42.0 17.0 C 45.5 15.5 49.5 15.5 53.0 17.0 C 50.5 19.0 45.0 19.0 42.0 17.0 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:startX="42.0"
-                android:startY="15.0"
-                android:endX="53.0"
-                android:endY="19.0"
-                android:type="linear">
-                <item android:color="#CCFFFFFF" android:offset="0.0" />
-                <item android:color="#F2FFFFFF" android:offset="0.5" />
-                <item android:color="#66FFFFFF" android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
+    </group>
 
 </vector>

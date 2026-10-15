@@ -256,7 +256,14 @@ class FloatingDragSnapHandler(private val context: Context) {
                 start()
             }
         } else {
+            lp.x = 0
+            savedY = lp.y
             savePreferences(isSnappedToRight, savedY)
+            try {
+                windowManager?.updateViewLayout(overlayView, lp)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed updating expanded layout after drag end", e)
+            }
             FloatingHapticManager.trigger(context, FloatingHapticType.BUBBLE_SETTLE)
         }
 

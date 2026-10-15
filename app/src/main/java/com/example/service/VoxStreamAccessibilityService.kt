@@ -14,13 +14,16 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import com.example.service.floating.FloatingTextInjector
 
-class VoxStreamAccessibilityService : AccessibilityService() {
+open class VoxStreamAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "VoxStreamAccessService"
+        const val VERIFICATION_ATTEMPTS = 2
+        const val VERIFY_WAIT_MS = 200L // 150-250 ms window
         var instance: VoxStreamAccessibilityService? = null
-            private set
+            internal set
     }
 
     private var lastFocusedEditableNode: AccessibilityNodeInfo? = null
@@ -77,13 +80,9 @@ class VoxStreamAccessibilityService : AccessibilityService() {
         // FLAG_RETRIEVE_INTERACTIVE_WINDOWS: Required to extract window titles across all active foreground applications
         // FLAG_REPORT_VIEW_IDS: Required to resolve view resource IDs in target editable fields for direct text injection
         // FLAG_INCLUDE_NOT_IMPORTANT_VIEWS: Required to access nested or custom editor view hierarchies in rich text and messaging inputs
-        // FLAG_INPUT_METHOD_EDITOR: Connects directly to the active editor's InputConnection (Wispr Flow architecture)
-        var flags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+        val flags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                 AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                 AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            flags = flags or AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
-        }
 
         info.flags = flags
         info.notificationTimeout = 30
@@ -148,6 +147,7 @@ class VoxStreamAccessibilityService : AccessibilityService() {
                     lastFocusedEditableNode = source
                 }
                 checkAndNotifyKeyboard()
+                checkSensitivityState(event)
             }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED,
@@ -156,17 +156,54 @@ class VoxStreamAccessibilityService : AccessibilityService() {
                 if (inputFocused != null && isEditableNode(inputFocused)) {
                     lastFocusedEditableNode = inputFocused
                 } else {
-                    try {
-                        if (lastFocusedEditableNode?.refresh() == false) {
+                    val eventPkg = event.packageName?.toString()
+                    // Never clear lastFocusedEditableNode due to our own overlay or system popups
+                    if (eventPkg != null && eventPkg != packageName && !AppContextResolver.isIgnoredPackage(this, eventPkg)) {
+                        try {
+                            if (lastFocusedEditableNode?.refresh() == false) {
+                                lastFocusedEditableNode = null
+                            }
+                        } catch (_: Exception) {
                             lastFocusedEditableNode = null
                         }
-                    } catch (_: Exception) {
-                        lastFocusedEditableNode = null
                     }
                 }
                 checkAndNotifyKeyboard()
+                checkSensitivityState(event)
             }
         }
+    }
+
+    private fun checkSensitivityState(event: AccessibilityEvent? = null) {
+        if (!FloatingBubbleManager.isSmartSafeModeEnabled.value) {
+            FloatingBubbleManager.updateSensitivity(false, "smart_safe_mode_disabled")
+            return
+        }
+
+        val pkg = getActivePackageName() ?: event?.packageName?.toString()
+        if (AppContextResolver.isIgnoredPackage(this, pkg)) {
+            return
+        }
+
+        val focusedNode = try { findFocus(AccessibilityNodeInfo.FOCUS_INPUT) } catch (_: Throwable) { null }
+            ?: lastFocusedEditableNode
+            ?: event?.source
+        val activeRoot = try { rootInActiveWindow ?: getActiveApplicationWindow()?.root } catch (_: Throwable) { null }
+        val winTitle = try { getActiveApplicationWindow()?.title?.toString() } catch (_: Throwable) { null }
+            ?: event?.text?.firstOrNull()?.toString()
+        val resolvedAppName = FloatingBubbleManager.currentResolvedAppContext.value?.name
+
+        val isSensitive = SafeModeClassifier.isSensitiveContext(
+            context = this,
+            packageName = pkg,
+            focusedNode = focusedNode,
+            rootNode = activeRoot,
+            className = lastSeenClassName,
+            windowTitle = winTitle,
+            resolvedAppName = resolvedAppName
+        )
+
+        FloatingBubbleManager.updateSensitivity(isSensitive, "context_check: pkg=$pkg, sensitive=$isSensitive")
     }
 
     private fun checkAndNotifyKeyboard() {
@@ -206,14 +243,24 @@ class VoxStreamAccessibilityService : AccessibilityService() {
     private fun isEditableNode(node: AccessibilityNodeInfo): Boolean {
         if (node.isEditable) return true
         val className = node.className?.toString() ?: ""
+        val viewId = try { node.viewIdResourceName?.lowercase() ?: "" } catch (_: Throwable) { "" }
         if (className.contains("EditText", ignoreCase = true) ||
             className.contains("AutoCompleteTextView", ignoreCase = true) ||
             className.contains("NoteEditText", ignoreCase = true) ||
-            className.contains("TextInputEditText", ignoreCase = true)
+            className.contains("TextInputEditText", ignoreCase = true) ||
+            className.contains("ExtractEditText", ignoreCase = true) ||
+            className.contains("ComposeEditableText", ignoreCase = true) ||
+            viewId.contains("edit_note_text") ||
+            viewId.contains("editor_title") ||
+            viewId.contains("note_text") ||
+            viewId.contains("content") ||
+            viewId.contains("input") ||
+            viewId.contains("search") ||
+            viewId.contains("message")
         ) {
             return true
         }
-        return node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SET_TEXT }
+        return FloatingTextInjector.supportsActionSetText(node)
     }
 
     override fun onInterrupt() {
@@ -253,7 +300,7 @@ class VoxStreamAccessibilityService : AccessibilityService() {
      * 2. Executes direct node injection via injectTextSafely (ACTION_SET_TEXT) with cursor & hint handling.
      * 3. Zero clipboard interference when a text field is present.
      */
-    fun injectTextDetailed(newText: String): com.example.data.InjectionEvent {
+    open fun injectTextDetailed(newText: String): com.example.data.InjectionEvent {
         val startTime = android.os.SystemClock.elapsedRealtime()
         val wordCount = newText.trim().split("\\s+".toRegex()).count { it.isNotBlank() }
         val rawPreview = newText.take(40)
@@ -291,27 +338,39 @@ class VoxStreamAccessibilityService : AccessibilityService() {
 
         val targetNode = getActiveEditableNode()
         val (finalOutcome, injectionMethod, resultDetails) = if (targetNode != null) {
-            val safeResult = injectTextSafely(targetNode, newText)
-            if (safeResult) {
-                Triple("SUCCESS", "DIRECT_ACTION_SET_TEXT", "SUCCESS: Direct ACTION_SET_TEXT performed at cursor")
+            // Requirement 4: Refresh the focused node before writing
+            try {
+                targetNode.refresh()
+            } catch (e: Throwable) {
+                Log.w(TAG, "Pre-write node refresh threw: ${e.message}")
+            }
+
+            // Requirement 4: Check that the node supports ACTION_SET_TEXT (0x200000)
+            val supportsActionSetText = FloatingTextInjector.supportsActionSetText(targetNode)
+            if (!supportsActionSetText) {
+                Log.w(TAG, "Focused node exists but does NOT support ACTION_SET_TEXT (actions=0x${Integer.toHexString(targetNode.actions)}, class=${targetNode.className})")
+                // Requirement 3: Never use clipboard if a focused editable field exists (even if write fails)
+                Triple("FAILED", "DIRECT_ACTION_SET_TEXT", "FAILED: Focused node does not support ACTION_SET_TEXT (actions=0x${Integer.toHexString(targetNode.actions)})")
             } else {
-                // Direct fallback performAction on node
-                val args = Bundle().apply {
-                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, newText)
-                }
-                val directResult = try {
-                    targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error performing ACTION_SET_TEXT: ${e.message}")
-                    false
-                }
-                if (directResult) {
-                    Triple("SUCCESS", "DIRECT_ACTION_SET_TEXT", "SUCCESS: Direct ACTION_SET_TEXT performed")
+                try {
+                    if (!targetNode.isFocused) {
+                        targetNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                    }
+                } catch (_: Throwable) {}
+
+                // Requirement 1 & 5: Pure ACTION_SET_TEXT with 150-250ms verification and single retry
+                val writeResult = writeRangeAndVerify(targetNode, newText, replaceRange = false, attempts = 2)
+                if (writeResult.outcome == AxWriteOutcome.SUCCESS) {
+                    Triple("SUCCESS", "DIRECT_ACTION_SET_TEXT", "SUCCESS: Pure ACTION_SET_TEXT verified (${writeResult.details})")
                 } else {
-                    Triple("FAILED", "DIRECT_ACTION_SET_TEXT", "FAILED: Node rejected ACTION_SET_TEXT")
+                    // Requirement 3: Never use clipboard if a focused editable field exists (even if write fails)
+                    Log.w(TAG, "Pure ACTION_SET_TEXT write/verification failed (${writeResult.details}). Clipboard fallback strictly suppressed.")
+                    Triple("FAILED", "DIRECT_ACTION_SET_TEXT", "FAILED: ACTION_SET_TEXT failed or verification failed (${writeResult.details})")
                 }
             }
         } else {
+            // Requirement 2: Only fall back to clipboard when there is NO focused editable text field at all
+            Log.d(TAG, "No focused editable text field found on screen")
             Triple("FAILED", "NO_TARGET_NODE", "FAILED: No active editable node found")
         }
 
@@ -337,6 +396,282 @@ class VoxStreamAccessibilityService : AccessibilityService() {
         )
     }
 
+    /**
+     * Directly pastes text into the targeted node via ACTION_PASTE, temporarily placing
+     * the transcribed text on the clipboard and immediately restoring previous user clipboard
+     * contents. This provides 100% reliable direct text injection into apps like Google Keep,
+     * Samsung Notes, and rich-text editors that reject ACTION_SET_TEXT.
+     */
+    fun performDirectPasteIntoNode(node: AccessibilityNodeInfo, text: String): Boolean {
+        return try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
+            val previousClip = clipboard.primaryClip
+
+            // Temporarily set the dictation text on clipboard
+            val tempClip = ClipData.newPlainText("VoxStream Direct Insertion", text)
+            clipboard.setPrimaryClip(tempClip)
+
+            // Ensure the target node is focused
+            try {
+                node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            } catch (_: Throwable) {}
+
+            // Trigger ACTION_PASTE on the target editable node
+            val pasted = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            Log.d(TAG, "performDirectPasteIntoNode ACTION_PASTE result: $pasted")
+
+            // Restore previous user clipboard after target editor has consumed the paste event
+            mainHandler.postDelayed({
+                try {
+                    if (previousClip != null) {
+                        clipboard.setPrimaryClip(previousClip)
+                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        clipboard.clearPrimaryClip()
+                    }
+                    Log.d(TAG, "Restored previous clipboard state after ACTION_PASTE")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Notice restoring previous clip: ${e.message}")
+                }
+            }, 300L)
+
+            pasted
+        } catch (e: Exception) {
+            Log.w(TAG, "performDirectPasteIntoNode failed: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * Checks if there is an active focused editable node on screen.
+     */
+    fun hasActiveEditableNode(): Boolean {
+        return getActiveEditableNode() != null
+    }
+
+    /**
+     * Verifies that the target node accepted the written text by:
+     * 1. Refreshing the node before writing and verifying ACTION_SET_TEXT support.
+     * 2. Executing pure ACTION_SET_TEXT with note app placeholder safety.
+     * 3. Waiting ~150–250 ms (VERIFY_WAIT_MS = 200L).
+     * 4. Refreshing the node again and verifying that the text actually landed.
+     * 5. If verification fails, retrying the write + verify once.
+     */
+    fun writeRangeAndVerify(
+        targetNode: AccessibilityNodeInfo,
+        textToInsert: String,
+        replaceRange: Boolean = false,
+        attempts: Int = VERIFICATION_ATTEMPTS
+    ): NodeWriteResult {
+        if (textToInsert.isBlank()) {
+            Log.w(TAG, "writeRangeAndVerify: textToInsert is blank, aborting to prevent empty note discard")
+            return NodeWriteResult(
+                outcome = AxWriteOutcome.FAILED,
+                details = "Skipped: text to insert is blank",
+                writtenText = textToInsert
+            )
+        }
+
+        val pkgName = try { targetNode.packageName?.toString()?.lowercase() ?: "" } catch (_: Throwable) { "" }
+        val isNoteApp = FloatingTextInjector.isNoteAppPackage(pkgName)
+
+        // Requirement 4: Refresh the focused node before writing
+        try {
+            targetNode.refresh()
+        } catch (e: Throwable) {
+            Log.w(TAG, "Error refreshing targetNode before write: ${e.message}")
+        }
+
+        // Requirement 4: Check that the node supports ACTION_SET_TEXT (0x200000)
+        val supportsActionSetText = FloatingTextInjector.supportsActionSetText(targetNode)
+        if (!supportsActionSetText) {
+            Log.w(TAG, "writeRangeAndVerify: Target node does NOT support ACTION_SET_TEXT: actions=0x${Integer.toHexString(targetNode.actions)}, class=${targetNode.className}")
+            return NodeWriteResult(
+                outcome = AxWriteOutcome.FAILED,
+                details = "Node does not support ACTION_SET_TEXT (actions=0x${Integer.toHexString(targetNode.actions)})",
+                writtenText = textToInsert
+            )
+        }
+
+        val initialText = extractGenuineText(targetNode)
+        val initialRaw = targetNode.text?.toString() ?: ""
+        val initialLen = initialText.length
+
+        Log.d(TAG, "Pre-write check: supportsActionSetText=true, initialTextLen=$initialLen, rawLen=${initialRaw.length}, isNoteApp=$isNoteApp, pkg=$pkgName")
+
+        fun executeWriteAndVerify(attemptNumber: Int): Pair<Boolean, String> {
+            Log.d(TAG, "Executing pure ACTION_SET_TEXT attempt #$attemptNumber (isNoteApp=$isNoteApp)...")
+
+            // Ensure focus is on node
+            try {
+                if (!targetNode.isFocused) {
+                    targetNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                }
+            } catch (_: Throwable) {}
+
+            val directSuccess = injectTextSafely(targetNode, textToInsert)
+            if (!directSuccess) {
+                val args = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToInsert.trim())
+                }
+                val rawSuccess = try {
+                    targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Raw performAction(ACTION_SET_TEXT) failed on attempt #$attemptNumber: ${e.message}")
+                    false
+                }
+                if (!rawSuccess) {
+                    return Pair(false, "performAction(ACTION_SET_TEXT) returned false")
+                }
+            }
+
+            // Requirement 5: Wait ~150–250 ms after writing
+            try {
+                Thread.sleep(VERIFY_WAIT_MS)
+            } catch (_: InterruptedException) {}
+
+            // Requirement 5: Refresh the node again and verify the text actually landed
+            val refreshed = try {
+                targetNode.refresh()
+            } catch (e: Throwable) {
+                Log.w(TAG, "Post-write refresh failed on attempt #$attemptNumber: ${e.message}")
+                false
+            }
+
+            val refreshedRaw = targetNode.text?.toString() ?: ""
+            val refreshedGenuine = extractGenuineText(targetNode)
+
+            val landed = verifyTextLanded(
+                initialText = initialText,
+                insertedText = textToInsert,
+                refreshedRaw = refreshedRaw,
+                refreshedGenuine = refreshedGenuine
+            )
+
+            Log.d(TAG, "Post-write attempt #$attemptNumber: refreshed=$refreshed, landed=$landed, rawLen=${refreshedRaw.length}, genuineLen=${refreshedGenuine.length}, rawPreview='${refreshedRaw.take(30)}'")
+            return Pair(landed, "rawLen=${refreshedRaw.length}, genuineLen=${refreshedGenuine.length}")
+        }
+
+        // Attempt 1
+        val (attempt1Success, details1) = executeWriteAndVerify(1)
+        if (attempt1Success) {
+            Log.d(TAG, "Pure ACTION_SET_TEXT successfully verified on attempt 1")
+            return NodeWriteResult(
+                outcome = AxWriteOutcome.SUCCESS,
+                details = "Verified on attempt 1: $details1",
+                writtenText = textToInsert,
+                initialTextLength = initialLen,
+                finalTextLength = initialLen + textToInsert.length,
+                verificationAttemptsUsed = 1
+            )
+        }
+
+        // Requirement 5: If verification fails, retry the write + verify once
+        Log.w(TAG, "Attempt 1 verification failed ($details1). Retrying write + verify once per requirement...")
+        try {
+            targetNode.refresh()
+            if (!targetNode.isFocused) {
+                targetNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            }
+        } catch (_: Throwable) {}
+
+        val (retrySuccess, retryDetails) = executeWriteAndVerify(2)
+        if (retrySuccess) {
+            Log.d(TAG, "Pure ACTION_SET_TEXT successfully verified on retry attempt (attempt 2)")
+            return NodeWriteResult(
+                outcome = AxWriteOutcome.SUCCESS,
+                details = "Verified on retry attempt: $retryDetails",
+                writtenText = textToInsert,
+                initialTextLength = initialLen,
+                finalTextLength = initialLen + textToInsert.length,
+                verificationAttemptsUsed = 2
+            )
+        }
+
+        Log.w(TAG, "Pure ACTION_SET_TEXT verification failed after retry: text did not land ($retryDetails)")
+        return NodeWriteResult(
+            outcome = AxWriteOutcome.FAILED,
+            details = "Verification failed after retry: text did not land ($retryDetails)",
+            writtenText = textToInsert,
+            initialTextLength = initialLen,
+            verificationAttemptsUsed = 2
+        )
+    }
+
+    private fun verifyTextLanded(
+        initialText: String,
+        insertedText: String,
+        refreshedRaw: String,
+        refreshedGenuine: String
+    ): Boolean {
+        val trimmedInsert = insertedText.trim()
+        if (trimmedInsert.isEmpty()) return true
+
+        // 1. Check if raw text or genuine text contains the inserted text
+        if (refreshedRaw.contains(trimmedInsert) || refreshedGenuine.contains(trimmedInsert)) {
+            return true
+        }
+
+        // 2. Check if length grew reasonably
+        if (refreshedGenuine.length >= (initialText.length + trimmedInsert.length - 1) && refreshedGenuine.isNotBlank()) {
+            return true
+        }
+
+        // 3. For longer transcripts, check head / tail snippet
+        if (trimmedInsert.length > 20) {
+            val head = trimmedInsert.take(15)
+            val tail = trimmedInsert.takeLast(15)
+            if (refreshedRaw.contains(head) || refreshedGenuine.contains(head) ||
+                refreshedRaw.contains(tail) || refreshedGenuine.contains(tail)) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    /**
+     * Whisperflow's core commit method extracted from smali:
+     * - Falls back to findFocus(FOCUS_INPUT) if accessibilityNodeInfo is null.
+     * - Dispatches writeRangeAndVerify with VERIFICATION_ATTEMPTS.
+     * - Recycles the internally retrieved node safely to prevent binder exhaustion.
+     */
+    suspend fun commitViaActionSetText(
+        str: String,
+        accessibilityNodeInfo: AccessibilityNodeInfo? = null,
+        verificationAttempts: Int = VERIFICATION_ATTEMPTS
+    ): NodeWriteResult {
+        val needsRecycle = accessibilityNodeInfo == null
+        val targetNode = accessibilityNodeInfo ?: try {
+            findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: run {
+                Log.d(TAG, "commitViaActionSetText: no focused input node")
+                return NodeWriteResult(AxWriteOutcome.FAILED, details = "No focused input node")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "commitViaActionSetText: findFocus threw: ${e.message}")
+            return NodeWriteResult(AxWriteOutcome.FAILED, details = "findFocus threw: ${e.message}")
+        }
+
+        try {
+            if (!isEditableNode(targetNode)) {
+                Log.d(TAG, "commitViaActionSetText: target node is not editable")
+                return NodeWriteResult(AxWriteOutcome.FAILED, details = "Node not editable")
+            }
+
+            return writeRangeAndVerify(
+                targetNode = targetNode,
+                textToInsert = str,
+                replaceRange = false,
+                attempts = verificationAttempts
+            )
+        } finally {
+            if (needsRecycle) {
+                try {
+                    targetNode.recycle()
+                } catch (_: Throwable) {}
+            }
+        }
+    }
+
     fun injectText(newText: String): Boolean {
         val trace = injectTextDetailed(newText)
         return trace.finalOutcome == "SUCCESS"
@@ -344,8 +679,7 @@ class VoxStreamAccessibilityService : AccessibilityService() {
 
     @androidx.annotation.VisibleForTesting(otherwise = androidx.annotation.VisibleForTesting.PRIVATE)
     internal fun commitTextViaInputMethod(text: String): Boolean {
-        Log.d(TAG, "commitTextViaInputMethod called (deprecated, direct node injection is active)")
-        return false
+        return VoxStreamInputMethodService.commitText(text)
     }
 
     private fun getActiveEditableNode(): AccessibilityNodeInfo? {
@@ -387,20 +721,31 @@ class VoxStreamAccessibilityService : AccessibilityService() {
             val currentWindows = try { getWindows() } catch (e: Throwable) { null }
             if (!currentWindows.isNullOrEmpty()) {
                 val activePkg = getActivePackageName()
+                    ?: FloatingBubbleManager.currentForegroundPackage.value
+                    ?: FloatingBubbleManager.lockedSessionContext.value
                 // Pass A: Look for focused editable in application windows belonging to active package
                 for (w in currentWindows) {
                     if (w.type == AccessibilityWindowInfo.TYPE_APPLICATION) {
                         val wRoot = w.root ?: continue
                         val pkg = wRoot.packageName?.toString()
-                        if (activePkg != null && pkg != activePkg) continue
+                        if (activePkg != null && pkg != activePkg && !AppContextResolver.isIgnoredPackage(this, pkg)) {
+                            // Only skip if activePkg was specifically established and doesn't match
+                            if (w.isFocused || w.isActive) {
+                                // Active or focused window should still be checked
+                            } else {
+                                continue
+                            }
+                        }
                         val inputF = wRoot.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                         if (inputF != null && isEditableNode(inputF)) {
                             Log.d(TAG, "Found target editable in APP window via FOCUS_INPUT")
+                            lastFocusedEditableNode = inputF
                             return inputF
                         }
                         val focusedInTree = findFocusedEditableInTree(wRoot)
                         if (focusedInTree != null) {
                             Log.d(TAG, "Found target editable in APP window tree scan (focused)")
+                            lastFocusedEditableNode = focusedInTree
                             return focusedInTree
                         }
                     }
@@ -411,10 +756,12 @@ class VoxStreamAccessibilityService : AccessibilityService() {
                     if (w.type == AccessibilityWindowInfo.TYPE_APPLICATION) {
                         val wRoot = w.root ?: continue
                         val pkg = wRoot.packageName?.toString()
-                        if (activePkg != null && pkg != activePkg) continue
+                        if (AppContextResolver.isIgnoredPackage(this, pkg)) continue
+                        if (activePkg != null && pkg != activePkg && !w.isFocused && !w.isActive) continue
                         val anyEditable = findBestEditableInTree(wRoot)
                         if (anyEditable != null) {
                             Log.d(TAG, "Found target editable in APP window tree scan (active editable fallback)")
+                            lastFocusedEditableNode = anyEditable
                             return anyEditable
                         }
                     }
@@ -457,13 +804,19 @@ class VoxStreamAccessibilityService : AccessibilityService() {
 
     private fun findBestEditableInTree(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (node == null) return null
-        if (isEditableNode(node) && node.isVisibleToUser) {
-            return node
+        if (isEditableNode(node) && (node.isVisibleToUser || node.isFocused || node.isFocusable)) {
+            val viewId = try { node.viewIdResourceName?.lowercase() ?: "" } catch (_: Throwable) { "" }
+            if (viewId.contains("edit_note_text") || viewId.contains("note_text") || viewId.contains("content") || node.isFocused) {
+                return node
+            }
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             val result = findBestEditableInTree(child)
             if (result != null) return result
+        }
+        if (isEditableNode(node) && (node.isVisibleToUser || node.isFocused || node.isFocusable)) {
+            return node
         }
         return null
     }

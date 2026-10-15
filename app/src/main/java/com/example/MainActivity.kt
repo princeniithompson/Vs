@@ -27,6 +27,7 @@ class MainActivity : ComponentActivity() {
         com.example.data.HistoryRepository.init(this)
         com.example.data.InjectionLogRepository.init(this)
         com.example.data.AppDetectionLogRepository.init(this)
+        com.example.data.OnboardingRepository.init(this)
         FloatingBubbleManager.init(this)
         enableEdgeToEdge()
         setContent {
@@ -42,5 +43,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        FloatingBubbleManager.checkPermissions(this)
+        viewModel.refreshPermissions()
     }
 }

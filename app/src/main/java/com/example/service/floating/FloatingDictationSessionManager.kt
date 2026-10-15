@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentLinkedQueue
 
 class FloatingDictationSessionManager(
+    private val context: Context,
     private val onTranscriptUpdated: (fullText: String) -> Unit,
     private val onInterimReceived: (interim: String) -> Unit,
     private val onFinalSegmentReceived: (segment: String) -> Unit,
@@ -35,16 +36,6 @@ class FloatingDictationSessionManager(
     companion object {
         private const val TAG = "FloatingDictationMgr"
         private const val MAX_AUDIO_QUEUE_CHUNKS = 50 // ~5s buffer at 100ms chunks to bridge reconnects
-        // Syllable duration threshold: Human speech/whisper requires at least 3 consecutive 20ms frames (~60ms)
-        private const val MIN_SPEECH_FRAMES = 3
-        // Minimum speech amplitude above ambient noise floor (tuned for close-proximity whispering: ~0.030)
-        private const val SPEECH_DELTA_THRESHOLD = 0.016f
-        private const val MIN_ABSOLUTE_SPEECH_AMP = 0.030f
-
-        // VAD Gating & Hangover configuration
-        private const val VAD_HANGOVER_MS = 700L
-        private const val ZERO_PADDING_KEEP_ALIVE_INTERVAL_MS = 1000L
-        private const val GATED_DIAGNOSTIC_LOG_INTERVAL_MS = 5000L
     }
 
     private val audioQueue = ConcurrentLinkedQueue<ByteArray>()
@@ -66,22 +57,12 @@ class FloatingDictationSessionManager(
         private set
     var sessionBytesSent: Long = 0L
         private set
-    var sessionGatedChunksCount: Int = 0
-        private set
 
     private val finalizedTranscript = StringBuilder()
     private var interimTranscript = ""
 
-    // VAD & Silence tracking state: separates sustained speech from brief ambient clatter/transients
-    private var baselineNoiseFloor = 0.018f
-    private var consecutiveSpeechFrames = 0
     private var smoothedAmp = 0f
     private var lastSustainedSpeechTimestamp = 0L
-
-    // VAD Gating timing & diagnostics tracking
-    private var lastZeroPaddingTimestamp = 0L
-    private var continuousGatedStartTimestamp = 0L
-    private var lastGatedLogTimestamp = 0L
 
     var isSpeechActive: Boolean = false
         private set
@@ -96,129 +77,43 @@ class FloatingDictationSessionManager(
     private val audioRecorder = AudioRecorder(
         onChunkReady = { chunk ->
             if (isRecording) {
-                val now = System.currentTimeMillis()
-                val isHangoverActive = lastSustainedSpeechTimestamp > 0L &&
-                    (now - lastSustainedSpeechTimestamp) < VAD_HANGOVER_MS
-                val shouldStreamSpeech = isSpeechActive || isHangoverActive
-
-                if (shouldStreamSpeech) {
-                    // Reset continuous non-speech gating counters when speech is streaming
-                    continuousGatedStartTimestamp = 0L
-                    lastGatedLogTimestamp = 0L
-
-                    val ws = webSocketClient
-                    if (ws != null && ws.setupComplete) {
-                        val sent = ws.sendAudioChunk(chunk)
-                        if (sent) {
-                            sessionChunksSent++
-                            sessionBytesSent += chunk.size
-                            AppLogRepository.updateLiveStats {
-                                it.copy(
-                                    source = DiagnosticSource.BUBBLE,
-                                    chunksSent = sessionChunksSent,
-                                    bytesSent = sessionBytesSent,
-                                    chunksBuffered = audioQueue.size
-                                )
-                            }
-                        } else {
-                            enqueueAudioChunk(chunk)
+                val ws = webSocketClient
+                if (ws != null && ws.setupComplete) {
+                    val sent = ws.sendAudioChunk(chunk)
+                    if (sent) {
+                        sessionChunksSent++
+                        sessionBytesSent += chunk.size
+                        AppLogRepository.updateLiveStats {
+                            it.copy(
+                                source = DiagnosticSource.BUBBLE,
+                                chunksSent = sessionChunksSent,
+                                bytesSent = sessionBytesSent,
+                                chunksBuffered = audioQueue.size
+                            )
                         }
                     } else {
                         enqueueAudioChunk(chunk)
                     }
                 } else {
-                    // Speech is inactive: Gate out raw noise chunks (do NOT send raw noise or enqueue to WebSocket)
-                    sessionGatedChunksCount++
-
-                    val ws = webSocketClient
-                    // Send zero-padding chunk at most once every 1000ms to keep Gemini Live session warm
-                    if (ws != null && ws.setupComplete) {
-                        if (now - lastZeroPaddingTimestamp >= ZERO_PADDING_KEEP_ALIVE_INTERVAL_MS) {
-                            lastZeroPaddingTimestamp = now
-                            ws.sendZeroPaddingChunk()
-                        }
-                    }
-
-                    // Track continuous non-speech audio and emit diagnostic log every 5 seconds
-                    if (continuousGatedStartTimestamp == 0L) {
-                        continuousGatedStartTimestamp = now
-                        lastGatedLogTimestamp = now
-                    } else {
-                        val continuousGatedDurationMs = now - continuousGatedStartTimestamp
-                        if (now - lastGatedLogTimestamp >= GATED_DIAGNOSTIC_LOG_INTERVAL_MS) {
-                            lastGatedLogTimestamp = now
-                            val gatedSecs = (continuousGatedDurationMs / 1000L).coerceAtLeast(5L)
-                            val noiseFloorFormatted = String.format(java.util.Locale.US, "%.3f", baselineNoiseFloor)
-                            val diagnosticMsg = "[VAD Gating] Continuous non-speech audio gated for ${gatedSecs}s | noiseFloor: $noiseFloorFormatted | keepAlive: active"
-                            Log.i(TAG, diagnosticMsg)
-                            AppLogRepository.logEvent(
-                                DiagnosticSource.BUBBLE,
-                                DiagnosticType.NOISY_ENVIRONMENT,
-                                diagnosticMsg
-                            )
-                            AppLogRepository.addLog(
-                                LogLevel.INFO,
-                                TAG,
-                                diagnosticMsg,
-                                payload = null,
-                                source = DiagnosticSource.BUBBLE
-                            )
-                        }
-                    }
+                    enqueueAudioChunk(chunk)
                 }
             }
         },
         onAmplitudeChanged = { rawAmp ->
             if (isRecording) {
                 val clamped = rawAmp.coerceIn(0f, 1f)
-
-                // 1. Slow adaptation of ambient noise floor during quiet periods
-                if (!isSpeechActive && clamped < 0.05f) {
-                    baselineNoiseFloor = (baselineNoiseFloor * 0.98f) + (clamped * 0.02f)
-                }
-
-                // 2. Check if frame exceeds vocal speech threshold (including close whisper)
-                val speechThreshold = maxOf(MIN_ABSOLUTE_SPEECH_AMP, baselineNoiseFloor + SPEECH_DELTA_THRESHOLD)
-                val isAboveThreshold = clamped >= speechThreshold
-
-                if (isAboveThreshold) {
-                    consecutiveSpeechFrames++
-                    if (consecutiveSpeechFrames >= MIN_SPEECH_FRAMES) {
-                        isSpeechActive = true
-                        lastSustainedSpeechTimestamp = System.currentTimeMillis()
-                    }
-                } else {
-                    // Frame below speech threshold
-                    if (consecutiveSpeechFrames > 0) {
-                        consecutiveSpeechFrames = 0
-                    }
-                    if (isSpeechActive) {
-                        isSpeechActive = false
-                    }
-                }
-
-                // 3. Visualizer amplitude path:
-                // While voice is active (isSpeechActive == true or within 700ms hangover) or frame exceeds threshold,
-                // pass real voice amplitude smoothly without over-clamping.
-                // When speech is gated/silent, decay smoothly to 0f so resting breathing pulse takes over cleanly.
                 val now = System.currentTimeMillis()
-                val isHangoverActive = lastSustainedSpeechTimestamp > 0L &&
-                    (now - lastSustainedSpeechTimestamp) < VAD_HANGOVER_MS
-                val isVoiceActive = isSpeechActive || isHangoverActive
-
-                val targetAmp = if (isVoiceActive || isAboveThreshold) {
-                    clamped
-                } else {
-                    0f
+                if (clamped >= 0.03f) {
+                    isSpeechActive = true
+                    lastSustainedSpeechTimestamp = now
+                } else if (now - lastSustainedSpeechTimestamp > 700L) {
+                    isSpeechActive = false
                 }
-
-                // Smooth attack on speech onset (0.45 weight), smooth release on pause (0.25 weight)
-                val smoothingFactor = if (targetAmp > smoothedAmp) 0.45f else 0.25f
-                smoothedAmp = (smoothedAmp * (1f - smoothingFactor)) + (targetAmp * smoothingFactor)
+                val smoothingFactor = if (clamped > smoothedAmp) 0.45f else 0.25f
+                smoothedAmp = (smoothedAmp * (1f - smoothingFactor)) + (clamped * smoothingFactor)
                 onAmplitudeChanged(smoothedAmp.coerceIn(0f, 1f))
             } else {
                 smoothedAmp = 0f
-                consecutiveSpeechFrames = 0
                 isSpeechActive = false
                 onAmplitudeChanged(0f)
             }
@@ -297,17 +192,11 @@ class FloatingDictationSessionManager(
         durationSeconds = 0
         sessionChunksSent = 0
         sessionBytesSent = 0L
-        sessionGatedChunksCount = 0
         audioQueue.clear()
 
-        baselineNoiseFloor = 0.018f
-        consecutiveSpeechFrames = 0
         smoothedAmp = 0f
         isSpeechActive = false
         lastSustainedSpeechTimestamp = 0L
-        lastZeroPaddingTimestamp = 0L
-        continuousGatedStartTimestamp = 0L
-        lastGatedLogTimestamp = 0L
 
         val modeLabel = if (smartMode) "SMART" else "VERBATIM"
         AppLogRepository.logEvent(
@@ -452,7 +341,6 @@ class FloatingDictationSessionManager(
         val durationAtEnd = durationSeconds
         val chunksAtEnd = sessionChunksSent
         val bytesAtEnd = sessionBytesSent
-        val gatedChunksAtEnd = sessionGatedChunksCount
 
         val ws = webSocketClient
         webSocketClient = null
@@ -475,7 +363,7 @@ class FloatingDictationSessionManager(
                 AppLogRepository.logEvent(
                     DiagnosticSource.BUBBLE,
                     DiagnosticType.SESSION_END,
-                    "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Gated: $gatedChunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB"
+                    "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB"
                 )
                 AppLogRepository.updateConnectionState(ConnectionState.Idle, DiagnosticSource.BUBBLE)
                 try {

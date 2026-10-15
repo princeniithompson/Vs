@@ -33,41 +33,9 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         private const val PREFS_NAME = "voxstream_settings"
         private const val KEY_SMART_MODE = "smart_mode"
         private const val KEY_CUSTOM_API_KEY = "custom_api_key"
-        private const val KEY_AEC_ENABLED = "aec_enabled"
-        private const val KEY_NOISE_SUPPRESSOR_ENABLED = "noise_suppressor_enabled"
     }
 
     private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
-    val isAecSupported: Boolean = try {
-        android.media.audiofx.AcousticEchoCanceler.isAvailable()
-    } catch (t: Throwable) {
-        false
-    }
-
-    val isNoiseSuppressorSupported: Boolean = try {
-        android.media.audiofx.NoiseSuppressor.isAvailable()
-    } catch (t: Throwable) {
-        false
-    }
-
-    private val _isAecEnabled = MutableStateFlow(prefs.getBoolean(KEY_AEC_ENABLED, true))
-    val isAecEnabled: StateFlow<Boolean> = _isAecEnabled.asStateFlow()
-
-    private val _isNoiseSuppressorEnabled = MutableStateFlow(prefs.getBoolean(KEY_NOISE_SUPPRESSOR_ENABLED, true))
-    val isNoiseSuppressorEnabled: StateFlow<Boolean> = _isNoiseSuppressorEnabled.asStateFlow()
-
-    fun setAecEnabled(enabled: Boolean) {
-        _isAecEnabled.value = enabled
-        prefs.edit().putBoolean(KEY_AEC_ENABLED, enabled).apply()
-        addLog(LogLevel.INFO, TAG, "Acoustic Echo Canceler set to $enabled")
-    }
-
-    fun setNoiseSuppressorEnabled(enabled: Boolean) {
-        _isNoiseSuppressorEnabled.value = enabled
-        prefs.edit().putBoolean(KEY_NOISE_SUPPRESSOR_ENABLED, enabled).apply()
-        addLog(LogLevel.INFO, TAG, "Noise Suppressor set to $enabled")
-    }
 
     val isSaveRecordingsEnabled: StateFlow<Boolean> = com.example.data.AudioRecordingRepository.isSaveRecordingsEnabled
     val recordings: StateFlow<List<com.example.data.AudioRecording>> = com.example.data.AudioRecordingRepository.recordings
@@ -91,8 +59,13 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     val isSmartSafeModeEnabled: StateFlow<Boolean> = com.example.service.FloatingBubbleManager.isSmartSafeModeEnabled
     val isCurrentAppSensitive: StateFlow<Boolean> = com.example.service.FloatingBubbleManager.isCurrentAppSensitive
     val isAccessibilityConnected: StateFlow<Boolean> = com.example.service.FloatingBubbleManager.isAccessibilityConnected
+    val hasOverlayPermission: StateFlow<Boolean> = com.example.service.FloatingBubbleManager.hasOverlayPermission
     val selectedGlowStyleId: StateFlow<String> = com.example.service.FloatingBubbleManager.selectedGlowStyleId
     val selectedFinishingStyleId: StateFlow<String> = com.example.service.FloatingBubbleManager.selectedFinishingStyleId
+
+    fun refreshPermissions() {
+        com.example.service.FloatingBubbleManager.checkPermissions(getApplication())
+    }
 
     fun setSmartSafeModeEnabled(enabled: Boolean) {
         com.example.service.FloatingBubbleManager.setSmartSafeModeEnabled(getApplication(), enabled)
@@ -118,6 +91,26 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
     val diagnosticEntries: StateFlow<List<com.example.data.DiagnosticLogEntry>> = com.example.data.AppLogRepository.diagnosticEntries
     val notes: StateFlow<List<com.example.data.DiagnosticNote>> = com.example.data.AppLogRepository.notes
+
+    val isOnboardingCompleted: StateFlow<Boolean> = com.example.data.OnboardingRepository.isOnboardingCompleted
+    val preferredDockSide: StateFlow<String> = com.example.data.OnboardingRepository.preferredDockSide
+    val hasCompletedVoiceTest: StateFlow<Boolean> = com.example.data.OnboardingRepository.hasCompletedVoiceTest
+
+    fun completeOnboarding() {
+        com.example.data.OnboardingRepository.completeOnboarding()
+    }
+
+    fun resetOnboarding() {
+        com.example.data.OnboardingRepository.resetOnboarding()
+    }
+
+    fun setPreferredDockSide(side: String) {
+        com.example.data.OnboardingRepository.setPreferredDockSide(side)
+    }
+
+    fun setVoiceTestDone(done: Boolean) {
+        com.example.data.OnboardingRepository.setVoiceTestDone(done)
+    }
 
     fun addNote(text: String) {
         com.example.data.AppLogRepository.addNote(text)

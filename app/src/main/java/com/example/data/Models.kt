@@ -38,7 +38,9 @@ enum class DiagnosticType {
     WARNING,
     NOISY_ENVIRONMENT,
     SESSION_RECONNECT,
-    SAFE_MODE_TRIGGERED
+    SAFE_MODE_TRIGGERED,
+    AUDIO_STYLE_CHANGED,
+    VOICE_ID_EVENT
 }
 
 data class DiagnosticLogEntry(

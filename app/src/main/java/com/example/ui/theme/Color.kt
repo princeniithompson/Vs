@@ -21,3 +21,14 @@ val DarkSurfaceVariant = Color(0xFF1F2937)
 val DarkOnSurface = Color(0xFFF3F4F6)
 val DarkOnSurfaceVariant = Color(0xFF9CA3AF)
 val DarkOutline = Color(0xFF374151)
+
+// Editorial Onboarding Theme Colors
+val OnboardingCreamBackground = Color(0xFFFDFCFA)
+val OnboardingSoftCoralCard = Color(0xFFFDE8E8)
+val OnboardingLightTomatoButton = Color(0xFFFF6E5B)
+val OnboardingSoftLilacButton = OnboardingLightTomatoButton
+val OnboardingDeepRedProgress = Color(0xFFC80000)
+val OnboardingProgressTrack = Color(0xFFEFE8E8)
+val OnboardingInkBlack = Color(0xFF1D1B20)
+val OnboardingMutedText = Color(0xFF49454F)
+val OnboardingBorderStroke = Color(0xFF2B262F)
