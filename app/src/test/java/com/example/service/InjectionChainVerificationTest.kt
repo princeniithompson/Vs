@@ -12,6 +12,7 @@ import com.example.service.FloatingBubbleManager
 import com.example.service.floating.FloatingTextInjector
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -31,6 +32,11 @@ class InjectionChainVerificationTest {
         service = org.robolectric.Robolectric.buildService(VoxStreamAccessibilityService::class.java).create().get()
         FloatingBubbleManager.updateCurrentForegroundPackage("com.google.android.keep", null)
         FloatingBubbleManager.resetClipboardFallbackIndicator()
+    }
+
+    private fun idleClipboardRestore() {
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+            .idleFor(java.time.Duration.ofMillis(VoxStreamAccessibilityService.CLIPBOARD_RESTORE_DELAY_MS + 30))
     }
 
     @Test
@@ -305,7 +311,8 @@ class InjectionChainVerificationTest {
         node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
 
         var actionSetTextCalled = false
-        var sawSensitiveTempClip = false
+        var tempClipText: String? = null
+        var tempClipSensitive = false
         val shadow = org.robolectric.Shadows.shadowOf(node)
         shadow.setOnPerformActionListener { action, _ ->
             if (action == AccessibilityNodeInfo.ACTION_SET_TEXT) {
@@ -313,10 +320,9 @@ class InjectionChainVerificationTest {
                 true
             } else if (action == AccessibilityNodeInfo.ACTION_PASTE) {
                 val temp = clipboard.primaryClip
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    sawSensitiveTempClip = temp?.description?.extras
-                        ?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true
-                }
+                tempClipText = temp?.getItemAt(0)?.text?.toString()
+                tempClipSensitive = temp?.description?.extras
+                    ?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true
                 false
             } else {
                 true
@@ -329,8 +335,10 @@ class InjectionChainVerificationTest {
         assertEquals(AxWriteOutcome.FAILED, result.outcome)
         assertFalse("ACTION_SET_TEXT must NEVER be used as a fallback on rich fields", actionSetTextCalled)
         assertEquals("Original protected content", node.text.toString())
+        assertEquals("My dictated paragraph", tempClipText)
+        assertFalse("Temporary paste clip must not be marked sensitive", tempClipSensitive)
+        idleClipboardRestore()
         assertEquals("Initial clipboard", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
-        assertTrue("Temporary paste clip must be marked sensitive", sawSensitiveTempClip)
         assertEquals(null, org.robolectric.shadows.ShadowToast.getLatestToast())
     }
 
@@ -431,6 +439,7 @@ class InjectionChainVerificationTest {
         assertFalse(pastedText?.startsWith(" ") ?: true)
         assertFalse(pastedText?.contains("Note") ?: true)
         assertFalse("Keep must not be rewritten with ACTION_SET_TEXT", setTextCalled)
+        idleClipboardRestore()
         assertEquals("User clip", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
     }
 
@@ -479,7 +488,40 @@ class InjectionChainVerificationTest {
         assertTrue(pasted)
         assertEquals(null, setTextArg)
         assertTrue(node.text.toString().startsWith("@princeniithompson"))
+        idleClipboardRestore()
         assertEquals("User clip", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+    }
+
+    @Test
+    fun `paste clears the clipboard when the user had no previous clip`() = kotlinx.coroutines.runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            clipboard.clearPrimaryClip()
+        }
+
+        val node = AccessibilityNodeInfo.obtain()
+        node.packageName = "com.google.android.keep"
+        node.isEditable = true
+        node.text = "Existing Keep note"
+        node.addAction(AccessibilityNodeInfo.ACTION_PASTE)
+        node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
+
+        val shadow = org.robolectric.Shadows.shadowOf(node)
+        shadow.setOnPerformActionListener { action, _ ->
+            if (action == AccessibilityNodeInfo.ACTION_PASTE) {
+                node.text = "Existing Keep note dictated"
+                true
+            } else {
+                true
+            }
+        }
+
+        val result = service.writeRangeAndVerify(node, "dictated", replaceRange = false, attempts = 1)
+        assertEquals(AxWriteOutcome.SUCCESS, result.outcome)
+        assertEquals("dictated", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        idleClipboardRestore()
+        assertNull(clipboard.primaryClip)
     }
 
     @Test

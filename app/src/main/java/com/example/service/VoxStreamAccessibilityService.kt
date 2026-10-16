@@ -3,13 +3,13 @@ package com.example.service
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ClipData
-import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
-import android.os.PersistableBundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -25,11 +25,18 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
         const val VERIFY_WAIT_MS = 150L
         /** Verification may poll, but a slow read must not be treated as a failed insert. */
         const val VERIFY_POLL_BUDGET_MS = 600L
+        /** Let the target editor read the paste clip, then restore or clear. */
+        const val CLIPBOARD_RESTORE_DELAY_MS = 120L
         var instance: VoxStreamAccessibilityService? = null
             internal set
     }
 
     private var lastFocusedEditableNode: AccessibilityNodeInfo? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var pendingClipboardRestore: Runnable? = null
+    /** Clip to put back. Null means the clipboard was empty and should be cleared. */
+    private var clipboardRestoreTarget: ClipData? = null
+    private var hasClipboardRestoreTarget = false
 
     @Volatile
     var lastSeenClassName: String? = null
@@ -404,23 +411,17 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
 
     /**
      * Pastes [text] into [node] with ACTION_PASTE.
-     * The transcript is placed on the clipboard only for the duration of the paste, marked
-     * sensitive on API 33+, and the user's previous clip is restored before this returns.
-     * A false result does not leave the transcript on the clipboard.
+     * The temporary clip is ordinary plain text (not marked sensitive, so the keyboard
+     * clipboard strip does not show masked dots). About 120ms after ACTION_PASTE returns,
+     * the user's previous clip is restored. If there was no previous clip, the clipboard
+     * is cleared on API 28+ so the transcript does not linger.
      */
     fun performDirectPasteIntoNode(node: AccessibilityNodeInfo, text: String): Boolean {
         val clipboard = getClipboardManager() ?: return false
-        var previousClip: ClipData? = null
-        var capturedPrevious = false
-        try {
-            previousClip = clipboard.primaryClip
-            capturedPrevious = true
-        } catch (e: Throwable) {
-            Log.w(TAG, "performDirectPasteIntoNode: could not read previous clip: ${e.message}")
-        }
+        val (previousClip, capturedPrevious) = readClipboardToRestore(clipboard)
 
         return try {
-            val tempClip = newSensitivePlainClip("VoxStream Direct Insertion", text)
+            val tempClip = ClipData.newPlainText("VoxStream Direct Insertion", text)
             clipboard.setPrimaryClip(tempClip)
 
             try {
@@ -437,29 +438,51 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
             false
         } finally {
             if (capturedPrevious) {
-                restoreClipboard(clipboard, previousClip)
+                scheduleClipboardRestore(clipboard, previousClip)
             }
         }
     }
 
-    private fun newSensitivePlainClip(label: String, text: String): ClipData {
-        val clip = ClipData.newPlainText(label, text)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val extras = PersistableBundle()
-            extras.putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
-            clip.description.extras = extras
+    /**
+     * The live clipboard may already be our temporary transcript if a restore is queued.
+     * Keep restoring the user's original clip instead of that transcript.
+     */
+    private fun readClipboardToRestore(clipboard: ClipboardManager): Pair<ClipData?, Boolean> {
+        if (hasClipboardRestoreTarget) {
+            return Pair(clipboardRestoreTarget, true)
         }
-        return clip
+        return try {
+            Pair(clipboard.primaryClip, true)
+        } catch (e: Throwable) {
+            Log.w(TAG, "performDirectPasteIntoNode: could not read previous clip: ${e.message}")
+            Pair(null, false)
+        }
     }
 
-    private fun restoreClipboard(clipboard: ClipboardManager, previousClip: ClipData?) {
+    private fun scheduleClipboardRestore(clipboard: ClipboardManager, previousClip: ClipData?) {
+        pendingClipboardRestore?.let { mainHandler.removeCallbacks(it) }
+        clipboardRestoreTarget = previousClip
+        hasClipboardRestoreTarget = true
+        val restore = Runnable {
+            pendingClipboardRestore = null
+            hasClipboardRestoreTarget = false
+            val clipToRestore = clipboardRestoreTarget
+            clipboardRestoreTarget = null
+            restoreOrClearClipboard(clipboard, clipToRestore)
+        }
+        pendingClipboardRestore = restore
+        mainHandler.postDelayed(restore, CLIPBOARD_RESTORE_DELAY_MS)
+    }
+
+    private fun restoreOrClearClipboard(clipboard: ClipboardManager, previousClip: ClipData?) {
         try {
             if (previousClip != null) {
                 clipboard.setPrimaryClip(previousClip)
+                Log.d(TAG, "Restored previous clipboard after ACTION_PASTE")
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 clipboard.clearPrimaryClip()
+                Log.d(TAG, "Cleared clipboard after ACTION_PASTE; there was no previous clip")
             }
-            Log.d(TAG, "Restored previous clipboard state after ACTION_PASTE")
         } catch (e: Exception) {
             Log.w(TAG, "Notice restoring previous clip: ${e.message}")
         }
@@ -547,7 +570,7 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
         if (VoxStreamInputMethodService.isServiceActive) {
             val committed = VoxStreamInputMethodService.commitText(insertionText)
             if (committed) {
-                Log.d(TAG, "insertAtCursor: IME commitText returned true")
+                Log.d(TAG, "insertAtCursor: IME commitText returned true (clipboard not used)")
                 val observed = pollTextLanded(targetNode, rawText, insertionText)
                 if (!observed) {
                     Log.w(TAG, "IME commitText returned true but text was not observed within ${VERIFY_POLL_BUDGET_MS}ms. Treating as success.")
@@ -560,7 +583,13 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
                     verificationAttemptsUsed = 1
                 )
             }
-            Log.d(TAG, "insertAtCursor: IME commitText returned false; using ACTION_PASTE")
+            Log.w(TAG, "VoxStream IME is active but commitText returned false. Not falling back to the clipboard.")
+            return NodeWriteResult(
+                outcome = AxWriteOutcome.FAILED,
+                details = "IME commitText returned false",
+                writtenText = textToInsert,
+                initialTextLength = initialLen
+            )
         }
 
         val pasted = performDirectPasteIntoNode(targetNode, insertionText)
