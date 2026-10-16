@@ -78,6 +78,15 @@ class VoxStreamAccessibilityServiceTest {
     }
 
     @Test
+    fun `accessibility service description says it reads the screen and types into the focused field`() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        val description = context.getString(com.example.R.string.accessibility_service_desc)
+        assertTrue(description.contains("reads on-screen content"))
+        assertTrue(description.contains("detect the current app"))
+        assertTrue(description.contains("types dictated text into the focused field"))
+    }
+
+    @Test
     fun `extractGenuineText returns empty for blank node text`() {
         val node = AccessibilityNodeInfo.obtain()
         node.text = "   "

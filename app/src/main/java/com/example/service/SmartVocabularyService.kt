@@ -113,7 +113,7 @@ Analyze these transcripts and output the JSON list of 5-8 smart vocabulary sugge
         for (modelName in candidateModels) {
             var connection: HttpURLConnection? = null
             try {
-                val urlString = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent"
+                val urlString = com.example.core.ApiConfig.geminiGenerateContentUrl(modelName)
                 val url = URL(urlString)
 
                 AppLogRepository.addLog(
@@ -140,7 +140,9 @@ Analyze these transcripts and output the JSON list of 5-8 smart vocabulary sugge
                 val responseCode = connection.responseCode
                 if (responseCode == 200) {
                     val responseString = connection.inputStream.bufferedReader().use { it.readText() }
-                    Log.d(TAG, "SmartVocab response from $modelName: $responseString")
+                    if (com.example.BuildConfig.DEBUG) {
+                        Log.d(TAG, "SmartVocab response from $modelName: $responseString")
+                    }
                     AppLogRepository.addLog(
                         LogLevel.RECEIVED,
                         "SmartVocabAPI",

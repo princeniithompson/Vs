@@ -55,7 +55,9 @@ object AppDetectionLogRepository {
             lastEvent.resolvedAppName == event.resolvedAppName &&
             lastEvent.rawWindowTitle == event.rawWindowTitle
         ) {
-            Log.d(TAG, "Skipping duplicate detection event: app='${event.resolvedAppName}', pkg='${event.rawPackageName}', title='${event.rawWindowTitle}'")
+            if (com.example.BuildConfig.DEBUG) {
+                Log.d(TAG, "Skipping duplicate detection event: app='${event.resolvedAppName}', pkg='${event.rawPackageName}', title='${event.rawWindowTitle}'")
+            }
             return
         }
 
@@ -65,7 +67,9 @@ object AppDetectionLogRepository {
         }
         _events.value = current
         saveLogs(current)
-        Log.d(TAG, "Logged app detection event: app='${event.resolvedAppName}' pkg='${event.rawPackageName}' title='${event.rawWindowTitle}' source='${event.classificationSource}' category='${event.finalCategory}'")
+        if (com.example.BuildConfig.DEBUG) {
+            Log.d(TAG, "Logged app detection event: app='${event.resolvedAppName}' pkg='${event.rawPackageName}' title='${event.rawWindowTitle}' source='${event.classificationSource}' category='${event.finalCategory}'")
+        }
     }
 
     fun clearEvents() {

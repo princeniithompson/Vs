@@ -75,7 +75,9 @@ class OnboardingSpeechManager(private val context: Context) {
                     override fun onResults(results: Bundle?) {
                         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         val text = matches?.firstOrNull().orEmpty()
-                        Log.d(tag, "onResults: $text")
+                        if (com.example.BuildConfig.DEBUG) {
+                            Log.d(tag, "onResults: $text")
+                        }
                         if (text.isNotBlank()) {
                             _liveTranscript.value = text
                         }
@@ -86,7 +88,9 @@ class OnboardingSpeechManager(private val context: Context) {
                     override fun onPartialResults(partialResults: Bundle?) {
                         val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         val partial = matches?.firstOrNull().orEmpty()
-                        Log.d(tag, "onPartialResults: $partial")
+                        if (com.example.BuildConfig.DEBUG) {
+                            Log.d(tag, "onPartialResults: $partial")
+                        }
                         if (partial.isNotBlank()) {
                             _liveTranscript.value = partial
                         }

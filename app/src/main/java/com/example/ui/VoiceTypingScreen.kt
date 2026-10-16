@@ -105,6 +105,7 @@ import com.example.ui.components.PulsatingRecordButton
 import com.example.ui.components.SmartVocabularyBottomSheet
 import com.example.ui.screens.DictionaryScreen
 import com.example.ui.screens.HomeScreen
+import com.example.ui.screens.onboarding.AccessibilityDisclosureSheet
 import kotlinx.coroutines.launch
 
 enum class MainScreenTab {
@@ -142,6 +143,7 @@ fun VoiceTypingScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     var selectedTab by remember { mutableStateOf(MainScreenTab.HOME) }
     var showDiagnostics by remember { mutableStateOf(false) }
+    var showAccessibilityDisclosure by remember { mutableStateOf(false) }
     val diagnosticsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showGlowStylesSheet by remember { mutableStateOf(false) }
     val glowStylesSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -742,22 +744,14 @@ fun VoiceTypingScreen(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = if (isAccessibilityConnected) "✓ Service active" else "Required to auto-show bubble & paste text",
+                            text = if (isAccessibilityConnected) "✓ Service active" else "Required to detect the focused field and type",
                             style = MaterialTheme.typography.bodySmall,
                             color = if (isAccessibilityConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                         )
                     }
                     if (!isAccessibilityConnected) {
                         FilledTonalButton(
-                            onClick = {
-                                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                                context.startActivity(intent)
-                                Toast.makeText(
-                                    context,
-                                    "Find 'VoxStream Voice Typing Assistant' and turn it ON",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
+                            onClick = { showAccessibilityDisclosure = true }
                         ) {
                             Text("Turn On", style = MaterialTheme.typography.labelSmall)
                         }
@@ -834,6 +828,21 @@ fun VoiceTypingScreen(
             isAnalyzingSmartVocab = isAnalyzingSmartVocab,
             onSimulateWeeklySmartVocab = { viewModel.simulateWeeklySmartVocabulary() },
             onDismiss = { showDiagnostics = false }
+        )
+    }
+
+    if (showAccessibilityDisclosure) {
+        AccessibilityDisclosureSheet(
+            onAgree = {
+                showAccessibilityDisclosure = false
+                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                Toast.makeText(
+                    context,
+                    "Find 'VoxStream Voice Typing Assistant' and turn it ON",
+                    Toast.LENGTH_LONG
+                ).show()
+            },
+            onDecline = { showAccessibilityDisclosure = false }
         )
     }
 
