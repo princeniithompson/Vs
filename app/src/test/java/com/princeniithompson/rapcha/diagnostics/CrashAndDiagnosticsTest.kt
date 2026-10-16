@@ -210,7 +210,8 @@ class CrashAndDiagnosticsTest {
     @Test
     fun bubbleServiceIsNotSticky() {
         val controller = Robolectric.buildService(FloatingBubbleService::class.java).create()
-        assertEquals(Service.START_NOT_STICKY, controller.startCommand(0, 0))
+        val result = controller.get().onStartCommand(null, 0, 1)
+        assertEquals(Service.START_NOT_STICKY, result)
         controller.destroy()
     }
 
