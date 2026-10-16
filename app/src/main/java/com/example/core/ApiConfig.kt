@@ -74,6 +74,12 @@ object ApiConfig {
         return ""
     }
 
+    /** REST generateContent URL. The API key is sent in the x-goog-api-key header, never in the query. */
+    fun geminiGenerateContentUrl(modelName: String): String {
+        val model = modelName.trim()
+        return "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
+    }
+
     fun createOkHttpClient(): OkHttpClient {
         return OkHttpClient.Builder()
             .connectTimeout(60, TimeUnit.SECONDS)

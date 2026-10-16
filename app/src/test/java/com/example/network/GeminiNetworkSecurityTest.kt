@@ -1,5 +1,6 @@
 package com.example.network
 
+import com.example.core.ApiConfig
 import com.example.service.floating.FloatingPolishClient
 import com.example.websocket.GeminiLiveWebSocketClient
 import okhttp3.Interceptor
@@ -22,6 +23,17 @@ import org.robolectric.annotation.Config
 class GeminiNetworkSecurityTest {
 
     private val testValidKey = "AIzaSyD-TestValidKey1234567890"
+
+    @Test
+    fun `generateContent URL has no API key query parameter`() {
+        val url = ApiConfig.geminiGenerateContentUrl("gemini-2.0-flash")
+        assertEquals(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+            url
+        )
+        assertFalse(url.contains("key="))
+        assertFalse(url.contains("?"))
+    }
 
     @Test
     fun `websocket request does not contain key in URL query parameter`() {

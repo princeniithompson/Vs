@@ -1,9 +1,11 @@
 package com.example.service
 
-import android.app.usage.UsageStatsManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
+import com.example.core.ApiConfig
 import com.example.config.VoxStreamConfig
 import com.example.util.AppResolutionEngine
 import kotlinx.coroutines.CancellationException
@@ -79,21 +81,32 @@ object AppDetector {
     fun refreshWebApkInventory(context: Context) {
         try {
             val pm = context.packageManager
-            val installed = try {
-                pm.getInstalledPackages(PackageManager.GET_META_DATA)
+            val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            val resolves = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    pm.queryIntentActivities(
+                        launcher,
+                        PackageManager.ResolveInfoFlags.of(PackageManager.GET_META_DATA.toLong())
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    pm.queryIntentActivities(launcher, PackageManager.GET_META_DATA)
+                }
             } catch (e: Exception) {
                 emptyList()
             }
-            for (pkgInfo in installed) {
-                val pkgName = pkgInfo.packageName
-                if (pkgName.startsWith("org.chromium.webapk") || pkgName.contains(".webapk")) {
-                    val appInfo = pkgInfo.applicationInfo
-                    val label = appInfo?.loadLabel(pm)?.toString()?.trim() ?: pkgName
-                    val startUrl = appInfo?.metaData?.getString("org.chromium.webapk.shell_apk.startUrl")
-                    if (label.isNotBlank() && !label.startsWith("org.chromium", ignoreCase = true)) {
-                        webApkInventory[pkgName] = WebApkInfo(pkgName, label, startUrl)
-                        Log.d(TAG, "Indexed WebAPK: $pkgName -> '$label' (startUrl=$startUrl)")
-                    }
+            for (resolve in resolves) {
+                val pkgName = resolve.activityInfo?.packageName ?: continue
+                if (!(pkgName.startsWith("org.chromium.webapk") || pkgName.contains(".webapk"))) continue
+                val appInfo = resolve.activityInfo.applicationInfo
+                val label = appInfo?.loadLabel(pm)?.toString()?.trim()
+                    ?: resolve.loadLabel(pm)?.toString()?.trim()
+                    ?: pkgName
+                val startUrl = appInfo?.metaData?.getString("org.chromium.webapk.shell_apk.startUrl")
+                    ?: resolve.activityInfo.metaData?.getString("org.chromium.webapk.shell_apk.startUrl")
+                if (label.isNotBlank() && !label.startsWith("org.chromium", ignoreCase = true)) {
+                    webApkInventory[pkgName] = WebApkInfo(pkgName, label, startUrl)
+                    Log.d(TAG, "Indexed WebAPK: $pkgName -> '$label'")
                 }
             }
         } catch (e: Exception) {
@@ -138,7 +151,8 @@ object AppDetector {
     }
 
     /**
-     * 4-Signal WebAPK Detection Cascade
+     * WebAPK detection from the accessibility foreground package, window title, and launcher inventory.
+     * Usage-stats correlation is not used.
      */
     fun resolvePwaCascade(
         context: Context,
@@ -209,7 +223,9 @@ object AppDetector {
                     val cat = mapCategoryForName(info.label)
                     val appInfo = AppInfo(appName = info.label, category = cat, isLocallyResolved = true)
                     stickyPwaCache[packageName] = CachedPwaSession(info.label, cat, packageName)
-                    Log.d(TAG, "[PWA Cascade] Signal 3 Title Match: '$cleanTitle' -> '${info.label}' ($cat)")
+                    if (com.example.BuildConfig.DEBUG) {
+                        Log.d(TAG, "[PWA Cascade] Signal 3 Title Match: '$cleanTitle' -> '${info.label}' ($cat)")
+                    }
                     return appInfo
                 }
             }
@@ -233,45 +249,11 @@ object AppDetector {
                     val (appName, cat) = pair
                     val appInfo = AppInfo(appName = appName, category = cat, isLocallyResolved = true)
                     stickyPwaCache[packageName] = CachedPwaSession(appName, cat, packageName)
-                    Log.d(TAG, "[PWA Cascade] Signal 3 Direct Title Rule: '$cleanTitle' -> $appName ($cat)")
+                    if (com.example.BuildConfig.DEBUG) {
+                        Log.d(TAG, "[PWA Cascade] Signal 3 Direct Title Rule: '$cleanTitle' -> $appName ($cat)")
+                    }
                     return appInfo
                 }
-            }
-        }
-
-        // Signal 4: UsageStats Recency Correlation
-        if (cleanTitle.isNullOrBlank() && isBrowserPkg) {
-            try {
-                val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-                if (usm != null) {
-                    val now = System.currentTimeMillis()
-                    val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 300_000, now)
-                    if (!stats.isNullOrEmpty()) {
-                        val recentWebApk = stats
-                            .filter { it.packageName.startsWith("org.chromium.webapk") || it.packageName.contains(".webapk") }
-                            .maxByOrNull { it.lastTimeUsed }
-                        if (recentWebApk != null && (now - recentWebApk.lastTimeUsed) < 300_000) {
-                            val webApkPkg = recentWebApk.packageName
-                            val info = webApkInventory[webApkPkg]
-                            val label = info?.label ?: run {
-                                try {
-                                    val pm = context.packageManager
-                                    val appInf = pm.getApplicationInfo(webApkPkg, 0)
-                                    pm.getApplicationLabel(appInf).toString().trim()
-                                } catch (_: Exception) { null }
-                            }
-                            if (!label.isNullOrBlank() && !label.startsWith("org.chromium", ignoreCase = true)) {
-                                val cat = mapCategoryForName(label)
-                                val appInfo = AppInfo(appName = label, category = cat, isLocallyResolved = true)
-                                stickyPwaCache[packageName] = CachedPwaSession(label, cat, packageName)
-                                Log.d(TAG, "[PWA Cascade] Signal 4 UsageStats Match: $webApkPkg -> $label ($cat)")
-                                return appInfo
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Signal 4 UsageStats query error: ${e.message}")
             }
         }
 
@@ -551,7 +533,7 @@ object AppDetector {
     }
 
     private fun callGeminiREST(modelName: String, apiKey: String, prompt: String): String {
-        val urlString = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=${apiKey.trim()}"
+        val urlString = ApiConfig.geminiGenerateContentUrl(modelName)
         var connection: HttpURLConnection? = null
         try {
             val url = URL(urlString)

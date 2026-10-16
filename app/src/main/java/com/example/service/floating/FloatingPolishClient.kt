@@ -69,7 +69,7 @@ object FloatingPolishClient {
                     return PolishResult(null, "JSON build error: ${e.message}")
                 }
 
-                val urlString = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$trimmedKey"
+                val urlString = com.example.core.ApiConfig.geminiGenerateContentUrl(modelName)
                 val url = URL(urlString)
 
                 AppLogRepository.addLog(
@@ -96,7 +96,9 @@ object FloatingPolishClient {
                 val responseCode = connection.responseCode
                 if (responseCode == 200) {
                     val responseString = connection.inputStream.bufferedReader().use { it.readText() }
-                    Log.d(TAG, "Polish API success response from $modelName: $responseString")
+                    if (com.example.BuildConfig.DEBUG) {
+                        Log.d(TAG, "Polish API success response from $modelName: $responseString")
+                    }
                     AppLogRepository.addLog(
                         LogLevel.RECEIVED,
                         "PolishAPI",
