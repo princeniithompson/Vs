@@ -29,6 +29,7 @@ import com.princeniithompson.rapcha.service.floating.FloatingOverlayWindowManage
 import com.princeniithompson.rapcha.service.floating.FloatingPolishCoordinator
 import com.princeniithompson.rapcha.service.floating.FloatingTextInjector
 import com.princeniithompson.rapcha.websocket.GeminiLiveWebSocketClient
+import com.princeniithompson.rapcha.websocket.InterimPreviewMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -73,6 +74,7 @@ class FloatingBubbleService : Service() {
     private var pendingCompletionTimeoutJob: Job? = null
     private var activeDetectionJob: Job? = null
     private var fgsDowngradeJob: Job? = null
+    private var connectionLostHapticSent = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -141,6 +143,17 @@ class FloatingBubbleService : Service() {
                     if (finalizeNow && sessionManager.isRecording) {
                         onConfirmClicked()
                     }
+                }
+            },
+            onPreviewPhase = { phase ->
+                overlayWindowManager.overlayPreviewPhase.value = phase
+                if (phase == InterimPreviewMonitor.Phase.CONNECTION_LOST) {
+                    if (!connectionLostHapticSent) {
+                        connectionLostHapticSent = true
+                        FloatingHapticManager.trigger(this, FloatingHapticType.CONNECTION_LOST)
+                    }
+                } else {
+                    connectionLostHapticSent = false
                 }
             }
         )
@@ -425,6 +438,8 @@ class FloatingBubbleService : Service() {
         overlayWindowManager.overlayRecording.value = false
 
         pendingCompletionTimeoutJob?.cancel()
+        overlayWindowManager.overlayPolishingMessage.value =
+            InterimPreviewMonitor.polishingMessage(sessionManager.durationSeconds)
         pendingCompletionTimeoutJob = serviceScope.launch {
             val textToInject = sessionManager.finishActivityAndAwaitTranscript()
             if (isActive) {
@@ -531,6 +546,9 @@ class FloatingBubbleService : Service() {
         pendingCompletionTimeoutJob = null
 
         sessionManager.clearTranscripts()
+        connectionLostHapticSent = false
+        overlayWindowManager.overlayPreviewPhase.value = InterimPreviewMonitor.Phase.LISTENING
+        overlayWindowManager.overlayPolishingMessage.value = null
         overlayWindowManager.collapsePanel()
         overlayWindowManager.updateOverlayVisibility(isSessionActive = false)
     }

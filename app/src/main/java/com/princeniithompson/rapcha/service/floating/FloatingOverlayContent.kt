@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.princeniithompson.rapcha.ui.components.FloatingDictationPopup
+import com.princeniithompson.rapcha.websocket.InterimPreviewMonitor
 import com.princeniithompson.rapcha.ui.components.overlay.FloatingCollapsedBubble
 import com.princeniithompson.rapcha.ui.components.overlay.FloatingSafeModeShieldBadge
 import com.princeniithompson.rapcha.ui.components.overlay.FloatingScreenScanOverlay
@@ -20,6 +21,8 @@ import com.princeniithompson.rapcha.ui.theme.MyApplicationTheme
 @Composable
 fun FloatingOverlayContent(
     transcript: String,
+    previewPhase: InterimPreviewMonitor.Phase = InterimPreviewMonitor.Phase.LISTENING,
+    polishingMessage: String? = null,
     recording: Boolean,
     pendingFinalizing: Boolean,
     polishing: Boolean,
@@ -66,6 +69,8 @@ fun FloatingOverlayContent(
             } else if (isExpanded) {
                 FloatingDictationPopup(
                     transcriptText = transcript,
+                    previewPhase = previewPhase,
+                    polishingMessage = polishingMessage,
                     isRecording = recording,
                     isPendingFinalizing = pendingFinalizing,
                     isPolishing = polishing,

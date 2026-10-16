@@ -53,7 +53,9 @@ class GeminiLiveWebSocketClient(
     okHttpClient: OkHttpClient? = null,
     private val onStructuredError: ((GeminiLiveError) -> Unit)? = null,
     private val isSessionActive: () -> Boolean = { false },
-    private val onSessionLimit: (message: String, finalizeNow: Boolean) -> Unit = { _, _ -> }
+    private val onSessionLimit: (message: String, finalizeNow: Boolean) -> Unit = { _, _ -> },
+    private val diagnosticSource: DiagnosticSource = DiagnosticSource.BUBBLE,
+    private val onPreviewPhase: (InterimPreviewMonitor.Phase) -> Unit = {}
 ) {
     companion object {
         private const val TAG = "GeminiLiveWS"
@@ -149,6 +151,8 @@ class GeminiLiveWebSocketClient(
     val activeSessionExists: Boolean
         get() = webSocket != null
 
+    val interimPreviewMonitor = InterimPreviewMonitor()
+
     private var isSmartMode: Boolean = false
     private var customVocabularyList: List<String> = emptyList()
 
@@ -198,6 +202,7 @@ class GeminiLiveWebSocketClient(
         val resolvedModel = model.ifBlank { DEFAULT_MODEL }.trim()
 
         lastApiKey = trimmedKey
+        interimPreviewMonitor.start(System.currentTimeMillis())
         activeModel = resolvedModel
         isSmartMode = smartMode
         customVocabularyList = customVocabulary
@@ -554,7 +559,7 @@ class GeminiLiveWebSocketClient(
                 val interimText = interimObj?.optString("text").orEmpty()
                 if (interimText.isNotEmpty()) {
                     onLog(LogLevel.RECEIVED, TAG, "Interim: ${TranscriptPrivacy.summary(interimText)}", null)
-                    notifyInterimTranscription(interimText)
+                    noteLiveTranscription(interimText)
                 }
 
                 val finalizedObj = serverContent.optJSONObject("inputTranscription")
@@ -565,7 +570,7 @@ class GeminiLiveWebSocketClient(
                 if (!activityEnded.get()) {
                     if (finalizedText.isNotEmpty()) {
                         onLog(LogLevel.RECEIVED, TAG, "Preview update before activityEnd: ${TranscriptPrivacy.summary(finalizedText)}", null)
-                        notifyInterimTranscription(finalizedText)
+                        noteLiveTranscription(finalizedText)
                     }
                     if (turnFinished) {
                         activeTurnText.clear()
@@ -604,6 +609,10 @@ class GeminiLiveWebSocketClient(
     fun sendAudioChunk(pcmChunk: ByteArray): Boolean {
         val ws = webSocket
         if (ws == null || !isSetupComplete.get() || isExplicitlyClosed.get() || activityEnded.get()) {
+            if (!activityEnded.get() && isSetupComplete.get()) {
+                interimPreviewMonitor.onPcm(pcmChunk, accepted = false, nowMs = System.currentTimeMillis())
+                publishInterimPreview()
+            }
             return false
         }
         if (!signalActivityStart()) {
@@ -623,9 +632,14 @@ class GeminiLiveWebSocketClient(
                     put("mediaChunks", mediaChunksArray)
                 })
             }
-            ws.send(chunkJson.toString())
+            val sent = ws.send(chunkJson.toString())
+            interimPreviewMonitor.onPcm(pcmChunk, accepted = sent, nowMs = System.currentTimeMillis())
+            publishInterimPreview()
+            sent
         } catch (e: Exception) {
             Log.w(TAG, "Error sending audio chunk (socket disconnected or buffer full): ${e.message}")
+            interimPreviewMonitor.onPcm(pcmChunk, accepted = false, nowMs = System.currentTimeMillis())
+            publishInterimPreview()
             false
         }
     }
@@ -686,6 +700,7 @@ class GeminiLiveWebSocketClient(
             }
             val sent = ws.send(endJson.toString())
             if (sent) {
+                interimPreviewMonitor.onActivityEnd(System.currentTimeMillis())
                 onLog(LogLevel.SENT, TAG, "Sent activityEnd", endJson.toString())
             }
             sent
@@ -740,6 +755,7 @@ class GeminiLiveWebSocketClient(
         }
         closeExistingWebSocket()
 
+        interimPreviewMonitor.stop()
         currentActiveClient.compareAndSet(this, null)
 
         isSetupComplete.set(false)
@@ -808,6 +824,50 @@ class GeminiLiveWebSocketClient(
         } else {
             mainHandler.post { onSetupComplete() }
         }
+    }
+
+    fun pollInterimPreview() {
+        publishInterimPreview()
+    }
+
+    private fun noteLiveTranscription(text: String) {
+        val resumed = interimPreviewMonitor.onInterim(System.currentTimeMillis())
+        if (resumed != null) {
+            logMonitorEvent(resumed)
+        }
+        publishInterimPreview()
+        notifyInterimTranscription(text)
+    }
+
+    private fun publishInterimPreview() {
+        val tick = interimPreviewMonitor.poll(System.currentTimeMillis(), socketStateLabel())
+        tick.events.forEach { logMonitorEvent(it) }
+        if (tick.phaseChanged) {
+            val phase = tick.phase
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                onPreviewPhase(phase)
+            } else {
+                mainHandler.post { onPreviewPhase(phase) }
+            }
+        }
+    }
+
+    private fun socketStateLabel(): String {
+        if (isExplicitlyClosed.get() || webSocket == null) return "closed"
+        if (!isSetupComplete.get()) return "connecting"
+        return "open"
+    }
+
+    private fun logMonitorEvent(event: InterimPreviewMonitor.Event) {
+        val (type, message) = when (event) {
+            is InterimPreviewMonitor.Event.Stall -> DiagnosticType.INTERIM_STALL to
+                "no interimInputTranscription or inputTranscription for ${event.gapMs}ms while speech audio was streaming"
+            is InterimPreviewMonitor.Event.Resumed -> DiagnosticType.INTERIM_RESUMED to
+                "live transcription resumed after ${event.gapMs}ms"
+            is InterimPreviewMonitor.Event.Heartbeat -> DiagnosticType.SESSION_HEARTBEAT to
+                "interim_count=${event.interimCount} last_interim_age_ms=${event.lastInterimAgeMs} bytes_sent=${event.bytesSent} socket=${event.socketState}"
+        }
+        AppLogRepository.logEvent(diagnosticSource, type, message)
     }
 
     private fun notifyInterimTranscription(text: String) {
@@ -892,6 +952,7 @@ class GeminiLiveWebSocketClient(
     private fun settleEndpoint(text: String) {
         if (!activityEnded.get()) return
         if (!endpointSettled.compareAndSet(false, true)) return
+        interimPreviewMonitor.onFinalTranscript(System.currentTimeMillis())
         endpointTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         endpointTimeoutRunnable = null
         val resolved = text.trim().ifBlank { lastInterimText.trim() }

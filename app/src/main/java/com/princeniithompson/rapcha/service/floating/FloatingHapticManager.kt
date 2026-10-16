@@ -14,7 +14,8 @@ enum class FloatingHapticType {
     BUBBLE_HOLD,
     BUBBLE_MOVE,
     BUBBLE_SETTLE,
-    CLIPBOARD_FALLBACK
+    CLIPBOARD_FALLBACK,
+    CONNECTION_LOST
 }
 
 object FloatingHapticManager {
@@ -76,6 +77,13 @@ object FloatingHapticManager {
                             VibrationEffect.createOneShot(12, 100)
                         }
                     }
+                    FloatingHapticType.CONNECTION_LOST -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK)
+                        } else {
+                            VibrationEffect.createWaveform(longArrayOf(0, 40, 50, 40), -1)
+                        }
+                    }
                     FloatingHapticType.BUBBLE_SETTLE -> {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
@@ -95,6 +103,7 @@ object FloatingHapticManager {
                     FloatingHapticType.BUBBLE_MOVE -> 12L
                     FloatingHapticType.BUBBLE_SETTLE -> 40L
                     FloatingHapticType.CLIPBOARD_FALLBACK -> 35L
+                    FloatingHapticType.CONNECTION_LOST -> 70L
                 }
                 vibrator.vibrate(millis)
             }
