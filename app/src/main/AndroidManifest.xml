@@ -58,7 +58,7 @@
 
         <!-- Accessibility Service to detect text fields and inject text -->
         <service
-            android:name=".service.VoxStreamAccessibilityService"
+            android:name=".service.RapchaAccessibilityService"
             android:enabled="true"
             android:exported="true"
             android:label="@string/accessibility_service_label"
@@ -73,7 +73,7 @@
 
         <!-- Silent Companion Input Method Service for caret-level commitText injection -->
         <service
-            android:name=".service.VoxStreamInputMethodService"
+            android:name=".service.RapchaInputMethodService"
             android:enabled="true"
             android:exported="true"
             android:label="@string/app_name"

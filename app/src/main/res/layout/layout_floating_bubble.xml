@@ -16,7 +16,7 @@
         android:layout_height="60dp"
         android:layout_gravity="start"
         android:background="@android:color/transparent"
-        android:contentDescription="VoxStream Floating Voice Typing"
+        android:contentDescription="Rapcha Floating Voice Typing"
         android:scaleType="fitCenter"
         android:src="@drawable/ic_lifebuoy_ring" />
 

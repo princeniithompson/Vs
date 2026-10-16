@@ -9,11 +9,11 @@ plugins {
 }
 
 android {
-  namespace = "com.example"
+  namespace = "com.princeniithompson.rapcha"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.voicetyping.vxstrm"
+    applicationId = "com.princeniithompson.rapcha"
     minSdk = 24
     targetSdk = 36
     versionCode = 1

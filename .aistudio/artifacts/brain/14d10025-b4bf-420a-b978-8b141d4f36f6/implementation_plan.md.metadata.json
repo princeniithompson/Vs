@@ -1,5 +1,5 @@
 {
-  "summary": "Implementation plan for the VoxStream production text inserter and hybrid direct injection pipeline based on Whisperflow architecture, featuring direct caret insertion with zero clipboard contamination and subtle floating ring fallback indication.",
+  "summary": "Implementation plan for the Rapcha production text inserter and hybrid direct injection pipeline based on Whisperflow architecture, featuring direct caret insertion with zero clipboard contamination and subtle floating ring fallback indication.",
   "updatedAt": "2026-10-14T18:12:34.053346273Z",
   "requestFeedback": true,
   "userFacing": true

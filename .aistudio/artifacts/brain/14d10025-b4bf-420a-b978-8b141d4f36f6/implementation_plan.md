@@ -1,6 +1,6 @@
-# VoxStream Production Text Inserter & Direct Injection Pipeline
+# Rapcha Production Text Inserter & Direct Injection Pipeline
 
-A robust, production-grade text insertion engine for VoxStream based on Whisperflow's hybrid architecture. It ensures dictated text is always directly injected into the active text field with caret positioning, leaving the system clipboard completely untouched, and safely falling back to the clipboard with subtle ring feedback only when no editable field exists.
+A robust, production-grade text insertion engine for Rapcha based on Whisperflow's hybrid architecture. It ensures dictated text is always directly injected into the active text field with caret positioning, leaving the system clipboard completely untouched, and safely falling back to the clipboard with subtle ring feedback only when no editable field exists.
 
 ## User Review & Critical Decisions
 
@@ -17,7 +17,7 @@ A robust, production-grade text insertion engine for VoxStream based on Whisperf
 
 ## 1. Overview & Core Concept
 
-- **What It Does**: Replaces fragmented injection paths with a dedicated `VoxStreamTextInserter` component. When a dictation session finalizes, the inserter locates the focused text container, calculates cursor position, preserves any pre-existing text or user drafts, executes direct insertion via accessibility node actions, and reports a structured `InsertionResult` (`SuccessDirect`, `SuccessClipboardFallback`, `Failed`).
+- **What It Does**: Replaces fragmented injection paths with a dedicated `RapchaTextInserter` component. When a dictation session finalizes, the inserter locates the focused text container, calculates cursor position, preserves any pre-existing text or user drafts, executes direct insertion via accessibility node actions, and reports a structured `InsertionResult` (`SuccessDirect`, `SuccessClipboardFallback`, `Failed`).
 - **Target Audience / Persona**: Mobile voice dictation users who type across diverse Android applications (WhatsApp, Telegram, Gmail, Notion, Slack, mobile browsers, terminal emulators) and require seamless in-place typing without their clipboard history being overwritten.
 - **Key Value**: 100% clipboard cleanliness during normal typing, elimination of clobbered drafts, and smooth, non-intrusive fallback handling.
 
@@ -29,14 +29,14 @@ A robust, production-grade text insertion engine for VoxStream based on Whisperf
 1. **Direct Caret Injection (Primary CUJ)**:
    - User focuses any input field in any app (e.g. WhatsApp chat input).
    - User dictates via floating ring or main app; Gemini Live transcribes in real-time.
-   - Upon session completion or tap "Insert", `VoxStreamTextInserter.insertTranscript()` runs inside a coroutine mutex.
+   - Upon session completion or tap "Insert", `RapchaTextInserter.insertTranscript()` runs inside a coroutine mutex.
    - Text inserts cleanly at the exact cursor position without modifying the clipboard.
    - The floating ring displays a brief green success glow and gently docks.
 
 2. **No Text Field / Fallback CUJ**:
    - User dictates without having an editable text field focused (e.g., reading a PDF or on the home screen).
    - Direct injection checks fail to find an active editable node.
-   - `VoxStreamTextInserter` routes to `fallbackToClipboard()`.
+   - `RapchaTextInserter` routes to `fallbackToClipboard()`.
    - Text is securely copied to the clipboard.
    - The floating ring triggers a subtle amber ripple animation (`FallbackIndicator`) indicating the text is ready to paste, without displaying an intrusive full-screen toast.
 
@@ -51,7 +51,7 @@ A robust, production-grade text insertion engine for VoxStream based on Whisperf
 ## 3. Key Product Decisions & Trade-Offs
 
 - **Decision 1: Mutex-Protected Insertion Engine (`Mutex.withLock`)**:
-  - *Chosen Approach*: Wrap all insertion attempts in a coroutine `Mutex` inside `VoxStreamTextInserter`.
+  - *Chosen Approach*: Wrap all insertion attempts in a coroutine `Mutex` inside `RapchaTextInserter`.
   - *Why*: Eliminates race conditions when the user taps quickly, speaks in short bursts, or when interim/final transcript events overlap.
   - *Alternatives Considered*: Atomic flags alone, which can cause dropped insertions or interleaved text strings.
 
@@ -76,7 +76,7 @@ A robust, production-grade text insertion engine for VoxStream based on Whisperf
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│                       VoxStreamTextInserter                            │
+│                       RapchaTextInserter                            │
 │  - insertionMutex.withLock { ... }                                     │
 │                                                                        │
 │  Step A: tryDirectInjection(transcript)                                │
@@ -106,7 +106,7 @@ A robust, production-grade text insertion engine for VoxStream based on Whisperf
 ```
 
 ### Data Model & Component Interfaces
-- `VoxStreamTextInserter`:
+- `RapchaTextInserter`:
   - `suspend fun insertTranscript(transcript: String): InsertionResult`
   - `private fun tryDirectInjection(text: String): Boolean`
   - `private fun fallbackToClipboard(text: String): Boolean`
