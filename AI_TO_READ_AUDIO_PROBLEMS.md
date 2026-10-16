@@ -67,7 +67,7 @@ The application functions as a high-performance voice-typing and dictation assis
 
 ## 3. Component Inventory & Code Wiring
 
-### A. `com.example.audio.AudioRecorder` (`app/src/main/java/com/example/audio/AudioRecorder.kt`)
+### A. `com.princeniithompson.rapcha.audio.AudioRecorder` (`app/src/main/java/com/example/audio/AudioRecorder.kt`)
 * **Role:** Low-level Android `AudioRecord` wrapper and DSP pump.
 * **Audio Specs:**
   * Sample Rate: `16000 Hz`
@@ -80,13 +80,13 @@ The application functions as a high-performance voice-typing and dictation assis
   * `stop()`: Atomically flips `isRecording` flag from `true` to `false` and launches `cleanUp()` on an unmanaged `CoroutineScope(Dispatchers.IO)`.
   * `cleanUp()`: Releases DSP hardware effects (`AcousticEchoCanceler`, `NoiseSuppressor`, `AutomaticGainControl`) and calls `audioRecord.stop()` and `audioRecord.release()`.
 
-### B. `com.example.audio.HighPassFilter` (`app/src/main/java/com/example/audio/HighPassFilter.kt`)
+### B. `com.princeniithompson.rapcha.audio.HighPassFilter` (`app/src/main/java/com/example/audio/HighPassFilter.kt`)
 * **Role:** Single-pole IIR high-pass filter ($f_c = 120\text{ Hz}$).
 * **Implementation:** Mutates the PCM `ByteArray` in-place using formula:
   $$y[n] = \alpha \cdot (y[n-1] + x[n] - x[n-1])$$
 * **Memory Allocation:** Zero heap allocation per process call.
 
-### C. `com.example.websocket.GeminiLiveWebSocketClient` (`app/src/main/java/com/example/websocket/GeminiLiveWebSocketClient.kt`)
+### C. `com.princeniithompson.rapcha.websocket.GeminiLiveWebSocketClient` (`app/src/main/java/com/example/websocket/GeminiLiveWebSocketClient.kt`)
 * **Role:** Network transport layer managing the duplex OkHttp WebSocket connection to Gemini Live.
 * **Base URL:** `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent`
 * **Default Model:** `models/gemini-3.5-transcribe-live`
@@ -98,9 +98,9 @@ The application functions as a high-performance voice-typing and dictation assis
   * Certificate Pinning on `generativelanguage.googleapis.com`
 
 ### D. Consumers / Orchestrators
-1. **In-App Activity Screen:** `com.example.ui.VoiceTypingViewModel`
-2. **Floating Overlay Service:** `com.example.service.FloatingBubbleService` delegating to `com.example.service.floating.FloatingDictationSessionManager`
-3. **Local WAV Persistence:** `com.example.data.AudioRecordingRepository`
+1. **In-App Activity Screen:** `com.princeniithompson.rapcha.ui.VoiceTypingViewModel`
+2. **Floating Overlay Service:** `com.princeniithompson.rapcha.service.FloatingBubbleService` delegating to `com.princeniithompson.rapcha.service.floating.FloatingDictationSessionManager`
+3. **Local WAV Persistence:** `com.princeniithompson.rapcha.data.AudioRecordingRepository`
 
 ---
 

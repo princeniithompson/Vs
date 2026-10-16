@@ -1,18 +1,18 @@
-# VoxStream - Voice Typing Assistant
+# Rapcha - Voice Typing Assistant
 
-VoxStream is an advanced Android voice typing application featuring an Everywhere Floating Voice Ring, multi-signal evidence-based App Detection, AI Polish editing styles, and granular App Detection Diagnostics.
+Rapcha is an advanced Android voice typing application featuring an Everywhere Floating Voice Ring, multi-signal evidence-based App Detection, AI Polish editing styles, and granular App Detection Diagnostics.
 
 ## Architecture & Folder Structure
-- `com.example.service/`: Accessibility service, floating bubble service, app detector, and classifiers.
-- `com.example.data/`: Local repositories (History, Custom Vocabulary, App Logs, Audio Recordings, App Detection Logs).
-- `com.example.ui/`: Jetpack Compose screens (`NoiseCancellationScreen`, `HomeScreen`, `DictionaryScreen`), components, themes, and ViewModel.
-- `com.example.util/`: App resolution engine and utilities.
+- `com.princeniithompson.rapcha.service/`: Accessibility service, floating bubble service, app detector, and classifiers.
+- `com.princeniithompson.rapcha.data/`: Local repositories (History, Custom Vocabulary, App Logs, Audio Recordings, App Detection Logs).
+- `com.princeniithompson.rapcha.ui/`: Jetpack Compose screens (`NoiseCancellationScreen`, `HomeScreen`, `DictionaryScreen`), components, themes, and ViewModel.
+- `com.princeniithompson.rapcha.util/`: App resolution engine and utilities.
 
 ## Key Features
 - **Everywhere Floating Voice Ring**: Floats over all apps for instant voice dictation.
 - **App Detection & Resolution Improvements**:
   - **Package Visibility (`QUERY_ALL_PACKAGES`)**: Added broad package query permissions in `AndroidManifest.xml` so `PackageManager.getApplicationLabel()` can resolve installed app titles and WebAPKs across Android 11+ sandboxes.
-  - **Interactive Window Titles (`flagRetrieveInteractiveWindows`)**: Enabled interactive window retrieval in `accessibility_service_config.xml` and `VoxStreamAccessibilityService.kt` to extract real window titles.
+  - **Interactive Window Titles (`flagRetrieveInteractiveWindows`)**: Enabled interactive window retrieval in `accessibility_service_config.xml` and `RapchaAccessibilityService.kt` to extract real window titles.
   - **App Name Resolution**: Direct PackageManager label lookup for installed apps and WebAPKs, Gemini detection for Search/Bard/Gemini, and browser site product fallback.
   - **Log Deduplication**: Added deduplication in `AppDetectionLogRepository.kt` to skip logging redundant events unless package name, resolved app name, or window title changes.
 - **App Detection Diagnostics**: Granular tracking of app detection metadata (raw package name, window title, accessibility node text snippets, classification source, and Gemini AI prompt/response traces).
@@ -20,7 +20,7 @@ VoxStream is an advanced Android voice typing application featuring an Everywher
 - **Smart Safe Mode**: Protects sensitive banking and credential apps.
 - **Touch Pass-Through During Voice Dictation**: When the floating dictation popup expands, its overlay window wraps tightly around the visible panel height without claiming full-screen bounds or using unbounded layout limits. Touches outside the panel pass directly to underlying applications (WhatsApp, Pinterest, browsers) and soft keyboards so users can freely navigate and type while voice dictating.
 - **Lifesaver App Icon & Adaptive Plate**: Configured the adaptive launcher icon following Pixel guidelines. Set `ic_launcher_background.xml` to a solid `#FFFFFF` canvas filling the full 108dp x 108dp plate (`M0,0h108v108h-108z`), and centered the Lifesaver buoy strictly inside the 66dp x 66dp safe zone in `ic_launcher_foreground.xml`. This prevents Android's circular launcher mask from clipping the buoy ring and ensures the entire ring with red segments and shadow is visible and centered on the home screen.
-- **Accessibility Service Clean Binding & Hidden API Fix**: Removed unused `flagInputMethodEditor` / `FLAG_INPUT_METHOD_EDITOR` from `accessibility_service_config.xml` and `VoxStreamAccessibilityService.kt`. Replaced preview/unstable `androidx.core:core-ktx:1.18.0` with stable `1.15.0` in `gradle/libs.versions.toml`, eliminating experimental references to blocked hidden methods (`AccessibilityNodeInfo.getSelection` and `setSelection`) and preventing ART link-time denials. Text injection remains fully operational via public `ACTION_SET_TEXT`.
+- **Accessibility Service Clean Binding & Hidden API Fix**: Removed unused `flagInputMethodEditor` / `FLAG_INPUT_METHOD_EDITOR` from `accessibility_service_config.xml` and `RapchaAccessibilityService.kt`. Replaced preview/unstable `androidx.core:core-ktx:1.18.0` with stable `1.15.0` in `gradle/libs.versions.toml`, eliminating experimental references to blocked hidden methods (`AccessibilityNodeInfo.getSelection` and `setSelection`) and preventing ART link-time denials. Text injection remains fully operational via public `ACTION_SET_TEXT`.
 - **Wispr Flow Exact Onboarding & Editorial Typography Redesign**:
   - Implemented the exact multi-screen workflow from the Wispr Flow application:
     1. *Screen 1 (Intro)*: Soft pastel coral red card (`#FDE8E8`) with editorial serif headline (`Newsreader.ttf`) and decorative ribbon curve.
@@ -28,7 +28,7 @@ VoxStream is an advanced Android voice typing application featuring an Everywher
     3. *Screens 3–7 (Interactive Sandbox)*: Real interactive chat input box triggering the user's actual native keyboard (Gboard, Samsung Keyboard, etc.), shaking Lifesaver bubble docking dynamically right above the keyboard with haptic feedback, immediate runtime `RECORD_AUDIO` permission prompt, and the exact production notched floating dictation container (`FloatingDictationPopup`) appearing directly above the keyboard with live aurora glow, transcript streaming, AI polish toggle modes (`Clean Message` / `Optimize Prompt`), and interactive Cancel, Polish, and Complete buttons before smoothly inserting text into the chat box (`Nice, that worked!`).
     4. *Screen 8 (App Ecosystem)*: Illustrated mock showcase demonstrating floating Lifesaver over WhatsApp, Instagram, Pinterest, TikTok, Notion, Gmail, and ChatGPT.
     5. *Screen 9 (Overlay Permission)*: Illustrated Android Settings toggle guide with curved directional arrow.
-    6. *Screens 10 & 11 (Accessibility Walkthrough)*: Step-by-step visual cards (`Downloaded apps -> VoxStream On -> No shortcut`) and comprehensive transparency & safety disclosure sheet (`Accessibility Permissions Required`).
+    6. *Screens 10 & 11 (Accessibility Walkthrough)*: Step-by-step visual cards (`Downloaded apps -> Rapcha On -> No shortcut`) and comprehensive transparency & safety disclosure sheet (`Accessibility Permissions Required`).
     7. *Screens 12 & 13 (Notifications & Completion)*: `Don't speak into the void` notification permission prompt and `You're all set!` final handoff.
   - Added `Newsreader` Google Font locally via `font-util` into `res/font/newsreader.ttf` for editorial serif display typography.
   - Sized and styled all onboarding action buttons ("Next", "Continue", "Finish") and interactive elements with dynamic adaptive colors (`MaterialTheme.colorScheme.primaryContainer` and `onPrimaryContainer`), with the top progress bar segments and highlighted text ("Tap") adopting the deep dynamic primary tone (`MaterialTheme.colorScheme.primary`).
@@ -48,7 +48,7 @@ VoxStream is an advanced Android voice typing application featuring an Everywher
     - UI Telemetry: Whisperflow-style RMS meter value calculation for smooth UI amplitude visualizers without touching or mutating the PCM bytes.
     - Analytics: Integrated non-destructive `HeadSilenceTracker` to observe speech onset delay.
     - Mic Lifecycle: Rock-solid start/stop/release lifecycle with explicit synchronization and non-cancellable resource teardown, preventing HAL microphone leaks and stuck green recording indicators.
-- **Whisperflow Hybrid Text Inserter (`VoxStreamTextInserter`)**:
+- **Whisperflow Hybrid Text Inserter (`RapchaTextInserter`)**:
   - Implemented the production text insertion engine matching Wispr Flow's hybrid architecture:
     - **Mutex Protection**: Concurrency locking (`Mutex.withLock`) prevents race conditions during rapid dictation or overlapping speech events.
     - **Direct Caret Injection First**: Prioritizes direct text injection into the active text field via `AccessibilityNodeInfo` (`ACTION_SET_TEXT`, `ACTION_SET_SELECTION`) and `InputConnection.commitText`, with intelligent hint stripping and cursor preservation.

@@ -1,8 +1,8 @@
-# VoxStream
+# Rapcha
 
 > **Native Android AI Voice Typing & Polishing System**
 
-VoxStream is a native Android floating-bubble voice assistant designed for high-precision streaming transcription, context-aware AI text polishing via Gemini 3.5 Flash Lite, and deterministic direct text injection into active input fields without system clipboard corruption.
+Rapcha is a native Android floating-bubble voice assistant designed for high-precision streaming transcription, context-aware AI text polishing via Gemini 3.5 Flash Lite, and deterministic direct text injection into active input fields without system clipboard corruption.
 
 ---
 
@@ -68,7 +68,7 @@ app/src/main/java/com/example/
 │   ├── GeminiHearingProcessor.kt
 │   └── HighPassFilter.kt
 ├── config/
-│   └── VoxStreamConfig.kt
+│   └── RapchaConfig.kt
 ├── core/
 │   └── ApiConfig.kt
 ├── data/
@@ -86,8 +86,8 @@ app/src/main/java/com/example/
 │   ├── FloatingBubbleService.kt
 │   ├── LearnedAppRegistry.kt
 │   ├── SafeModeClassifier.kt
-│   ├── VoxStreamAccessibilityService.kt
-│   ├── VoxStreamInputMethodService.kt
+│   ├── RapchaAccessibilityService.kt
+│   ├── RapchaInputMethodService.kt
 │   └── floating/
 │       ├── FloatingDictationSessionManager.kt
 │       ├── FloatingHapticManager.kt

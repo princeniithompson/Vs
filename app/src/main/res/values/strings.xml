@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">VoxStream</string>
-    <string name="accessibility_service_label">VoxStream Voice Typing Assistant</string>
-    <string name="accessibility_service_desc">VoxStream reads on-screen content to detect the current app and types dictated text into the focused field.</string>
+    <string name="app_name">Rapcha</string>
+    <string name="accessibility_service_label">Rapcha Voice Typing Assistant</string>
+    <string name="accessibility_service_desc">Rapcha reads on-screen content to detect the current app and types dictated text into the focused field.</string>
 </resources>

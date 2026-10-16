@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "VoxStream"
+rootProject.name = "Rapcha"
 
 include(":app")
