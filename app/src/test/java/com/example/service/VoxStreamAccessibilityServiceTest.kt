@@ -15,9 +15,31 @@ class VoxStreamAccessibilityServiceTest {
     private val service = VoxStreamAccessibilityService()
 
     @Test
-    fun `extractGenuineText returns empty when isShowingHintText is true`() {
+    fun `extractGenuineText keeps text when the hint flag is set but hintText does not match`() {
         val node = AccessibilityNodeInfo.obtain()
         node.text = "Ask Google…"
+        node.isShowingHintText = true
+
+        val result = service.extractGenuineText(node)
+        assertEquals("Ask Google…", result)
+    }
+
+    @Test
+    fun `extractGenuineText keeps text that matches hintText when the hint flag is off`() {
+        val node = AccessibilityNodeInfo.obtain()
+        node.text = "Message"
+        node.hintText = "Message"
+        node.isShowingHintText = false
+
+        val result = service.extractGenuineText(node)
+        assertEquals("Message", result)
+    }
+
+    @Test
+    fun `extractGenuineText returns empty only for an active hint`() {
+        val node = AccessibilityNodeInfo.obtain()
+        node.text = "Ask Google…"
+        node.hintText = "Ask Google…"
         node.isShowingHintText = true
 
         val result = service.extractGenuineText(node)
@@ -25,32 +47,23 @@ class VoxStreamAccessibilityServiceTest {
     }
 
     @Test
-    fun `extractGenuineText returns empty when text matches hintText exactly`() {
-        val node = AccessibilityNodeInfo.obtain()
-        node.text = "Message"
-        node.hintText = "Message"
-        node.isShowingHintText = false
-
-        val result = service.extractGenuineText(node)
-        assertEquals("", result)
-    }
-
-    @Test
-    fun `extractGenuineText returns empty for Google Search placeholder`() {
-        val node = AccessibilityNodeInfo.obtain()
-        node.text = "Ask Google…"
-
-        val result = service.extractGenuineText(node)
-        assertEquals("", result)
-    }
-
-    @Test
-    fun `extractGenuineText returns empty for WhatsApp Message placeholder`() {
+    fun `extractGenuineText keeps a short placeholder that is not an active hint`() {
         val node = AccessibilityNodeInfo.obtain()
         node.text = "Message"
 
         val result = service.extractGenuineText(node)
-        assertEquals("", result)
+        assertEquals("Message", result)
+    }
+
+    @Test
+    fun `extractGenuineText keeps short mention text when the hint flag is set`() {
+        val node = AccessibilityNodeInfo.obtain()
+        node.text = "@princeniithompson"
+        node.hintText = "Ask Gemini"
+        node.isShowingHintText = true
+
+        val result = service.extractGenuineText(node)
+        assertEquals("@princeniithompson", result)
     }
 
     @Test
@@ -82,7 +95,7 @@ class VoxStreamAccessibilityServiceTest {
 
     @Test
     fun `injectText returns false for empty text`() {
-        val result = service.injectText("")
+        val result = kotlinx.coroutines.runBlocking { service.injectText("") }
         org.junit.Assert.assertFalse(result)
     }
 
@@ -90,7 +103,7 @@ class VoxStreamAccessibilityServiceTest {
     fun `injectText is blocked when Smart Safe Mode is active`() {
         FloatingBubbleManager.updateCurrentForegroundPackage("com.chase.sig.android", null)
         try {
-            val result = service.injectText("Secret password")
+            val result = kotlinx.coroutines.runBlocking { service.injectText("Secret password") }
             org.junit.Assert.assertFalse("Injection must be blocked when Smart Safe Mode is active", result)
         } finally {
             FloatingBubbleManager.updateCurrentForegroundPackage("com.google.android.keep", null)

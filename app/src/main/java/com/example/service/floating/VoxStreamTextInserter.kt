@@ -3,8 +3,6 @@ package com.example.service.floating
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethod
@@ -13,23 +11,21 @@ import com.example.data.InjectionLogRepository
 import com.example.service.AppContextResolver
 import com.example.service.FloatingBubbleManager
 import com.example.service.VoxStreamAccessibilityService
-import com.example.service.VoxStreamInputMethodService
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
  * Production-ready text insertion engine for VoxStream based on Whisperflow's architecture:
  * 1. Mutex-protected insertion loop ensuring zero race conditions during rapid typing/dictation.
- * 2. Attempts direct caret-level injection into the active text field first (IME InputConnection & AccessibilityService ACTION_SET_TEXT / ACTION_PASTE).
- * 3. Keeps user's clipboard 100% clean during normal voice typing.
- * 4. Conditional clipboard fallback ONLY when no editable field exists on screen.
+ * 2. Asks the accessibility service to insert, in order: API 33+ input connection, companion IME, then a caret-aware node write.
+ * 3. Never reads or writes the clipboard while any of those targets exists.
+ * 4. Copies to the clipboard only when no target exists on screen.
  * 5. Silent copy with subtle floating ring indicator on fallback (zero intrusive toasts).
  */
 class VoxStreamTextInserter(private val context: Context) {
 
     // 1. Mutex to prevent race conditions during rapid typing/dictation
     private val insertionMutex = Mutex()
-    private val mainHandler = Handler(Looper.getMainLooper())
 
     sealed interface DirectInjectionResult {
         object Success : DirectInjectionResult
@@ -39,8 +35,8 @@ class VoxStreamTextInserter(private val context: Context) {
 
     /**
      * The Main Entry Point:
-     * 1. Attempts direct insertion via pure ACTION_SET_TEXT / IME InputConnection.
-     * 2. Only falls back to clipboard when there is NO focused editable text field at all.
+     * 1. Inserts via the accessibility service priority (input connection, companion IME, then node write).
+     * 2. Only falls back to clipboard when there is no target at all.
      * 3. Never uses clipboard if a focused editable field exists (even if the write fails).
      */
     suspend fun insertTranscript(
@@ -95,39 +91,14 @@ class VoxStreamTextInserter(private val context: Context) {
     ): InsertionResult = insertTranscript(transcript, inputConnection ?: inputMethod)
 
     /**
-     * Tries to inject text directly using the active InputConnection or Accessibility Service pure ACTION_SET_TEXT.
-     * Differentiates whether a field existed (write failed) vs NO field on screen.
+     * Inserts through [VoxStreamAccessibilityService.injectTextDetailed].
+     * That method owns P1, P2, and P3. A passed InputConnection is not a separate path.
      */
-    private fun tryDirectInjection(text: String, inputMethod: Any?): DirectInjectionResult {
-        // Step 1: Attempt IME / InputConnection commit (Whisperflow IME path)
-        try {
-            val candidateIme = inputMethod ?: VoxStreamInputMethodService.instance
-            if (candidateIme != null) {
-                val inputConnection: InputConnection? = when (candidateIme) {
-                    is InputConnection -> candidateIme
-                    is android.inputmethodservice.InputMethodService -> candidateIme.currentInputConnection
-                    else -> {
-                        try {
-                            candidateIme.javaClass.getMethod("getCurrentInputConnection").invoke(candidateIme) as? InputConnection
-                        } catch (_: Throwable) {
-                            null
-                        }
-                    }
-                }
-                if (inputConnection != null) {
-                    val committed = inputConnection.commitText(text, 1)
-                    if (committed) {
-                        Log.d(TAG, "Direct injection succeeded via InputConnection")
-                        logInjectionTrace(text, "INPUT_CONNECTION", "SUCCESS: Committed via InputConnection", "SUCCESS")
-                        return DirectInjectionResult.Success
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "InputConnection direct commit exception: ${e.message}")
+    private suspend fun tryDirectInjection(text: String, inputMethod: Any?): DirectInjectionResult {
+        if (inputMethod != null) {
+            Log.d(TAG, "Insertion is decided by the accessibility service priority, not the passed InputConnection")
         }
 
-        // Step 2: Attempt Accessibility Service direct node editing (pure ACTION_SET_TEXT)
         val a11y = VoxStreamAccessibilityService.instance
         if (a11y != null) {
             val trace = a11y.injectTextDetailed(text)
@@ -138,26 +109,20 @@ class VoxStreamTextInserter(private val context: Context) {
                 return DirectInjectionResult.Success
             }
 
-            if (trace.injectionMethod == "DIRECT_ACTION_SET_TEXT") {
-                // Focused field existed, but writing/verification failed!
-                Log.w(TAG, "Focused editable field existed but ACTION_SET_TEXT failed (${trace.resultDetails})")
-                return DirectInjectionResult.FocusedFieldFailed(trace.resultDetails)
+            // Clipboard fallback is allowed only when no focused editable field exists.
+            if (trace.injectionMethod == "NO_TARGET_NODE") {
+                return DirectInjectionResult.NoFocusedField
             }
 
-            if (trace.injectionMethod == "BLOCKED_SAFE_MODE") {
-                Log.w(TAG, "Direct injection blocked by Smart Safe Mode")
-                return DirectInjectionResult.FocusedFieldFailed("Smart Safe Mode Active")
-            }
-
-            // trace.injectionMethod == "NO_TARGET_NODE"
-            return DirectInjectionResult.NoFocusedField
+            Log.w(TAG, "Focused field or blocked write (${trace.injectionMethod}): ${trace.resultDetails}. Clipboard fallback strictly suppressed.")
+            return DirectInjectionResult.FocusedFieldFailed(trace.resultDetails)
         }
 
         return DirectInjectionResult.NoFocusedField
     }
 
     /**
-     * Strict Fallback: Copies to clipboard ONLY when no text field or InputConnection is available.
+     * Strict Fallback: Copies to clipboard ONLY when no focused editable field is available.
      * Silent copy with subtle floating ring indicator (no intrusive toasts).
      */
     private fun fallbackToClipboard(text: String): Boolean {

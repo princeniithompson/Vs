@@ -9,6 +9,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -33,6 +34,17 @@ class FloatingOverlayWindowManager(private val context: Context) {
     companion object {
         private const val TAG = "FloatingOverlayWinMgr"
         private const val SHRINK_TIMEOUT_MS = 3000L
+
+        /**
+         * The bubble, expanded panel, and scan preview share one window.
+         * NOT_FOCUSABLE keeps a tap on Complete from taking input focus, so the editor's
+         * input connection stays bound. NOT_TOUCH_MODAL lets touches outside the overlay
+         * through. LAYOUT_NO_LIMITS keeps the window position valid while it is dragged.
+         */
+        const val OVERLAY_WINDOW_FLAGS: Int =
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -110,9 +122,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
             bubbleSize,
             bubbleSize,
             windowType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            OVERLAY_WINDOW_FLAGS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -195,6 +205,9 @@ class FloatingOverlayWindowManager(private val context: Context) {
                 )
             }
         }
+        composeView.isFocusable = false
+        composeView.isFocusableInTouchMode = false
+        composeView.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
         overlayView = composeView
 
         val isSensitive = FloatingBubbleManager.isCurrentAppSensitive.value
@@ -263,8 +276,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
         lp.width = WindowManager.LayoutParams.MATCH_PARENT
         lp.height = WindowManager.LayoutParams.WRAP_CONTENT
         lp.gravity = Gravity.TOP or Gravity.START
-        lp.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        lp.flags = OVERLAY_WINDOW_FLAGS
         lp.x = 0
         lp.y = dragSnapHandler.savedY.coerceIn(topY, maxY)
 
@@ -290,9 +302,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
         lp.width = bubbleSize
         lp.height = bubbleSize
         lp.gravity = Gravity.TOP or Gravity.START
-        lp.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        lp.flags = OVERLAY_WINDOW_FLAGS
         lp.x = if (dragSnapHandler.isSnappedToRight) (screenWidth - bubbleSize) else 0
         lp.y = dragSnapHandler.savedY.coerceIn(topY, maxY)
 
@@ -320,9 +330,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
 
         lp.width = WindowManager.LayoutParams.MATCH_PARENT
         lp.height = WindowManager.LayoutParams.MATCH_PARENT
-        lp.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        lp.flags = OVERLAY_WINDOW_FLAGS
         lp.x = 0
         lp.y = 0
 
@@ -411,6 +419,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
                 val newWm = accessService.getSystemService(Context.WINDOW_SERVICE) as WindowManager
                 windowManager = newWm
                 currentLp.type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+                currentLp.flags = OVERLAY_WINDOW_FLAGS
 
                 newWm.addView(currentOverlay, currentLp)
                 Log.d(TAG, "Re-attached overlay to TYPE_ACCESSIBILITY_OVERLAY successfully!")

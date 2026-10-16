@@ -3,12 +3,12 @@ package com.example.service
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.data.InjectionEvent
 import com.example.data.InjectionLogRepository
 import com.example.service.FloatingBubbleManager
+import com.example.service.floating.FloatingOverlayWindowManager
 import com.example.service.floating.FloatingTextInjector
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,7 +37,7 @@ class InjectionChainVerificationTest {
     fun `injectText blocks completely when Smart Safe Mode is active`() {
         FloatingBubbleManager.updateCurrentForegroundPackage("com.chase.sig.android", null)
         try {
-            val injected = service.injectText("Secret Password 123")
+            val injected = kotlinx.coroutines.runBlocking { service.injectText("Secret Password 123") }
             assertFalse("Injection must be blocked by Smart Safe Mode", injected)
         } finally {
             FloatingBubbleManager.updateCurrentForegroundPackage("com.google.android.keep", null)
@@ -46,7 +46,7 @@ class InjectionChainVerificationTest {
 
     @Test
     fun `injectText rejects empty or blank text without executing any injection`() {
-        assertFalse(service.injectText(""))
+        assertFalse(kotlinx.coroutines.runBlocking { service.injectText("") })
     }
 
     @Test
@@ -66,18 +66,20 @@ class InjectionChainVerificationTest {
     }
 
     @Test
-    fun `injectTextSafely strips known hint text to prevent duplicate hint incorporation`() {
-        val node = AccessibilityNodeInfo.obtain()
-        node.text = "Search…"
-        node.isShowingHintText = true
+    fun `extractGenuineText keeps text unless the hint flag is set and the text equals hintText`() {
+        val flaggedWithoutMatch = AccessibilityNodeInfo.obtain()
+        flaggedWithoutMatch.text = "Search…"
+        flaggedWithoutMatch.isShowingHintText = true
+        assertEquals("Search…", FloatingTextInjector.extractGenuineText(flaggedWithoutMatch))
 
-        val genuineText = FloatingTextInjector.extractGenuineText(node)
-        assertEquals("", genuineText)
+        val activeHint = AccessibilityNodeInfo.obtain()
+        activeHint.text = "Search…"
+        activeHint.hintText = "Search…"
+        activeHint.isShowingHintText = true
+        assertEquals("", FloatingTextInjector.extractGenuineText(activeHint))
 
-        val dictatedText = "Query"
-        val space = if (genuineText.isNotEmpty() && !genuineText.endsWith(" ") && !genuineText.endsWith("\n")) " " else ""
-        val combined = genuineText + space + dictatedText
-        assertEquals("Query", combined)
+        val merge = FloatingTextInjector.buildCursorMerge(activeHint, "Query")
+        assertEquals("Query", merge?.text)
     }
 
     @Test
@@ -158,15 +160,13 @@ class InjectionChainVerificationTest {
     }
 
     @Test
-    fun `VoxStreamTextInserter direct injection succeeds via InputConnection without modifying clipboard`() = kotlinx.coroutines.runBlocking {
+    fun `VoxStreamTextInserter ignores InputConnection when no focused field exists`() = kotlinx.coroutines.runBlocking {
         val context = RuntimeEnvironment.getApplication()
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val initialClip = ClipData.newPlainText("Initial", "Existing user clipboard")
-        clipboard.setPrimaryClip(initialClip)
+        clipboard.setPrimaryClip(ClipData.newPlainText("Initial", "Existing user clipboard"))
 
         val inserter = com.example.service.floating.VoxStreamTextInserter(context)
 
-        // Mock InputConnection
         var committedText: String? = null
         val mockConnection = object : android.view.inputmethod.BaseInputConnection(android.view.View(context), false) {
             override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
@@ -176,11 +176,9 @@ class InjectionChainVerificationTest {
         }
 
         val result = inserter.insertTranscript("Hello from Whisperflow IME", mockConnection, null)
-        assertEquals(com.example.service.floating.VoxStreamTextInserter.InsertionResult.SuccessDirect, result)
-        assertEquals("Hello from Whisperflow IME", committedText)
-
-        // User clipboard MUST NOT have been modified
-        assertEquals("Existing user clipboard", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        assertEquals(null, committedText)
+        assertEquals(com.example.service.floating.VoxStreamTextInserter.InsertionResult.SuccessClipboardFallback, result)
+        assertEquals("Hello from Whisperflow IME", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
     }
 
     @Test
@@ -198,9 +196,11 @@ class InjectionChainVerificationTest {
         node.text = ""
         node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
 
+        var setTextCalls = 0
         val shadow = org.robolectric.Shadows.shadowOf(node)
         shadow.setOnPerformActionListener { action, bundle ->
             if (action == AccessibilityNodeInfo.ACTION_SET_TEXT) {
+                setTextCalls++
                 node.text = bundle?.getCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE)
                 true
             } else {
@@ -208,10 +208,14 @@ class InjectionChainVerificationTest {
             }
         }
 
-        val result = service.writeRangeAndVerify(node, "Dictated paragraph", replaceRange = false, attempts = 2)
+        val result = kotlinx.coroutines.runBlocking {
+            service.writeRangeAndVerify(node, "Dictated paragraph", replaceRange = false, attempts = 2)
+        }
         assertEquals(AxWriteOutcome.SUCCESS, result.outcome)
         assertEquals("Dictated paragraph", result.writtenText)
         assertTrue(result.finalTextLength > 0)
+        assertEquals("Dictated paragraph", node.text?.toString())
+        assertEquals("The edit nudge writes the text without the last character, then the full text, and does not merge again", 2, setTextCalls)
     }
 
     @Test
@@ -227,14 +231,14 @@ class InjectionChainVerificationTest {
     }
 
     @Test
-    fun `isRichOrUnsafeToRewrite returns true for note app package`() {
+    fun `isRichOrUnsafeToRewrite returns false for a plain note`() {
         val node = AccessibilityNodeInfo.obtain()
         node.packageName = "com.google.android.keep"
         node.isEditable = true
         node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
         node.text = "Simple plain text"
 
-        assertTrue(FloatingTextInjector.isRichOrUnsafeToRewrite(node))
+        assertFalse(FloatingTextInjector.isRichOrUnsafeToRewrite(node))
     }
 
     @Test
@@ -250,44 +254,54 @@ class InjectionChainVerificationTest {
     }
 
     @Test
-    fun `rich field uses PASTE path and never executes ACTION_SET_TEXT`() {
+    fun `note field uses SET_TEXT at the caret and never touches the clipboard`() {
+        val context = RuntimeEnvironment.getApplication()
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Initial", "User clip"))
+
         val node = AccessibilityNodeInfo.obtain()
         node.packageName = "com.google.android.keep"
         node.isEditable = true
         node.text = "Existing Keep note"
+        node.setTextSelection(node.text.length, node.text.length)
         node.addAction(AccessibilityNodeInfo.ACTION_PASTE)
         node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
 
-        var actionSetTextCalled = false
         var actionPasteCalled = false
-
+        val written = mutableListOf<String>()
         val shadow = org.robolectric.Shadows.shadowOf(node)
-        shadow.setOnPerformActionListener { action, _ ->
+        shadow.setOnPerformActionListener { action, bundle ->
             when (action) {
                 AccessibilityNodeInfo.ACTION_SET_TEXT -> {
-                    actionSetTextCalled = true
+                    val value = bundle?.getCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE)?.toString().orEmpty()
+                    written.add(value)
+                    node.text = value
                     true
                 }
                 AccessibilityNodeInfo.ACTION_PASTE -> {
                     actionPasteCalled = true
-                    node.text = "Existing Keep note dictated text"
-                    true
+                    false
                 }
                 else -> true
             }
         }
 
-        val result = service.writeRangeAndVerify(node, "dictated text", replaceRange = false, attempts = 1)
+        val result = kotlinx.coroutines.runBlocking {
+            service.writeRangeAndVerify(node, "dictated text", replaceRange = false, attempts = 1)
+        }
         assertEquals(AxWriteOutcome.SUCCESS, result.outcome)
-        assertTrue("ACTION_PASTE must be invoked for rich/note fields", actionPasteCalled)
-        assertFalse("ACTION_SET_TEXT must NEVER be called on rich/note fields", actionSetTextCalled)
+        assertFalse("A focused field must never ACTION_PASTE", actionPasteCalled)
+        assertEquals("Existing Keep note dictated text", written.last())
+        assertEquals("Existing Keep note dictated text", node.text.toString())
+        assertEquals("User clip", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
     }
 
     @Test
-    fun `rich field paste failure copies to clipboard, shows toast, and never calls ACTION_SET_TEXT`() {
+    fun `focused field write failure leaves the clipboard and the field unchanged`() {
         val context = RuntimeEnvironment.getApplication()
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("Initial", "Initial clipboard"))
+        org.robolectric.shadows.ShadowToast.reset()
 
         val node = AccessibilityNodeInfo.obtain()
         node.packageName = "com.google.android.keep"
@@ -297,27 +311,26 @@ class InjectionChainVerificationTest {
         node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
 
         var actionSetTextCalled = false
+        var actionPasteCalled = false
         val shadow = org.robolectric.Shadows.shadowOf(node)
         shadow.setOnPerformActionListener { action, _ ->
             if (action == AccessibilityNodeInfo.ACTION_SET_TEXT) {
                 actionSetTextCalled = true
-                true
             } else if (action == AccessibilityNodeInfo.ACTION_PASTE) {
-                // Simulate paste failure
-                false
-            } else {
-                true
+                actionPasteCalled = true
             }
+            false
         }
 
-        val result = service.writeRangeAndVerify(node, "My dictated paragraph", replaceRange = false, attempts = 1)
+        val result = kotlinx.coroutines.runBlocking {
+            service.writeRangeAndVerify(node, "My dictated paragraph", replaceRange = false, attempts = 1)
+        }
         assertEquals(AxWriteOutcome.FAILED, result.outcome)
-        assertFalse("ACTION_SET_TEXT must NEVER be used as a fallback on rich fields", actionSetTextCalled)
+        assertTrue(actionSetTextCalled)
+        assertFalse(actionPasteCalled)
         assertEquals("Original protected content", node.text.toString())
-
-        // Dictation text must be placed on system clipboard for manual pasting
-        assertEquals("My dictated paragraph", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
-        assertEquals("Dictation copied to clipboard — paste manually", org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
+        assertEquals("Initial clipboard", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        assertEquals(null, org.robolectric.shadows.ShadowToast.getLatestToast())
     }
 
     @Test
@@ -333,7 +346,9 @@ class InjectionChainVerificationTest {
         val shadow = org.robolectric.Shadows.shadowOf(node)
         shadow.setOnPerformActionListener { _, _ -> false }
 
-        val result = service.writeRangeAndVerify(node, "Dictated text", replaceRange = false, attempts = 1)
+        val result = kotlinx.coroutines.runBlocking {
+            service.writeRangeAndVerify(node, "Dictated text", replaceRange = false, attempts = 1)
+        }
         assertEquals(AxWriteOutcome.FAILED, result.outcome)
         // Original text in node remains untouched
         assertEquals("Existing user draft that should not be wiped", node.text.toString())
@@ -353,45 +368,181 @@ class InjectionChainVerificationTest {
                 attempts++
                 if (attempts >= 2) {
                     node.text = bundle?.getCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE)
+                    true
+                } else {
+                    // Action rejected, so a single retry cannot duplicate text that never landed.
+                    false
                 }
-                true
             } else {
                 false
             }
         }
 
-        val result = service.writeRangeAndVerify(node, "Retry succeeded text", replaceRange = false, attempts = 2)
+        val result = kotlinx.coroutines.runBlocking {
+            service.writeRangeAndVerify(node, "Retry succeeded text", replaceRange = false, attempts = 2)
+        }
         assertEquals(AxWriteOutcome.SUCCESS, result.outcome)
         assertEquals(2, result.verificationAttemptsUsed)
         assertTrue(result.details?.contains("retry attempt") == true)
     }
 
     @Test
-    fun `injectTextSafely handles Google Keep empty note placeholder without prepending hint or leading space`() {
+    fun `Google Keep active hint is replaced by two-step SET_TEXT and the clipboard stays untouched`() {
+        val context = RuntimeEnvironment.getApplication()
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Initial", "User clip"))
+
         val keepNode = AccessibilityNodeInfo.obtain()
         keepNode.packageName = "com.google.android.keep"
+        keepNode.className = "com.google.android.keep.ui.NoteEditText"
         keepNode.isEditable = true
         keepNode.text = "Note"
+        keepNode.hintText = "Note"
         keepNode.isShowingHintText = true
         keepNode.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
+        keepNode.addAction(AccessibilityNodeInfo.ACTION_PASTE)
 
-        var capturedText: CharSequence? = null
+        var pasteCalled = false
+        val written = mutableListOf<String>()
         val shadow = org.robolectric.Shadows.shadowOf(keepNode)
         shadow.setOnPerformActionListener { action, bundle ->
+            when (action) {
+                AccessibilityNodeInfo.ACTION_SET_TEXT -> {
+                    val value = bundle?.getCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE)?.toString().orEmpty()
+                    written.add(value)
+                    keepNode.text = value
+                    keepNode.isShowingHintText = false
+                    true
+                }
+                AccessibilityNodeInfo.ACTION_PASTE -> {
+                    pasteCalled = true
+                    false
+                }
+                else -> true
+            }
+        }
+
+        val result = kotlinx.coroutines.runBlocking {
+            service.writeRangeAndVerify(keepNode, "Meeting action items", replaceRange = false, attempts = 1)
+        }
+        assertEquals(AxWriteOutcome.SUCCESS, result.outcome)
+        assertFalse(pasteCalled)
+        assertEquals(listOf("Meeting action item", "Meeting action items"), written)
+        assertEquals("Meeting action items", keepNode.text.toString())
+        assertFalse(keepNode.text.toString().contains("Note"))
+        assertEquals("User clip", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+    }
+
+    @Test
+    fun `short mention text is merged at the caret with SET_TEXT and the clipboard stays untouched`() {
+        val context = RuntimeEnvironment.getApplication()
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Initial", "User clip"))
+
+        val node = AccessibilityNodeInfo.obtain()
+        node.packageName = "com.google.android.apps.bard"
+        node.className = "android.widget.EditText"
+        node.isEditable = true
+        node.isShowingHintText = true
+        node.hintText = "Ask Gemini"
+        node.text = "@princeniithompson"
+        node.setTextSelection(node.text.length, node.text.length)
+        node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
+        node.addAction(AccessibilityNodeInfo.ACTION_PASTE)
+
+        assertEquals("@princeniithompson", FloatingTextInjector.extractGenuineText(node))
+        assertTrue(FloatingTextInjector.isRichField(node))
+
+        var pasted = false
+        val written = mutableListOf<String>()
+        val shadow = org.robolectric.Shadows.shadowOf(node)
+        shadow.setOnPerformActionListener { action, bundle ->
+            when (action) {
+                AccessibilityNodeInfo.ACTION_SET_TEXT -> {
+                    val value = bundle?.getCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE)?.toString().orEmpty()
+                    written.add(value)
+                    node.text = value
+                    true
+                }
+                AccessibilityNodeInfo.ACTION_PASTE -> {
+                    pasted = true
+                    false
+                }
+                else -> true
+            }
+        }
+
+        val result = kotlinx.coroutines.runBlocking {
+            service.writeRangeAndVerify(node, "hello", replaceRange = false, attempts = 2)
+        }
+        assertEquals(AxWriteOutcome.SUCCESS, result.outcome)
+        assertFalse(pasted)
+        assertEquals("@princeniithompson hello", written.last())
+        assertTrue(node.text.toString().startsWith("@princeniithompson"))
+        assertEquals("User clip", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+    }
+
+    @Test
+    fun `a focused field write never changes an empty clipboard`() = kotlinx.coroutines.runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("seed", "seed"))
+        clipboard.clearPrimaryClip()
+        assertEquals(null, clipboard.primaryClip)
+
+        val node = AccessibilityNodeInfo.obtain()
+        node.packageName = "com.google.android.apps.bard"
+        node.isEditable = true
+        node.text = "Existing Gemini text"
+        node.setTextSelection(node.text.length, node.text.length)
+        node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
+
+        val shadow = org.robolectric.Shadows.shadowOf(node)
+        shadow.setOnPerformActionListener { action, bundle ->
             if (action == AccessibilityNodeInfo.ACTION_SET_TEXT) {
-                capturedText = bundle?.getCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE)
-                keepNode.text = capturedText
+                node.text = bundle?.getCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE)
                 true
             } else {
                 true
             }
         }
 
-        val injected = FloatingTextInjector.injectTextSafely(keepNode, "Meeting action items")
-        assertTrue(injected)
-        assertEquals("Meeting action items", capturedText?.toString())
-        assertFalse(capturedText?.toString()?.startsWith(" ") ?: true)
-        assertFalse(capturedText?.toString()?.contains("Note") ?: true)
+        val result = service.writeRangeAndVerify(node, "dictated", replaceRange = false, attempts = 1)
+        assertEquals(AxWriteOutcome.SUCCESS, result.outcome)
+        assertEquals("Existing Gemini text dictated", node.text.toString())
+        assertEquals(null, clipboard.primaryClip)
+    }
+
+    @Test
+    fun `a partial nudge is not merged again when the full write fails`() {
+        val node = AccessibilityNodeInfo.obtain()
+        node.isEditable = true
+        node.text = ""
+        node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
+
+        var setTextCalls = 0
+        val shadow = org.robolectric.Shadows.shadowOf(node)
+        shadow.setOnPerformActionListener { action, bundle ->
+            if (action == AccessibilityNodeInfo.ACTION_SET_TEXT) {
+                setTextCalls++
+                val value = bundle?.getCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE)?.toString().orEmpty()
+                if (setTextCalls == 1) {
+                    node.text = value
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+
+        val result = kotlinx.coroutines.runBlocking {
+            service.writeRangeAndVerify(node, "Hi there", replaceRange = false, attempts = 2)
+        }
+        assertEquals(AxWriteOutcome.FAILED, result.outcome)
+        assertEquals("Hi ther", node.text.toString())
+        assertEquals("Partial write, one full retry inside the nudge, and no second merge", 3, setTextCalls)
     }
 
     @Test
@@ -405,7 +556,7 @@ class InjectionChainVerificationTest {
 
         // Mock accessibility service that reports a focused field existed, but pure ACTION_SET_TEXT failed
         val mockService = object : VoxStreamAccessibilityService() {
-            override fun injectTextDetailed(newText: String): InjectionEvent {
+            override suspend fun injectTextDetailed(newText: String): InjectionEvent {
                 return InjectionEvent(
                     targetPackage = "com.google.android.keep",
                     targetAppName = "Keep",
@@ -438,5 +589,87 @@ class InjectionChainVerificationTest {
     fun `commitViaActionSetText handles absent focus gracefully`() = kotlinx.coroutines.runBlocking {
         val result = service.commitViaActionSetText("Test text", null)
         assertEquals(AxWriteOutcome.FAILED, result.outcome)
+    }
+
+    @Test
+    fun `overlay window flags never take focus from the editor`() {
+        val flags = FloatingOverlayWindowManager.OVERLAY_WINDOW_FLAGS
+        assertTrue(flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE != 0)
+        assertTrue(flags and WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL != 0)
+        assertTrue(flags and WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS != 0)
+    }
+
+    @Test
+    fun `P1 commitText succeeds without touching the clipboard or the companion IME`() = kotlinx.coroutines.runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Initial", "User clip"))
+
+        val probe = org.robolectric.Robolectric.buildService(PriorityProbeService::class.java).create().get()
+        probe.p1Result = true
+        probe.p2Result = true
+        try {
+            val event = probe.injectTextDetailed("Hello field")
+            assertEquals("SUCCESS", event.finalOutcome)
+            assertEquals("ACCESSIBILITY_INPUT_CONNECTION", event.injectionMethod)
+            assertFalse(probe.p2Called)
+            assertEquals("User clip", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+            assertFalse(FloatingBubbleManager.isClipboardFallbackIndicator.value)
+        } finally {
+            VoxStreamAccessibilityService.instance = service
+        }
+    }
+
+    @Test
+    fun `P2 companion IME is used only when the accessibility input connection is unavailable`() = kotlinx.coroutines.runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Initial", "User clip"))
+
+        val probe = org.robolectric.Robolectric.buildService(PriorityProbeService::class.java).create().get()
+        probe.p1Result = null
+        probe.p2Result = true
+        try {
+            val event = probe.injectTextDetailed("Hello from companion")
+            assertEquals("SUCCESS", event.finalOutcome)
+            assertEquals("COMPANION_IME", event.injectionMethod)
+            assertTrue(probe.p2Called)
+            assertEquals("User clip", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        } finally {
+            VoxStreamAccessibilityService.instance = service
+        }
+    }
+
+    @Test
+    fun `a failed P1 commit does not fall through to the clipboard`() = kotlinx.coroutines.runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Initial", "User clip"))
+
+        val probe = org.robolectric.Robolectric.buildService(PriorityProbeService::class.java).create().get()
+        probe.p1Result = false
+        try {
+            val event = probe.injectTextDetailed("Should stay off the clipboard")
+            assertEquals("FAILED", event.finalOutcome)
+            assertEquals("ACCESSIBILITY_INPUT_CONNECTION", event.injectionMethod)
+            assertFalse(probe.p2Called)
+            assertEquals("User clip", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        } finally {
+            VoxStreamAccessibilityService.instance = service
+        }
+    }
+}
+
+/** Test double for the P1 then P2 decision. Not registered as a real accessibility service. */
+class PriorityProbeService : VoxStreamAccessibilityService() {
+    var p1Result: Boolean? = null
+    var p2Result: Boolean? = null
+    var p2Called: Boolean = false
+
+    override suspend fun commitWithAccessibilityInputConnection(text: String): Boolean? = p1Result
+
+    override suspend fun commitWithCompanionIme(text: String): Boolean? {
+        p2Called = true
+        return p2Result
     }
 }
