@@ -192,6 +192,9 @@ fun DiagnosticEntryRow(entry: DiagnosticLogEntry, timeFormat: SimpleDateFormat) 
         DiagnosticType.VOICE_ID_EVENT -> Triple(Color(0xFFEDE9FE), Color(0xFF6D28D9), "VOICE_ID")
         DiagnosticType.CRASH -> Triple(Color(0xFFFEE2E2), Color(0xFF991B1B), "CRASH")
         DiagnosticType.PROCESS_EXIT -> Triple(Color(0xFFFFEDD5), Color(0xFF9A3412), "EXIT")
+        DiagnosticType.INTERIM_STALL -> Triple(Color(0xFFFEF3C7), Color(0xFFB45309), "STALL")
+        DiagnosticType.INTERIM_RESUMED -> Triple(Color(0xFFD1FAE5), Color(0xFF047857), "RESUMED")
+        DiagnosticType.SESSION_HEARTBEAT -> Triple(Color(0xFFF1F5F9), Color(0xFF475569), "BEAT")
     }
 
     Card(

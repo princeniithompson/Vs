@@ -153,6 +153,11 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
     private val audioQueue = ConcurrentLinkedQueue<ByteArray>()
     private val sessionEndLogged = AtomicBoolean(false)
+    private val _previewPhase = MutableStateFlow(com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase.LISTENING)
+    val previewPhase: StateFlow<com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase> = _previewPhase.asStateFlow()
+    private val _polishingMessage = MutableStateFlow<String?>(null)
+    val polishingMessage: StateFlow<String?> = _polishingMessage.asStateFlow()
+    private var connectionLostHapticSent = false
     private var durationJob: Job? = null
     private var drainJob: Job? = null
 
@@ -206,6 +211,21 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             android.widget.Toast.makeText(getApplication(), message, android.widget.Toast.LENGTH_LONG).show()
             if (finalizeNow && _isRecording.value) {
                 stopRecording(endedReason = "session_limit")
+            }
+        },
+        diagnosticSource = com.princeniithompson.rapcha.data.DiagnosticSource.APP,
+        onPreviewPhase = { phase ->
+            _previewPhase.value = phase
+            if (phase == com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase.CONNECTION_LOST) {
+                if (!connectionLostHapticSent) {
+                    connectionLostHapticSent = true
+                    com.princeniithompson.rapcha.service.floating.FloatingHapticManager.trigger(
+                        getApplication(),
+                        com.princeniithompson.rapcha.service.floating.FloatingHapticType.CONNECTION_LOST
+                    )
+                }
+            } else {
+                connectionLostHapticSent = false
             }
         }
     )
@@ -293,6 +313,9 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         if (_isRecording.value) return
 
         sessionEndLogged.set(false)
+        connectionLostHapticSent = false
+        _previewPhase.value = com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase.LISTENING
+        _polishingMessage.value = null
         _isRecording.value = true
         _interimTranscript.value = ""
         audioQueue.clear()
@@ -351,6 +374,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             val start = System.currentTimeMillis()
             while (isActive && _isRecording.value) {
                 delay(500)
+                webSocketClient.pollInterimPreview()
                 val elapsedSec = ((System.currentTimeMillis() - start) / 1000).toInt()
                 com.princeniithompson.rapcha.data.AppLogRepository.updateLiveStats { it.copy(source = com.princeniithompson.rapcha.data.DiagnosticSource.APP, durationSeconds = elapsedSec) }
             }
@@ -377,6 +401,9 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         if (!_isRecording.value) return
         _isRecording.value = false
         val shouldLogEnd = sessionEndLogged.compareAndSet(false, true)
+        if (endedReason == "completed" || endedReason == "session_limit") {
+            _polishingMessage.value = com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.polishingMessage(stats.value.durationSeconds)
+        }
         durationJob?.cancel()
 
         addLog(LogLevel.INFO, TAG, "Stopping recording session ($endedReason)...")
@@ -426,9 +453,11 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                     com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
                         com.princeniithompson.rapcha.data.DiagnosticSource.APP,
                         com.princeniithompson.rapcha.data.DiagnosticType.SESSION_END,
-                        "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB"
+                        "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${webSocketClient.interimPreviewMonitor.summary()}"
                     )
                 }
+                _polishingMessage.value = null
+                _previewPhase.value = com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase.LISTENING
                 try {
                     if (wl?.isHeld == true) {
                         wl.release()

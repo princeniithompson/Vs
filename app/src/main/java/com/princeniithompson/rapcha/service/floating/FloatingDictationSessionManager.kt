@@ -14,6 +14,7 @@ import com.princeniithompson.rapcha.data.LogLevel
 import com.princeniithompson.rapcha.data.TranscriptPrivacy
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
 import com.princeniithompson.rapcha.websocket.GeminiLiveWebSocketClient
+import com.princeniithompson.rapcha.websocket.InterimPreviewMonitor
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,7 +35,8 @@ class FloatingDictationSessionManager(
     private val onAmplitudeChanged: (amplitude: Float) -> Unit,
     private val onError: (errorMsg: String) -> Unit,
     private val onDurationTicked: (seconds: Int) -> Unit,
-    private val onSessionLimit: (message: String, finalizeNow: Boolean) -> Unit = { _, _ -> }
+    private val onSessionLimit: (message: String, finalizeNow: Boolean) -> Unit = { _, _ -> },
+    private val onPreviewPhase: (InterimPreviewMonitor.Phase) -> Unit = {}
 ) {
     companion object {
         private const val TAG = "FloatingDictationMgr"
@@ -314,7 +316,9 @@ class FloatingDictationSessionManager(
                 onError(err)
             },
             isSessionActive = { isRecording },
-            onSessionLimit = onSessionLimit
+            onSessionLimit = onSessionLimit,
+            diagnosticSource = DiagnosticSource.BUBBLE,
+            onPreviewPhase = onPreviewPhase
         ).apply {
             val customVocab = CustomVocabularyRepository.getVocabulary()
             try {
@@ -332,6 +336,7 @@ class FloatingDictationSessionManager(
             while (isActive && isRecording) {
                 delay(1000)
                 durationSeconds++
+                webSocketClient?.pollInterimPreview()
                 onDurationTicked(durationSeconds)
             }
         }
@@ -368,7 +373,7 @@ class FloatingDictationSessionManager(
                 Log.e(TAG, "Error stopping audio/websocket", e)
             } finally {
                 logSessionEndOnce(
-                    "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB"
+                    "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${ws?.interimPreviewMonitor?.summary().orEmpty()}"
                 )
                 AppLogRepository.updateConnectionState(ConnectionState.Idle, DiagnosticSource.BUBBLE)
                 try {
@@ -430,7 +435,7 @@ class FloatingDictationSessionManager(
             }
             webSocketClient = null
             logSessionEndOnce(
-                "ended_reason: completed | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB"
+                "ended_reason: completed | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${ws?.interimPreviewMonitor?.summary().orEmpty()}"
             )
             AppLogRepository.updateConnectionState(ConnectionState.Idle, DiagnosticSource.BUBBLE)
             try {

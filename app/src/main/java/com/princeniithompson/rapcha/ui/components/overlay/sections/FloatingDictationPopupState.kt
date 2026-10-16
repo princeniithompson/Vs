@@ -15,6 +15,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -180,7 +181,8 @@ fun rememberFloatingDictationPopupState(
     val scrollState = rememberScrollState()
     LaunchedEffect(transcriptText) {
         if (transcriptText.isNotEmpty()) {
-            scrollState.animateScrollTo(scrollState.maxValue)
+            withFrameNanos { }
+            scrollState.scrollTo(scrollState.maxValue)
         }
     }
 

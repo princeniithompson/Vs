@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import com.princeniithompson.rapcha.ui.components.overlay.AuroraColorPalette
+import com.princeniithompson.rapcha.ui.components.overlay.LivePreviewNotice
 import com.princeniithompson.rapcha.ui.components.overlay.rememberDynamicAuroraPalette
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -91,6 +92,8 @@ fun InAppVoiceTypingBubble(
     val amplitude by viewModel.audioAmplitude.collectAsState()
     val selectedGlowStyleId by viewModel.selectedGlowStyleId.collectAsState()
     val stats by viewModel.stats.collectAsState()
+    val previewPhase by viewModel.previewPhase.collectAsState()
+    val polishingMessage by viewModel.polishingMessage.collectAsState()
 
     var isPolishingLocally by remember { mutableStateOf(false) }
 
@@ -133,10 +136,12 @@ fun InAppVoiceTypingBubble(
 
     val scrollState = rememberScrollState()
 
-    // Auto-scroll the transcribed words up to the bottom as new speech arrives
+    // Scroll after layout so a long transcript follows the newest words
+    // instead of staying on the opening lines.
     LaunchedEffect(transcriptText) {
         if (transcriptText.isNotBlank()) {
-            scrollState.animateScrollTo(scrollState.maxValue)
+            androidx.compose.runtime.withFrameNanos { }
+            scrollState.scrollTo(scrollState.maxValue)
         }
     }
 
@@ -276,7 +281,9 @@ fun InAppVoiceTypingBubble(
                 .padding(horizontal = 18.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (!isRecording && transcriptText.isEmpty()) {
+            if (!isRecording && transcriptText.isEmpty() && polishingMessage.isNullOrBlank() &&
+                previewPhase == com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase.LISTENING
+            ) {
                 // IDLE STATE: Centered tap prompt
                 Box(
                     modifier = Modifier
@@ -362,6 +369,10 @@ fun InAppVoiceTypingBubble(
                     }
                 }
 
+                LivePreviewNotice(
+                    phase = previewPhase,
+                    polishingMessage = polishingMessage
+                )
                 // FIXED STAGNANT BUTTON ROW: Remains firmly in place, never pushed down or hidden
                 Spacer(modifier = Modifier.height(10.dp))
                 Row(
