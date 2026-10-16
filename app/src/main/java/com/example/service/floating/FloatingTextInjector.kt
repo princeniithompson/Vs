@@ -11,13 +11,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Clipboard-free text insertion for VoxStream (accessibility service, not a keyboard).
- * Every focused field is written with a cursor-aware ACTION_SET_TEXT, then ACTION_SET_SELECTION.
- * A two-step write nudges the app's text watcher so the replace is seen as a real edit.
- * The clipboard is used only when no focused field exists.
+ * Text insertion for VoxStream.
+ * The live path asks [VoxStreamTextInserter], which uses this order:
+ * P1 accessibility input connection (API 33+), P2 headless companion IME, P3 the caret-aware
+ * node write in this file. The clipboard is used only when no target exists.
  *
- * Rich fields keep the characters around the caret. ACTION_SET_TEXT replaces the node with a
- * plain string, so spans, avatar pills, and child-node chips (Gemini) can be flattened.
+ * P3 keeps the characters around the caret. ACTION_SET_TEXT replaces the node with a plain
+ * string, so spans, avatar pills, and child-node chips can be flattened on that path.
  */
 object FloatingTextInjector {
 

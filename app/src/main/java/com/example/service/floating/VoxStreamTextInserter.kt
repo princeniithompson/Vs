@@ -17,9 +17,9 @@ import kotlinx.coroutines.sync.withLock
 /**
  * Production-ready text insertion engine for VoxStream based on Whisperflow's architecture:
  * 1. Mutex-protected insertion loop ensuring zero race conditions during rapid typing/dictation.
- * 2. Inserts at the caret through the accessibility service (ACTION_SET_TEXT, ACTION_SET_SELECTION, edit nudge). An IME InputConnection is ignored.
- * 3. Never reads or writes the clipboard while a focused editable field exists.
- * 4. Copies to the clipboard only when no editable field exists on screen.
+ * 2. Asks the accessibility service to insert, in order: API 33+ input connection, companion IME, then a caret-aware node write.
+ * 3. Never reads or writes the clipboard while any of those targets exists.
+ * 4. Copies to the clipboard only when no target exists on screen.
  * 5. Silent copy with subtle floating ring indicator on fallback (zero intrusive toasts).
  */
 class VoxStreamTextInserter(private val context: Context) {
@@ -35,8 +35,8 @@ class VoxStreamTextInserter(private val context: Context) {
 
     /**
      * The Main Entry Point:
-     * 1. Attempts direct insertion via cursor-aware ACTION_SET_TEXT. The IME is ignored.
-     * 2. Only falls back to clipboard when there is NO focused editable text field at all.
+     * 1. Inserts via the accessibility service priority (input connection, companion IME, then node write).
+     * 2. Only falls back to clipboard when there is no target at all.
      * 3. Never uses clipboard if a focused editable field exists (even if the write fails).
      */
     suspend fun insertTranscript(
@@ -91,13 +91,12 @@ class VoxStreamTextInserter(private val context: Context) {
     ): InsertionResult = insertTranscript(transcript, inputConnection ?: inputMethod)
 
     /**
-     * Inserts through the accessibility service. An InputConnection is not an insertion path.
-     * Differentiates whether a field existed (write failed) vs NO field on screen.
+     * Inserts through [VoxStreamAccessibilityService.injectTextDetailed].
+     * That method owns P1, P2, and P3. A passed InputConnection is not a separate path.
      */
     private suspend fun tryDirectInjection(text: String, inputMethod: Any?): DirectInjectionResult {
-        // VoxStream is not a keyboard. An InputConnection is not the insertion strategy.
         if (inputMethod != null) {
-            Log.d(TAG, "Ignoring IME/InputConnection; inserting through the accessibility service")
+            Log.d(TAG, "Insertion is decided by the accessibility service priority, not the passed InputConnection")
         }
 
         val a11y = VoxStreamAccessibilityService.instance

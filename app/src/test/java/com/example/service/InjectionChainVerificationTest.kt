@@ -3,10 +3,12 @@ package com.example.service
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.data.InjectionEvent
 import com.example.data.InjectionLogRepository
 import com.example.service.FloatingBubbleManager
+import com.example.service.floating.FloatingOverlayWindowManager
 import com.example.service.floating.FloatingTextInjector
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -587,5 +589,87 @@ class InjectionChainVerificationTest {
     fun `commitViaActionSetText handles absent focus gracefully`() = kotlinx.coroutines.runBlocking {
         val result = service.commitViaActionSetText("Test text", null)
         assertEquals(AxWriteOutcome.FAILED, result.outcome)
+    }
+
+    @Test
+    fun `overlay window flags never take focus from the editor`() {
+        val flags = FloatingOverlayWindowManager.OVERLAY_WINDOW_FLAGS
+        assertTrue(flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE != 0)
+        assertTrue(flags and WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL != 0)
+        assertTrue(flags and WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS != 0)
+    }
+
+    @Test
+    fun `P1 commitText succeeds without touching the clipboard or the companion IME`() = kotlinx.coroutines.runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Initial", "User clip"))
+
+        val probe = org.robolectric.Robolectric.buildService(PriorityProbeService::class.java).create().get()
+        probe.p1Result = true
+        probe.p2Result = true
+        try {
+            val event = probe.injectTextDetailed("Hello field")
+            assertEquals("SUCCESS", event.finalOutcome)
+            assertEquals("ACCESSIBILITY_INPUT_CONNECTION", event.injectionMethod)
+            assertFalse(probe.p2Called)
+            assertEquals("User clip", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+            assertFalse(FloatingBubbleManager.isClipboardFallbackIndicator.value)
+        } finally {
+            VoxStreamAccessibilityService.instance = service
+        }
+    }
+
+    @Test
+    fun `P2 companion IME is used only when the accessibility input connection is unavailable`() = kotlinx.coroutines.runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Initial", "User clip"))
+
+        val probe = org.robolectric.Robolectric.buildService(PriorityProbeService::class.java).create().get()
+        probe.p1Result = null
+        probe.p2Result = true
+        try {
+            val event = probe.injectTextDetailed("Hello from companion")
+            assertEquals("SUCCESS", event.finalOutcome)
+            assertEquals("COMPANION_IME", event.injectionMethod)
+            assertTrue(probe.p2Called)
+            assertEquals("User clip", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        } finally {
+            VoxStreamAccessibilityService.instance = service
+        }
+    }
+
+    @Test
+    fun `a failed P1 commit does not fall through to the clipboard`() = kotlinx.coroutines.runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Initial", "User clip"))
+
+        val probe = org.robolectric.Robolectric.buildService(PriorityProbeService::class.java).create().get()
+        probe.p1Result = false
+        try {
+            val event = probe.injectTextDetailed("Should stay off the clipboard")
+            assertEquals("FAILED", event.finalOutcome)
+            assertEquals("ACCESSIBILITY_INPUT_CONNECTION", event.injectionMethod)
+            assertFalse(probe.p2Called)
+            assertEquals("User clip", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        } finally {
+            VoxStreamAccessibilityService.instance = service
+        }
+    }
+}
+
+/** Test double for the P1 then P2 decision. Not registered as a real accessibility service. */
+class PriorityProbeService : VoxStreamAccessibilityService() {
+    var p1Result: Boolean? = null
+    var p2Result: Boolean? = null
+    var p2Called: Boolean = false
+
+    override suspend fun commitWithAccessibilityInputConnection(text: String): Boolean? = p1Result
+
+    override suspend fun commitWithCompanionIme(text: String): Boolean? {
+        p2Called = true
+        return p2Result
     }
 }

@@ -11,7 +11,9 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.example.service.floating.FloatingTextInjector
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 open class VoxStreamAccessibilityService : AccessibilityService() {
 
@@ -78,9 +80,17 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
         // FLAG_RETRIEVE_INTERACTIVE_WINDOWS: Required to extract window titles across all active foreground applications
         // FLAG_REPORT_VIEW_IDS: Required to resolve view resource IDs in target editable fields for direct text injection
         // FLAG_INCLUDE_NOT_IMPORTANT_VIEWS: Required to access nested or custom editor view hierarchies in rich text and messaging inputs
-        val flags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+        // FLAG_INPUT_METHOD_EDITOR (API 33+): binds an input connection so commitText can type into the focused editor
+        var flags = info.flags or
+                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                 AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                 AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            flags = flags or AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
+            Log.i(TAG, "FLAG_INPUT_METHOD_EDITOR enabled (API ${Build.VERSION.SDK_INT})")
+        } else {
+            Log.i(TAG, "FLAG_INPUT_METHOD_EDITOR skipped; API ${Build.VERSION.SDK_INT} is below 33")
+        }
 
         info.flags = flags
         info.notificationTimeout = 30
@@ -293,12 +303,13 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Injects transcribed text into the focused editable field.
-     * 1. Resolves the active focused editable node.
-     * 2. Inserts at the caret with ACTION_SET_TEXT, ACTION_SET_SELECTION, and an edit nudge.
-     *    This path never reads or writes the clipboard, including for notes and Gemini.
-     * 3. Reports NO_TARGET_NODE when no focused field exists. Only that outcome may copy
-     *    the transcript to the clipboard, and that copy happens outside this method.
+     * Injects transcribed text. The clipboard is never written here.
+     *
+     * P1, API 33+: the accessibility service input connection `commitText`. No clipboard.
+     * P2: the headless companion IME [VoxStreamInputMethodService.commitText], when it is active.
+     * P3: caret-aware [injectTextSafely], only when P1 and P2 are both unavailable.
+     * [injectionMethod] is `NO_TARGET_NODE` only when none of those targets exist. The caller
+     * may copy to the clipboard in that case alone.
      */
     open suspend fun injectTextDetailed(newText: String): com.example.data.InjectionEvent {
         val startTime = android.os.SystemClock.elapsedRealtime()
@@ -336,33 +347,55 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
             )
         }
 
-        val targetNode = getActiveEditableNode()
-        val (finalOutcome, injectionMethod, resultDetails) = if (targetNode != null) {
-            // Requirement 4: Refresh the focused node before writing
-            try {
-                targetNode.refresh()
-            } catch (e: Throwable) {
-                Log.w(TAG, "Pre-write node refresh threw: ${e.message}")
-            }
+        val p1 = commitWithAccessibilityInputConnection(newText)
+        val p2 = if (p1 == null) commitWithCompanionIme(newText) else null
 
-            try {
-                if (!targetNode.isFocused) {
-                    targetNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        var targetNode: AccessibilityNodeInfo? = null
+        val (finalOutcome, injectionMethod, resultDetails) = when {
+            p1 == true -> {
+                Log.i(TAG, "Injection priority P1: accessibility InputConnection.commitText succeeded")
+                Triple("SUCCESS", "ACCESSIBILITY_INPUT_CONNECTION", "SUCCESS: P1 accessibility input connection commitText")
+            }
+            p1 == false -> {
+                Log.w(TAG, "Injection priority P1: commitText did not complete. Clipboard suppressed.")
+                Triple("FAILED", "ACCESSIBILITY_INPUT_CONNECTION", "FAILED: P1 commitText did not complete")
+            }
+            p2 == true -> {
+                Log.i(TAG, "Injection priority P2: companion IME commitText succeeded")
+                Triple("SUCCESS", "COMPANION_IME", "SUCCESS: P2 companion IME commitText")
+            }
+            p2 == false -> {
+                Log.w(TAG, "Injection priority P2: commitText returned false. Clipboard suppressed.")
+                Triple("FAILED", "COMPANION_IME", "FAILED: P2 commitText returned false")
+            }
+            else -> {
+                Log.i(TAG, "Injection priority P3: P1 and P2 unavailable, trying caret-aware node write")
+                targetNode = getActiveEditableNode()
+                if (targetNode != null) {
+                    try {
+                        targetNode.refresh()
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "Pre-write node refresh threw: ${e.message}")
+                    }
+                    try {
+                        if (!targetNode.isFocused) {
+                            targetNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                        }
+                    } catch (_: Throwable) {}
+
+                    val writeResult = writeRangeAndVerify(targetNode, newText, replaceRange = false, attempts = 2)
+                    if (writeResult.outcome == AxWriteOutcome.SUCCESS) {
+                        Log.i(TAG, "Injection priority P3: caret-aware ACTION_SET_TEXT succeeded")
+                        Triple("SUCCESS", "DIRECT_ACTION_SET_TEXT", "SUCCESS: ${writeResult.details}")
+                    } else {
+                        Log.w(TAG, "Injection priority P3 failed (${writeResult.details}). Clipboard suppressed.")
+                        Triple("FAILED", "DIRECT_ACTION_SET_TEXT", "FAILED: ${writeResult.details}")
+                    }
+                } else {
+                    Log.i(TAG, "Injection priority: no target field. Clipboard fallback is allowed.")
+                    Triple("FAILED", "NO_TARGET_NODE", "FAILED: No active editable node found")
                 }
-            } catch (_: Throwable) {}
-
-            val writeResult = writeRangeAndVerify(targetNode, newText, replaceRange = false, attempts = 2)
-            if (writeResult.outcome == AxWriteOutcome.SUCCESS) {
-                Triple("SUCCESS", "DIRECT_ACTION_SET_TEXT", "SUCCESS: ${writeResult.details}")
-            } else {
-                // A focused field exists. Never copy the transcript to the clipboard from here.
-                Log.w(TAG, "Direct write failed (${writeResult.details}). Clipboard fallback strictly suppressed.")
-                Triple("FAILED", "DIRECT_ACTION_SET_TEXT", "FAILED: ${writeResult.details}")
             }
-        } else {
-            // Requirement 2: Only fall back to clipboard when there is NO focused editable text field at all
-            Log.d(TAG, "No focused editable text field found on screen")
-            Triple("FAILED", "NO_TARGET_NODE", "FAILED: No active editable node found")
         }
 
         val elapsed = android.os.SystemClock.elapsedRealtime() - startTime
@@ -385,6 +418,77 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
             durationMs = elapsed,
             rawTextPreview = rawPreview
         )
+    }
+
+    /**
+     * P1. On API 33+, commits on the main looper through
+     * [android.accessibilityservice.InputMethod.AccessibilityInputConnection].
+     * That `commitText` returns void, so a call that does not throw is success.
+     * Returns null when the connection is unavailable, and false when the call throws.
+     * A non-null connection means an editor still holds input focus.
+     */
+    protected open suspend fun commitWithAccessibilityInputConnection(text: String): Boolean? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            Log.d(TAG, "P1 unavailable: accessibility input connection requires API 33")
+            return null
+        }
+        return withContext(Dispatchers.Main.immediate) {
+            commitAccessibilityInputConnectionOnMain(text)
+        }
+    }
+
+    private fun commitAccessibilityInputConnectionOnMain(text: String): Boolean? {
+        var connectionBound = false
+        return try {
+            val method = inputMethod
+            if (method == null) {
+                Log.d(TAG, "P1 unavailable: accessibility inputMethod is null")
+                null
+            } else {
+                val connection = method.currentInputConnection
+                if (connection == null) {
+                    Log.d(TAG, "P1 unavailable: currentInputConnection is null (editor focus was lost)")
+                    null
+                } else {
+                    connectionBound = true
+                    val focusedNode = try {
+                        findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { isEditableNode(it) } == true
+                    } catch (_: Throwable) {
+                        false
+                    }
+                    if (!focusedNode) {
+                        Log.w(TAG, "P1: committing while no editable FOCUS_INPUT node is visible; input connection is still bound")
+                    }
+                    connection.commitText(text, 1, null)
+                    Log.i(TAG, "P1 commitText invoked focusedNode=$focusedNode len=${text.length}")
+                    true
+                }
+            }
+        } catch (e: Throwable) {
+            if (connectionBound) {
+                Log.w(TAG, "P1 commitText threw: ${e.message}", e)
+                false
+            } else {
+                Log.w(TAG, "P1 unavailable: ${e.message}", e)
+                null
+            }
+        }
+    }
+
+    /**
+     * P2. Commits through the headless companion IME when that keyboard is the active one.
+     * Returns null when it is not active. Runs on the main looper.
+     */
+    protected open suspend fun commitWithCompanionIme(text: String): Boolean? {
+        if (!VoxStreamInputMethodService.isServiceActive) {
+            Log.d(TAG, "P2 unavailable: companion IME is not active")
+            return null
+        }
+        return withContext(Dispatchers.Main.immediate) {
+            val committed = VoxStreamInputMethodService.commitText(text)
+            Log.i(TAG, "P2 companion IME commitText result=$committed len=${text.length}")
+            committed
+        }
     }
 
     /**
@@ -622,6 +726,10 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * P1 accessibility input connection, then P2 companion IME, then P3 caret-aware node write.
+     * See [injectTextDetailed].
+     */
     suspend fun injectText(newText: String): Boolean {
         val trace = injectTextDetailed(newText)
         return trace.finalOutcome == "SUCCESS"
