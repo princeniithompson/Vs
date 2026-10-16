@@ -158,8 +158,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             onSetupComplete = {
             addLog(LogLevel.INFO, TAG, "setupComplete received! Flushing buffered queue & streaming live audio.")
             com.princeniithompson.rapcha.data.AppLogRepository.updateLiveStats { it.copy(source = com.princeniithompson.rapcha.data.DiagnosticSource.APP, setupCompleted = true) }
-            webSocketClient.signalActivityStart()
-            drainAudioQueue()
+            onLiveSetupComplete()
         },
         onInterimTranscription = { text ->
             _interimTranscript.value = text
@@ -434,6 +433,11 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                 }
             }
         }
+    }
+
+    private fun onLiveSetupComplete() {
+        webSocketClient.signalActivityStart()
+        drainAudioQueue()
     }
 
     private fun drainAudioQueue() {
