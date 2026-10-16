@@ -24,7 +24,10 @@ import java.util.concurrent.atomic.AtomicReference
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.coroutines.resume
 import kotlin.random.Random
+import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 /**
  * Structured error types for Gemini Live WebSocket communication.
@@ -46,7 +49,8 @@ class GeminiLiveWebSocketClient(
     private val onError: (String) -> Unit,
     okHttpClient: OkHttpClient? = null,
     private val onStructuredError: ((GeminiLiveError) -> Unit)? = null,
-    private val isSessionActive: () -> Boolean = { false }
+    private val isSessionActive: () -> Boolean = { false },
+    private val onSessionLimit: (message: String, finalizeNow: Boolean) -> Unit = { _, _ -> }
 ) {
     companion object {
         private const val TAG = "GeminiLiveWS"
@@ -56,11 +60,15 @@ class GeminiLiveWebSocketClient(
         const val MAX_RECONNECT_ATTEMPTS = 10
         const val PING_INTERVAL_SECONDS = 45L
 
-        // Server-side VAD (Live API automaticActivityDetection) tuning constants: 5000 ms (5 seconds) silence duration
-        const val SERVER_VAD_SILENCE_DURATION_MS = 5000
-        const val SERVER_VAD_PREFIX_PADDING_MS = 200
-        const val SERVER_VAD_START_SENSITIVITY = "START_SENSITIVITY_LOW"
-        const val SERVER_VAD_END_SENSITIVITY = "END_SENSITIVITY_LOW"
+        /**
+         * gemini-3.5-transcribe-live documents a 10 minute continuous session.
+         * Warn before that, then finish the utterance while there is still time
+         * for the final transcript to arrive.
+         */
+        const val SESSION_LIMIT_WARNING_MS = 9 * 60 * 1000L
+        const val SESSION_LIMIT_FINALIZE_MS = 9 * 60 * 1000L + 30_000L
+        const val FINAL_TRANSCRIPT_TIMEOUT_MS = 8_000L
+        const val GO_AWAY_FINALIZE_THRESHOLD_MS = 45_000L
 
         // Single-connection enforcement and instance tracking
         private val activeSocketCount = AtomicInteger(0)
@@ -106,6 +114,19 @@ class GeminiLiveWebSocketClient(
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingReconnectRunnable: Runnable? = null
     private val activeTurnText = StringBuilder()
+
+    private val activityStarted = AtomicBoolean(false)
+    private val activityEnded = AtomicBoolean(false)
+    private val endpointSettled = AtomicBoolean(false)
+    private val sessionClockStarted = AtomicBoolean(false)
+    private val sessionLimitWarned = AtomicBoolean(false)
+    private val sessionLimitFinalized = AtomicBoolean(false)
+    @Volatile private var lastInterimText: String = ""
+    @Volatile private var resolvedEndpointText: String = ""
+    private val endpointContinuation = AtomicReference<CancellableContinuation<String>?>(null)
+    private var endpointTimeoutRunnable: Runnable? = null
+    private var sessionWarningRunnable: Runnable? = null
+    private var sessionFinalizeRunnable: Runnable? = null
 
     val setupComplete: Boolean
         get() = isSetupComplete.get()
@@ -175,6 +196,7 @@ class GeminiLiveWebSocketClient(
         isExplicitlyClosed.set(false)
         reconnectAttempts.set(0)
         isSetupComplete.set(false)
+        resetManualEndpointState()
         Log.i(TAG, "[ConnectionState] CONNECTING to $WS_BASE_URL ($activeModel)...")
         notifyStateChanged(ConnectionState.Connecting)
 
@@ -224,6 +246,9 @@ class GeminiLiveWebSocketClient(
 
                 val currentLiveCount = activeSocketCount.incrementAndGet()
                 activeTurnText.clear()
+                if (!activityEnded.get()) {
+                    activityStarted.set(false)
+                }
                 val timeStr = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
                 val openMsg = "[$timeStr] WebSocket open (HTTP ${response.code}). Active live sockets: $currentLiveCount"
                 Log.i(TAG, "[ConnectionState] CONNECTED: $openMsg")
@@ -233,6 +258,7 @@ class GeminiLiveWebSocketClient(
                 // Step A: Send initial setup JSON
                 val transcriptionConfig = JSONObject().apply {
                     if (isSmartMode) {
+                        // AudioTranscriptionConfig.mode is documented for gemini-3.5-transcribe-live.
                         put("mode", "SMART")
                     }
                     if (customVocabularyList.isNotEmpty()) {
@@ -275,10 +301,7 @@ class GeminiLiveWebSocketClient(
                         put("inputAudioTranscription", transcriptionConfig)
                         put("realtimeInputConfig", JSONObject().apply {
                             put("automaticActivityDetection", JSONObject().apply {
-                                put("startOfSpeechSensitivity", SERVER_VAD_START_SENSITIVITY)
-                                put("endOfSpeechSensitivity", SERVER_VAD_END_SENSITIVITY)
-                                put("prefixPaddingMs", SERVER_VAD_PREFIX_PADDING_MS)
-                                put("silenceDurationMs", SERVER_VAD_SILENCE_DURATION_MS)
+                                put("disabled", true)
                             })
                         })
                     }
@@ -288,7 +311,7 @@ class GeminiLiveWebSocketClient(
                 val payload = setupJson.toString()
                 val sent = webSocket.send(payload)
                 if (sent) {
-                    val vadDiagnostics = "[Server VAD Config] automaticActivityDetection: silenceDurationMs=$SERVER_VAD_SILENCE_DURATION_MS, prefixPaddingMs=$SERVER_VAD_PREFIX_PADDING_MS, startOfSpeechSensitivity=$SERVER_VAD_START_SENSITIVITY, endOfSpeechSensitivity=$SERVER_VAD_END_SENSITIVITY"
+                    val vadDiagnostics = "[Manual VAD] automaticActivityDetection.disabled=true; activityEnd is sent only when the user completes"
                     Log.i(TAG, vadDiagnostics)
                     onLog(LogLevel.SENT, TAG, "Setup message sent to server ($vadDiagnostics)", payload)
                 } else {
@@ -369,7 +392,10 @@ class GeminiLiveWebSocketClient(
     }
 
     private fun handleDisconnectOrFailure(errorDetails: String, throwable: Throwable?) {
-        if (isExplicitlyClosed.get()) {
+        if (activityEnded.get()) {
+            settleEndpoint(lastInterimText)
+        }
+        if (isExplicitlyClosed.get() || activityEnded.get()) {
             isConnectingGuard.set(false)
             return
         }
@@ -455,8 +481,14 @@ class GeminiLiveWebSocketClient(
                     )
                 }
                 notifyStateChanged(ConnectionState.Streaming)
+                scheduleSessionLimitClock()
                 notifySetupComplete()
                 return
+            }
+
+            val goAway = json.optJSONObject("goAway")
+            if (goAway != null) {
+                handleGoAway(goAway)
             }
 
             // Check for server errors
@@ -499,32 +531,38 @@ class GeminiLiveWebSocketClient(
                     }
                 }
 
-                // 2. Interim hypothesis (updates fast, partial text)
+                // Interim hypotheses stay in the live preview for the whole activity.
+                // inputTranscription is authoritative only after the user presses Complete
+                // (activityEnd). Silence must not commit or split the utterance.
                 val interimObj = serverContent.optJSONObject("interimInputTranscription")
-                if (interimObj != null && interimObj.has("text")) {
-                    val interimText = interimObj.optString("text")
-                    if (interimText.isNotEmpty()) {
-                        onLog(LogLevel.RECEIVED, TAG, "Interim: \"$interimText\"", null)
-                        notifyInterimTranscription(interimText)
-                    }
+                val interimText = interimObj?.optString("text").orEmpty()
+                if (interimText.isNotEmpty()) {
+                    onLog(LogLevel.RECEIVED, TAG, "Interim: \"$interimText\"", null)
+                    notifyInterimTranscription(interimText)
                 }
 
-                // 3. Finalized transcription (once a segment completes)
                 val finalizedObj = serverContent.optJSONObject("inputTranscription")
-                if (finalizedObj != null && finalizedObj.has("text")) {
-                    val finalizedText = finalizedObj.optString("text")
-                    if (finalizedText.isNotEmpty()) {
-                        onLog(LogLevel.RECEIVED, TAG, "Finalized: \"$finalizedText\"", null)
-                        notifyFinalizedTranscription(finalizedText)
-                    }
-                }
+                val finalizedText = finalizedObj?.optString("text").orEmpty()
+                val turnFinished = serverContent.optBoolean("turnComplete", false) ||
+                    serverContent.optBoolean("interrupted", false)
 
-                if (serverContent.optBoolean("turnComplete", false) || serverContent.optBoolean("interrupted", false)) {
+                if (!activityEnded.get()) {
+                    if (finalizedText.isNotEmpty()) {
+                        onLog(LogLevel.RECEIVED, TAG, "Preview update before activityEnd: \"$finalizedText\"", null)
+                        notifyInterimTranscription(finalizedText)
+                    }
+                    if (turnFinished) {
+                        activeTurnText.clear()
+                    }
+                } else if (finalizedText.isNotEmpty()) {
+                    onLog(LogLevel.RECEIVED, TAG, "Finalized: \"$finalizedText\"", null)
+                    settleEndpoint(finalizedText)
+                } else if (turnFinished) {
                     val completedText = activeTurnText.toString().trim()
                     activeTurnText.clear()
                     if (completedText.isNotEmpty()) {
                         onLog(LogLevel.INFO, TAG, "Turn completed: \"$completedText\"", null)
-                        notifyFinalizedTranscription(completedText)
+                        settleEndpoint(completedText)
                     }
                 }
             } else {
@@ -544,7 +582,10 @@ class GeminiLiveWebSocketClient(
      */
     fun sendAudioChunk(pcmChunk: ByteArray): Boolean {
         val ws = webSocket
-        if (ws == null || !isSetupComplete.get() || isExplicitlyClosed.get()) {
+        if (ws == null || !isSetupComplete.get() || isExplicitlyClosed.get() || activityEnded.get()) {
+            return false
+        }
+        if (!signalActivityStart()) {
             return false
         }
 
@@ -578,23 +619,89 @@ class GeminiLiveWebSocketClient(
     }
 
     /**
-     * Step D: On user stop, signal audioStreamEnd
+     * Opens the manual activity. Safe to call more than once; audio chunks also call this
+     * so the first frame is never sent outside an activity.
+     */
+    fun signalActivityStart(): Boolean {
+        if (activityEnded.get() || isExplicitlyClosed.get() || !isSetupComplete.get()) return false
+        if (activityStarted.get()) return true
+        val ws = webSocket ?: return false
+        return try {
+            val startJson = JSONObject().apply {
+                put("realtimeInput", JSONObject().apply {
+                    put("activityStart", JSONObject())
+                })
+            }
+            val sent = ws.send(startJson.toString())
+            if (sent) {
+                activityStarted.set(true)
+                onLog(LogLevel.SENT, TAG, "Sent activityStart", startJson.toString())
+            }
+            sent
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending activityStart", e)
+            false
+        }
+    }
+
+    /**
+     * Ends the manual activity. This is the only endpoint signal, and callers must use it
+     * only when the user presses Complete or the session limit is reached.
+     * audioStreamEnd is not used while automatic activity detection is disabled.
+     */
+    fun signalActivityEnd(): Boolean {
+        val firstEnd = activityEnded.compareAndSet(false, true)
+        cancelSessionLimitTimers()
+        val ws = webSocket
+        if (!firstEnd) {
+            return ws != null && isSetupComplete.get() && !isExplicitlyClosed.get()
+        }
+        if (ws == null || !isSetupComplete.get() || isExplicitlyClosed.get()) return false
+        return try {
+            val endJson = JSONObject().apply {
+                put("realtimeInput", JSONObject().apply {
+                    put("activityEnd", JSONObject())
+                })
+            }
+            val sent = ws.send(endJson.toString())
+            if (sent) {
+                onLog(LogLevel.SENT, TAG, "Sent activityEnd", endJson.toString())
+            }
+            sent
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending activityEnd", e)
+            false
+        }
+    }
+
+    /**
+     * Sends activityEnd and suspends until the authoritative transcript arrives.
+     * If the server does not answer in time, the last interim preview is returned.
+     */
+    suspend fun endActivityAndAwaitFinal(): String {
+        if (endpointSettled.get()) return resolvedEndpointText.ifBlank { lastInterimText.trim() }
+        return suspendCancellableCoroutine { cont ->
+            endpointContinuation.set(cont)
+            cont.invokeOnCancellation {
+                endpointContinuation.compareAndSet(cont, null)
+            }
+            val sent = signalActivityEnd()
+            if (!sent) {
+                settleEndpoint(lastInterimText)
+                return@suspendCancellableCoroutine
+            }
+            val timeout = Runnable { settleEndpoint(lastInterimText) }
+            endpointTimeoutRunnable = timeout
+            mainHandler.postDelayed(timeout, FINAL_TRANSCRIPT_TIMEOUT_MS)
+        }
+    }
+
+    /**
+     * Kept so older stop paths cannot emit audioStreamEnd. Manual VAD must not
+     * send that signal; it would let the server close the turn on its own.
      */
     fun signalStreamEnd() {
-        val ws = webSocket
-        if (ws != null && isSetupComplete.get()) {
-            try {
-                val endJson = JSONObject().apply {
-                    put("realtimeInput", JSONObject().apply {
-                        put("audioStreamEnd", true)
-                    })
-                }
-                ws.send(endJson.toString())
-                onLog(LogLevel.SENT, TAG, "Sent audioStreamEnd signal", endJson.toString())
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending audioStreamEnd", e)
-            }
-        }
+        Log.i(TAG, "audioStreamEnd suppressed; activityEnd is sent only when the user completes")
     }
 
     fun disconnect() {
@@ -606,6 +713,10 @@ class GeminiLiveWebSocketClient(
         isExplicitlyClosed.set(true)
         reconnectAttempts.set(MAX_RECONNECT_ATTEMPTS)
         cancelPendingReconnect()
+        cancelSessionLimitTimers()
+        if (activityEnded.get()) {
+            settleEndpoint(lastInterimText)
+        }
         closeExistingWebSocket()
 
         currentActiveClient.compareAndSet(this, null)
@@ -679,10 +790,123 @@ class GeminiLiveWebSocketClient(
     }
 
     private fun notifyInterimTranscription(text: String) {
+        if (text.isNotEmpty()) {
+            lastInterimText = text
+        }
         if (Looper.myLooper() == Looper.getMainLooper()) {
             onInterimTranscription(text)
         } else {
             mainHandler.post { onInterimTranscription(text) }
+        }
+    }
+
+    private fun resetManualEndpointState() {
+        activityStarted.set(false)
+        activityEnded.set(false)
+        endpointSettled.set(false)
+        sessionClockStarted.set(false)
+        sessionLimitWarned.set(false)
+        sessionLimitFinalized.set(false)
+        lastInterimText = ""
+        resolvedEndpointText = ""
+        endpointContinuation.set(null)
+        cancelSessionLimitTimers()
+        endpointTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        endpointTimeoutRunnable = null
+    }
+
+    private fun scheduleSessionLimitClock() {
+        if (!sessionClockStarted.compareAndSet(false, true)) return
+        val warning = Runnable {
+            notifySessionLimit(
+                "Rapcha's live session is nearing its 10 minute limit. Press Complete soon.",
+                finalizeNow = false
+            )
+        }
+        val finalize = Runnable {
+            notifySessionLimit(
+                "Rapcha is finishing this dictation before the 10 minute live session limit.",
+                finalizeNow = true
+            )
+        }
+        sessionWarningRunnable = warning
+        sessionFinalizeRunnable = finalize
+        mainHandler.postDelayed(warning, SESSION_LIMIT_WARNING_MS)
+        mainHandler.postDelayed(finalize, SESSION_LIMIT_FINALIZE_MS)
+    }
+
+    private fun cancelSessionLimitTimers() {
+        sessionWarningRunnable?.let { mainHandler.removeCallbacks(it) }
+        sessionFinalizeRunnable?.let { mainHandler.removeCallbacks(it) }
+        sessionWarningRunnable = null
+        sessionFinalizeRunnable = null
+    }
+
+    private fun handleGoAway(goAway: JSONObject) {
+        val timeLeftMs = parseDurationMillis(goAway.opt("timeLeft"))
+        val finalizeNow = timeLeftMs == null || timeLeftMs <= GO_AWAY_FINALIZE_THRESHOLD_MS
+        val message = if (finalizeNow) {
+            "Rapcha is finishing this dictation because the live session is about to close."
+        } else {
+            "Rapcha's live session will close soon. Press Complete to keep this dictation."
+        }
+        onLog(LogLevel.INFO, TAG, "goAway timeLeftMs=$timeLeftMs finalize=$finalizeNow", goAway.toString())
+        notifySessionLimit(message, finalizeNow)
+    }
+
+    private fun notifySessionLimit(message: String, finalizeNow: Boolean) {
+        if (finalizeNow) {
+            if (!sessionLimitFinalized.compareAndSet(false, true)) return
+            cancelSessionLimitTimers()
+        } else if (!sessionLimitWarned.compareAndSet(false, true)) {
+            return
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            onSessionLimit(message, finalizeNow)
+        } else {
+            mainHandler.post { onSessionLimit(message, finalizeNow) }
+        }
+    }
+
+    private fun settleEndpoint(text: String) {
+        if (!activityEnded.get()) return
+        if (!endpointSettled.compareAndSet(false, true)) return
+        endpointTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        endpointTimeoutRunnable = null
+        val resolved = text.trim().ifBlank { lastInterimText.trim() }
+        resolvedEndpointText = resolved
+        if (resolved.isNotEmpty()) {
+            notifyFinalizedTranscription(resolved)
+        }
+        val cont = endpointContinuation.getAndSet(null)
+        if (cont != null && cont.isActive) {
+            cont.resume(resolved)
+        }
+    }
+
+    private fun parseDurationMillis(value: Any?): Long? {
+        if (value == null || value == JSONObject.NULL) return null
+        return when (value) {
+            is Number -> (value.toDouble() * 1000.0).toLong()
+            is String -> parseDurationString(value)
+            is JSONObject -> {
+                if (!value.has("seconds") && !value.has("nanos")) return null
+                val seconds = value.optDouble("seconds", 0.0)
+                val nanos = value.optDouble("nanos", 0.0)
+                (seconds * 1000.0 + nanos / 1_000_000.0).toLong()
+            }
+            else -> null
+        }
+    }
+
+    private fun parseDurationString(raw: String): Long? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        return when {
+            trimmed.endsWith("ms") -> trimmed.removeSuffix("ms").trim().toDoubleOrNull()?.toLong()
+            trimmed.endsWith("s") -> trimmed.removeSuffix("s").trim().toDoubleOrNull()?.times(1000.0)?.toLong()
+            trimmed.endsWith("m") -> trimmed.removeSuffix("m").trim().toDoubleOrNull()?.times(60_000.0)?.toLong()
+            else -> trimmed.toDoubleOrNull()?.times(1000.0)?.toLong()
         }
     }
 

@@ -31,7 +31,8 @@ class FloatingDictationSessionManager(
     private val onConnectionStateChanged: (state: ConnectionState) -> Unit,
     private val onAmplitudeChanged: (amplitude: Float) -> Unit,
     private val onError: (errorMsg: String) -> Unit,
-    private val onDurationTicked: (seconds: Int) -> Unit
+    private val onDurationTicked: (seconds: Int) -> Unit,
+    private val onSessionLimit: (message: String, finalizeNow: Boolean) -> Unit = { _, _ -> }
 ) {
     companion object {
         private const val TAG = "FloatingDictationMgr"
@@ -252,6 +253,7 @@ class FloatingDictationSessionManager(
                 }
                 val ws = webSocketClient
                 if (ws != null && ws.setupComplete) {
+                    ws.signalActivityStart()
                     drainAudioQueue(ws, currentSessionScope)
                 }
             },
@@ -275,12 +277,14 @@ class FloatingDictationSessionManager(
                         trimmed
                     )
                 }
-                if (finalizedTranscript.isNotEmpty() && !finalizedTranscript.endsWith(" ")) {
-                    finalizedTranscript.append(" ")
+                // One activity is one utterance. Replace rather than append so a pause
+                // cannot leave a split segment behind.
+                finalizedTranscript.clear()
+                if (trimmed.isNotEmpty()) {
+                    finalizedTranscript.append(trimmed)
                 }
-                finalizedTranscript.append(text)
                 interimTranscript = ""
-                onFinalSegmentReceived(text)
+                onFinalSegmentReceived(trimmed)
                 onTranscriptUpdated(getFullTranscriptText())
                 AppLogRepository.updateLiveStats {
                     it.copy(
@@ -305,7 +309,8 @@ class FloatingDictationSessionManager(
                 FloatingBubbleManager.setNetworkProblem(true)
                 onError(err)
             },
-            isSessionActive = { isRecording }
+            isSessionActive = { isRecording },
+            onSessionLimit = onSessionLimit
         ).apply {
             val customVocab = CustomVocabularyRepository.getVocabulary()
             try {
@@ -354,8 +359,6 @@ class FloatingDictationSessionManager(
         scope.launch(Dispatchers.IO) {
             try {
                 audioRecorder.stopAndJoin()
-                ws?.signalStreamEnd()
-                delay(400)
                 ws?.disconnect()
             } catch (e: Exception) {
                 Log.e(TAG, "Error stopping audio/websocket", e)
@@ -377,19 +380,63 @@ class FloatingDictationSessionManager(
         }
     }
 
-    fun signalStreamEndOnly(scope: CoroutineScope) {
-        if (isRecording) {
-            isRecording = false
-            durationJob?.cancel()
-            durationJob = null
-            audioRecorder.stop()
-            val ws = webSocketClient
-            scope.launch(Dispatchers.IO) {
-                try {
-                    ws?.signalStreamEnd()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error signaling stream end", e)
+    /**
+     * User pressed Complete. Stop the mic, send activityEnd, and wait for the
+     * authoritative transcript. Pauses never reach this path.
+     */
+    suspend fun finishActivityAndAwaitTranscript(): String {
+        if (!isRecording && webSocketClient == null) return getFullTranscriptText()
+        durationJob?.cancel()
+        durationJob = null
+        drainJob?.cancel()
+        drainJob = null
+        audioRecorder.stopAndJoin()
+        isRecording = false
+
+        val durationAtEnd = durationSeconds
+        val chunksAtEnd = sessionChunksSent
+        val bytesAtEnd = sessionBytesSent
+        val ws = webSocketClient
+        val wl = wakeLock
+        wakeLock = null
+
+        return try {
+            if (ws != null) {
+                while (true) {
+                    val chunk = audioQueue.poll() ?: break
+                    val sent = ws.sendAudioChunk(chunk)
+                    if (!sent) break
                 }
+            }
+            val finalText = ws?.endActivityAndAwaitFinal().orEmpty().trim()
+            if (finalText.isNotEmpty()) {
+                finalizedTranscript.clear()
+                finalizedTranscript.append(finalText)
+                interimTranscript = ""
+                onTranscriptUpdated(finalText)
+            }
+            val text = finalText.ifBlank { getFullTranscriptText() }
+            text
+        } catch (e: Exception) {
+            Log.e(TAG, "Error finishing manual activity", e)
+            getFullTranscriptText()
+        } finally {
+            try {
+                ws?.disconnect()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error disconnecting after activityEnd", e)
+            }
+            webSocketClient = null
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.SESSION_END,
+                "ended_reason: completed | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB"
+            )
+            AppLogRepository.updateConnectionState(ConnectionState.Idle, DiagnosticSource.BUBBLE)
+            try {
+                if (wl?.isHeld == true) wl.release()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error releasing WakeLock", e)
             }
         }
     }

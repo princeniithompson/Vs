@@ -133,7 +133,15 @@ class FloatingBubbleService : Service() {
                     stopVoiceTyping(endedReason = endedReasonTag)
                 }
             },
-            onDurationTicked = { _ -> }
+            onDurationTicked = { _ -> },
+            onSessionLimit = { message, finalizeNow ->
+                serviceScope.launch(Dispatchers.Main) {
+                    Toast.makeText(this@FloatingBubbleService, message, Toast.LENGTH_LONG).show()
+                    if (finalizeNow && sessionManager.isRecording) {
+                        onConfirmClicked()
+                    }
+                }
+            }
         )
 
         try {
@@ -363,25 +371,22 @@ class FloatingBubbleService : Service() {
     private fun onConfirmClicked() {
         if (overlayWindowManager.overlayPendingFinalizing.value) return
         overlayWindowManager.overlayPendingFinalizing.value = true
-
-        if (sessionManager.isRecording) {
-            FloatingBubbleManager.setRecordingState(false)
-            overlayWindowManager.overlayRecording.value = false
-            sessionManager.signalStreamEndOnly(serviceScope)
-        }
+        FloatingBubbleManager.setRecordingState(false)
+        overlayWindowManager.overlayRecording.value = false
 
         pendingCompletionTimeoutJob?.cancel()
         pendingCompletionTimeoutJob = serviceScope.launch {
-            delay(1400L)
+            val textToInject = sessionManager.finishActivityAndAwaitTranscript()
             if (isActive) {
-                performInjectionAndClose()
+                performInjectionAndClose(textToInject)
             }
         }
     }
 
-    private fun performInjectionAndClose() {
+    private fun performInjectionAndClose(textOverride: String? = null) {
         val startInjectTime = android.os.SystemClock.elapsedRealtime()
-        val textToInject = sessionManager.getFullTranscriptText()
+        val textToInject = textOverride?.trim().takeUnless { it.isNullOrEmpty() }
+            ?: sessionManager.getFullTranscriptText()
         val durationSec = sessionManager.durationSeconds
         if (sessionManager.isRecording) {
             stopVoiceTyping()

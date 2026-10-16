@@ -155,9 +155,10 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     private var drainJob: Job? = null
 
     private val webSocketClient = GeminiLiveWebSocketClient(
-        onSetupComplete = {
+            onSetupComplete = {
             addLog(LogLevel.INFO, TAG, "setupComplete received! Flushing buffered queue & streaming live audio.")
             com.princeniithompson.rapcha.data.AppLogRepository.updateLiveStats { it.copy(source = com.princeniithompson.rapcha.data.DiagnosticSource.APP, setupCompleted = true) }
+            webSocketClient.signalActivityStart()
             drainAudioQueue()
         },
         onInterimTranscription = { text ->
@@ -173,10 +174,8 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                     trimmedNew
                 )
             }
-            _finalizedTranscript.update { current ->
-                if (trimmedNew.isEmpty()) current
-                else if (current.isBlank()) trimmedNew
-                else "$current $trimmedNew"
+            if (trimmedNew.isNotEmpty()) {
+                _finalizedTranscript.value = trimmedNew
             }
             _interimTranscript.value = ""
             com.princeniithompson.rapcha.data.AppLogRepository.updateLiveStats { it.copy(source = com.princeniithompson.rapcha.data.DiagnosticSource.APP, finalizedCount = it.finalizedCount + 1) }
@@ -201,7 +200,14 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                 stopRecording(endedReason = endedReasonTag)
             }
         },
-        isSessionActive = { _isRecording.value }
+        isSessionActive = { _isRecording.value },
+        onSessionLimit = { message, finalizeNow ->
+            addLog(LogLevel.INFO, TAG, message)
+            android.widget.Toast.makeText(getApplication(), message, android.widget.Toast.LENGTH_LONG).show()
+            if (finalizeNow && _isRecording.value) {
+                stopRecording(endedReason = "session_limit")
+            }
+        }
     )
 
     private var appWakeLock: android.os.PowerManager.WakeLock? = null
@@ -385,11 +391,18 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             try {
                 audioRecorder.stopAndJoin()
                 _audioAmplitude.value = 0f
-                // Drain any remainder in queue
-                drainAudioQueue()
-                // Step D: Send audioStreamEnd
-                webSocketClient.signalStreamEnd()
-                delay(400) // Grace period for server to send final transcription frames
+                while (true) {
+                    val chunk = audioQueue.poll() ?: break
+                    if (!webSocketClient.sendAudioChunk(chunk)) break
+                }
+                val shouldEndActivity = endedReason == "completed" || endedReason == "session_limit"
+                if (shouldEndActivity) {
+                    val finalText = webSocketClient.endActivityAndAwaitFinal().trim()
+                    if (finalText.isNotBlank()) {
+                        _finalizedTranscript.value = finalText
+                        _interimTranscript.value = ""
+                    }
+                }
                 webSocketClient.disconnect()
             } catch (e: Exception) {
                 Log.e(TAG, "Error stopping in-app session", e)
