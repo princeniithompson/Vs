@@ -4,6 +4,7 @@ import com.princeniithompson.rapcha.data.AppLogRepository
 import com.princeniithompson.rapcha.data.DiagnosticLogEntry
 import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
+import com.princeniithompson.rapcha.data.TranscriptPrivacy
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -29,8 +30,7 @@ object DiagnosticsEventTracker {
     }
 
     fun trackTranscript(source: DiagnosticSource, text: String) {
-        val sample = if (text.length > 80) text.take(80) + "..." else text
-        AppLogRepository.logEvent(source, DiagnosticType.TRANSCRIPT_FINAL, sample)
+        AppLogRepository.logEvent(source, DiagnosticType.TRANSCRIPT_FINAL, TranscriptPrivacy.summary(text))
     }
 
     fun trackPolishCalled(source: DiagnosticSource, charCount: Int) {
@@ -38,8 +38,7 @@ object DiagnosticsEventTracker {
     }
 
     fun trackPolishSuccess(source: DiagnosticSource, resultSample: String) {
-        val sample = if (resultSample.length > 60) resultSample.take(60) + "..." else resultSample
-        AppLogRepository.logEvent(source, DiagnosticType.POLISH_SUCCESS, "Result: $sample")
+        AppLogRepository.logEvent(source, DiagnosticType.POLISH_SUCCESS, "Result: ${TranscriptPrivacy.summary(resultSample)}")
     }
 
     fun trackPolishFailed(source: DiagnosticSource, error: String) {

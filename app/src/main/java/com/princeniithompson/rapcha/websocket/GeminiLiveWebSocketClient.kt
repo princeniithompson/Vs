@@ -9,7 +9,9 @@ import com.princeniithompson.rapcha.data.AppLogRepository
 import com.princeniithompson.rapcha.data.ConnectionState
 import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
+import com.princeniithompson.rapcha.data.DictationEndedReason
 import com.princeniithompson.rapcha.data.LogLevel
+import com.princeniithompson.rapcha.data.TranscriptPrivacy
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -25,6 +27,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.coroutines.resume
+import kotlin.math.max
 import kotlin.random.Random
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -75,6 +78,12 @@ class GeminiLiveWebSocketClient(
         private val currentActiveClient = AtomicReference<GeminiLiveWebSocketClient?>(null)
 
         fun getActiveSocketCount(): Int = activeSocketCount.get()
+
+        internal fun releaseActiveSocket(): Int = activeSocketCount.updateAndGet { max(0, it - 1) }
+
+        internal fun debugSetActiveSocketCount(value: Int) {
+            activeSocketCount.set(value.coerceAtLeast(0))
+        }
 
         fun terminateActiveLiveSockets() {
             val client = currentActiveClient.getAndSet(null)
@@ -342,7 +351,7 @@ class GeminiLiveWebSocketClient(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                val currentLiveCount = activeSocketCount.decrementAndGet().coerceAtLeast(0)
+                val currentLiveCount = releaseActiveSocket()
                 val reasonDetail = if (reason.isNotBlank()) reason else "No reason provided"
                 Log.i(TAG, "[SingleConnection] WebSocket closed (code: $code, reason: $reasonDetail). Active live sockets: $currentLiveCount")
                 isSetupComplete.set(false)
@@ -358,14 +367,11 @@ class GeminiLiveWebSocketClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                val currentLiveCount = activeSocketCount.decrementAndGet().coerceAtLeast(0)
+                val currentLiveCount = releaseActiveSocket()
                 Log.i(TAG, "[SingleConnection] WebSocket failure: ${t.message}. Active live sockets: $currentLiveCount")
 
                 val primaryMsg = t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
-                val isPingPongTimeout = primaryMsg.contains("ping", ignoreCase = true) ||
-                                       primaryMsg.contains("pong", ignoreCase = true) ||
-                                       primaryMsg.contains("timeout", ignoreCase = true)
-                val endedReason = if (isPingPongTimeout) "ping_timeout" else "connection_drop"
+                val endedReason = DictationEndedReason.fromMessage(primaryMsg)
 
                 val errorDetails = buildString {
                     append("ended_reason: $endedReason | WebSocket failure: ")
@@ -402,11 +408,21 @@ class GeminiLiveWebSocketClient(
 
         isSetupComplete.set(false)
 
-        val sessionStillActive = isSessionActive()
-        val attempts = reconnectAttempts.incrementAndGet()
-        val maxAttempts = if (sessionStillActive) Int.MAX_VALUE else MAX_RECONNECT_ATTEMPTS
+        if (!isSessionActive()) {
+            isConnectingGuard.set(false)
+            cancelPendingReconnect()
+            val timeStr = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
+            val idleMsg = "[$timeStr] Websocket closed while no dictation is active; reconnect suppressed | $errorDetails"
+            Log.i(TAG, "[ConnectionState] IDLE: $idleMsg")
+            onLog(LogLevel.INFO, TAG, idleMsg, null)
+            notifyStateChanged(ConnectionState.Idle)
+            return
+        }
 
-        if (attempts <= maxAttempts && lastApiKey.isNotBlank()) {
+        val sessionStillActive = true
+        val attempts = reconnectAttempts.incrementAndGet()
+
+        if (lastApiKey.isNotBlank()) {
             // True exponential backoff with jitter:
             // delay = min(30000, base * 2^(attempt-1)) + random(0..500 ms)
             // base starts at 1000 ms.
@@ -428,7 +444,7 @@ class GeminiLiveWebSocketClient(
 
             cancelPendingReconnect()
             val runnable = Runnable {
-                if (!isExplicitlyClosed.get() && (isSessionActive() || reconnectAttempts.get() <= MAX_RECONNECT_ATTEMPTS)) {
+                if (!isExplicitlyClosed.get() && isSessionActive()) {
                     connectInternal()
                 } else {
                     isConnectingGuard.set(false)
@@ -476,7 +492,7 @@ class GeminiLiveWebSocketClient(
                 if (wasReconnecting) {
                     AppLogRepository.logEvent(
                         DiagnosticSource.BUBBLE,
-                        DiagnosticType.SESSION_START,
+                        DiagnosticType.SESSION_RECONNECT,
                         ackMsg
                     )
                 }
@@ -526,7 +542,7 @@ class GeminiLiveWebSocketClient(
                     }
                     val currentTurn = activeTurnText.toString()
                     if (currentTurn.isNotEmpty()) {
-                        onLog(LogLevel.RECEIVED, TAG, "Live Text: \"$currentTurn\"", null)
+                        onLog(LogLevel.RECEIVED, TAG, "Live Text: ${TranscriptPrivacy.summary(currentTurn)}", null)
                         notifyInterimTranscription(currentTurn)
                     }
                 }
@@ -537,7 +553,7 @@ class GeminiLiveWebSocketClient(
                 val interimObj = serverContent.optJSONObject("interimInputTranscription")
                 val interimText = interimObj?.optString("text").orEmpty()
                 if (interimText.isNotEmpty()) {
-                    onLog(LogLevel.RECEIVED, TAG, "Interim: \"$interimText\"", null)
+                    onLog(LogLevel.RECEIVED, TAG, "Interim: ${TranscriptPrivacy.summary(interimText)}", null)
                     notifyInterimTranscription(interimText)
                 }
 
@@ -548,30 +564,35 @@ class GeminiLiveWebSocketClient(
 
                 if (!activityEnded.get()) {
                     if (finalizedText.isNotEmpty()) {
-                        onLog(LogLevel.RECEIVED, TAG, "Preview update before activityEnd: \"$finalizedText\"", null)
+                        onLog(LogLevel.RECEIVED, TAG, "Preview update before activityEnd: ${TranscriptPrivacy.summary(finalizedText)}", null)
                         notifyInterimTranscription(finalizedText)
                     }
                     if (turnFinished) {
                         activeTurnText.clear()
                     }
                 } else if (finalizedText.isNotEmpty()) {
-                    onLog(LogLevel.RECEIVED, TAG, "Finalized: \"$finalizedText\"", null)
+                    onLog(LogLevel.RECEIVED, TAG, "Finalized: ${TranscriptPrivacy.summary(finalizedText)}", null)
                     settleEndpoint(finalizedText)
                 } else if (turnFinished) {
                     val completedText = activeTurnText.toString().trim()
                     activeTurnText.clear()
                     if (completedText.isNotEmpty()) {
-                        onLog(LogLevel.INFO, TAG, "Turn completed: \"$completedText\"", null)
+                        onLog(LogLevel.INFO, TAG, "Turn completed: ${TranscriptPrivacy.summary(completedText)}", null)
                         settleEndpoint(completedText)
                     }
                 }
             } else {
-                onLog(LogLevel.RECEIVED, TAG, "Server message: ${rawJson.take(120)}...", rawJson)
+                onLog(
+                    LogLevel.RECEIVED,
+                    TAG,
+                    "Server message: ${TranscriptPrivacy.maskSensitive(rawJson.take(120))}...",
+                    null
+                )
             }
         } catch (e: Exception) {
             val err = "Error parsing incoming frame JSON: ${e.message}"
             Log.e(TAG, err, e)
-            onLog(LogLevel.ERROR, TAG, "JSON parse error: ${e.message}", rawJson)
+            onLog(LogLevel.ERROR, TAG, "JSON parse error: ${e.message}", TranscriptPrivacy.maskSensitive(rawJson).take(180))
             notifyError(err, GeminiLiveError.ProtocolError(err, e))
         }
     }
@@ -739,7 +760,7 @@ class GeminiLiveWebSocketClient(
         webSocket = null
         if (existing != null) {
             try {
-                val count = activeSocketCount.decrementAndGet().coerceAtLeast(0)
+                val count = releaseActiveSocket()
                 Log.i(TAG, "[SingleConnection] Existing WebSocket cancelled. Active live sockets: $count")
                 try {
                     existing.close(1000, "Session ended")

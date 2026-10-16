@@ -84,7 +84,7 @@ class FloatingPolishCoordinator {
                     LogLevel.INFO,
                     "PolishAPI",
                     "User tapped Polish ✨ for transcript (${rawTranscript.length} chars)",
-                    rawTranscript
+                    com.princeniithompson.rapcha.data.TranscriptPrivacy.summary(rawTranscript)
                 )
                 AppLogRepository.logEvent(
                     DiagnosticSource.BUBBLE,
@@ -136,11 +136,16 @@ class FloatingPolishCoordinator {
 
                 val polishedText = result?.text
                 if (!polishedText.isNullOrBlank()) {
-                    AppLogRepository.addLog(LogLevel.INFO, "PolishAPI", "Polish completed successfully!", polishedText)
+                    AppLogRepository.addLog(
+                        LogLevel.INFO,
+                        "PolishAPI",
+                        "Polish completed successfully!",
+                        com.princeniithompson.rapcha.data.TranscriptPrivacy.summary(polishedText)
+                    )
                     AppLogRepository.logEvent(
                         DiagnosticSource.BUBBLE,
                         DiagnosticType.POLISH_SUCCESS,
-                        "Result: ${polishedText.take(60)}..."
+                        "Result: ${com.princeniithompson.rapcha.data.TranscriptPrivacy.summary(polishedText)}"
                     )
                     HistoryRepository.saveEntry(
                         text = polishedText,

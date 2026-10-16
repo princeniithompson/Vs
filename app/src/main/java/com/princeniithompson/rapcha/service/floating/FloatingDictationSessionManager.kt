@@ -11,6 +11,7 @@ import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.data.LiveStats
 import com.princeniithompson.rapcha.data.LogLevel
+import com.princeniithompson.rapcha.data.TranscriptPrivacy
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
 import com.princeniithompson.rapcha.websocket.GeminiLiveWebSocketClient
 import kotlinx.coroutines.CompletableJob
@@ -22,6 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 
 class FloatingDictationSessionManager(
     private val context: Context,
@@ -48,6 +50,7 @@ class FloatingDictationSessionManager(
     private var drainJob: Job? = null
 
     private var durationJob: Job? = null
+    private val sessionEndLogged = AtomicBoolean(false)
     var durationSeconds: Int = 0
         private set
 
@@ -179,6 +182,7 @@ class FloatingDictationSessionManager(
     ) {
         if (isRecording) return
         isRecording = true
+        sessionEndLogged.set(false)
 
         sessionJob?.cancel()
         val sJob = SupervisorJob()
@@ -274,7 +278,7 @@ class FloatingDictationSessionManager(
                     AppLogRepository.logEvent(
                         DiagnosticSource.BUBBLE,
                         DiagnosticType.TRANSCRIPT_FINAL,
-                        trimmed
+                        TranscriptPrivacy.summary(trimmed)
                     )
                 }
                 // One activity is one utterance. Replace rather than append so a pause
@@ -363,9 +367,7 @@ class FloatingDictationSessionManager(
             } catch (e: Exception) {
                 Log.e(TAG, "Error stopping audio/websocket", e)
             } finally {
-                AppLogRepository.logEvent(
-                    DiagnosticSource.BUBBLE,
-                    DiagnosticType.SESSION_END,
+                logSessionEndOnce(
                     "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB"
                 )
                 AppLogRepository.updateConnectionState(ConnectionState.Idle, DiagnosticSource.BUBBLE)
@@ -427,9 +429,7 @@ class FloatingDictationSessionManager(
                 Log.e(TAG, "Error disconnecting after activityEnd", e)
             }
             webSocketClient = null
-            AppLogRepository.logEvent(
-                DiagnosticSource.BUBBLE,
-                DiagnosticType.SESSION_END,
+            logSessionEndOnce(
                 "ended_reason: completed | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB"
             )
             AppLogRepository.updateConnectionState(ConnectionState.Idle, DiagnosticSource.BUBBLE)
@@ -439,6 +439,15 @@ class FloatingDictationSessionManager(
                 Log.w(TAG, "Error releasing WakeLock", e)
             }
         }
+    }
+
+    fun logSessionEndOnce(message: String) {
+        if (!sessionEndLogged.compareAndSet(false, true)) return
+        AppLogRepository.logEvent(
+            DiagnosticSource.BUBBLE,
+            DiagnosticType.SESSION_END,
+            message
+        )
     }
 
     fun getFullTranscriptText(): String {

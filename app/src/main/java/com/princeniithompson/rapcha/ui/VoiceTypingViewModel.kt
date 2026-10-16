@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 
 class VoiceTypingViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -151,6 +152,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     val selectedModel: StateFlow<String> = _selectedModel.asStateFlow()
 
     private val audioQueue = ConcurrentLinkedQueue<ByteArray>()
+    private val sessionEndLogged = AtomicBoolean(false)
     private var durationJob: Job? = null
     private var drainJob: Job? = null
 
@@ -170,7 +172,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                 com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
                     com.princeniithompson.rapcha.data.DiagnosticSource.APP,
                     com.princeniithompson.rapcha.data.DiagnosticType.TRANSCRIPT_FINAL,
-                    trimmedNew
+                    com.princeniithompson.rapcha.data.TranscriptPrivacy.summary(trimmedNew)
                 )
             }
             if (trimmedNew.isNotEmpty()) {
@@ -186,8 +188,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             addLog(level, tag, msg, payload)
         },
         onError = { errorMsg ->
-            val isPingTimeout = errorMsg.contains("ping", ignoreCase = true) || errorMsg.contains("pong", ignoreCase = true) || errorMsg.contains("timeout", ignoreCase = true)
-            val endedReasonTag = if (isPingTimeout) "ping_timeout" else "connection_drop"
+            val endedReasonTag = com.princeniithompson.rapcha.data.DictationEndedReason.fromMessage(errorMsg)
 
             com.princeniithompson.rapcha.data.AppLogRepository.updateLiveStats { it.copy(source = com.princeniithompson.rapcha.data.DiagnosticSource.APP, lastError = errorMsg) }
             com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
@@ -291,6 +292,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     fun startRecording() {
         if (_isRecording.value) return
 
+        sessionEndLogged.set(false)
         _isRecording.value = true
         _interimTranscript.value = ""
         audioQueue.clear()
@@ -361,7 +363,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
         if (wasRecording) {
             stopRecording(endedReason = "user_cancelled")
-        } else if (hasTranscript) {
+        } else if (hasTranscript && sessionEndLogged.compareAndSet(false, true)) {
             com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
                 com.princeniithompson.rapcha.data.DiagnosticSource.APP,
                 com.princeniithompson.rapcha.data.DiagnosticType.SESSION_END,
@@ -374,6 +376,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     fun stopRecording(endedReason: String = "completed") {
         if (!_isRecording.value) return
         _isRecording.value = false
+        val shouldLogEnd = sessionEndLogged.compareAndSet(false, true)
         durationJob?.cancel()
 
         addLog(LogLevel.INFO, TAG, "Stopping recording session ($endedReason)...")
@@ -419,11 +422,13 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                 }
                 com.princeniithompson.rapcha.data.AppLogRepository.updateConnectionState(ConnectionState.Idle, com.princeniithompson.rapcha.data.DiagnosticSource.APP)
                 addLog(LogLevel.INFO, TAG, "Session completed ($endedReason). Total chunks sent: $chunksAtEnd")
-                com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
-                    com.princeniithompson.rapcha.data.DiagnosticSource.APP,
-                    com.princeniithompson.rapcha.data.DiagnosticType.SESSION_END,
-                    "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB"
-                )
+                if (shouldLogEnd) {
+                    com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
+                        com.princeniithompson.rapcha.data.DiagnosticSource.APP,
+                        com.princeniithompson.rapcha.data.DiagnosticType.SESSION_END,
+                        "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB"
+                    )
+                }
                 try {
                     if (wl?.isHeld == true) {
                         wl.release()

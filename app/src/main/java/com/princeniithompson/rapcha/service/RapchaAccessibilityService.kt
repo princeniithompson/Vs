@@ -101,6 +101,7 @@ open class RapchaAccessibilityService : AccessibilityService() {
 
         // Ensure floating bubble is using accessibility overlay layer for highest z-order
         FloatingBubbleService.instance?.attachToAccessibilityService(this)
+        FloatingBubbleManager.startEnabledBubble(this)
     }
 
     private var lastReportedKeyboardVisible: Boolean? = null
