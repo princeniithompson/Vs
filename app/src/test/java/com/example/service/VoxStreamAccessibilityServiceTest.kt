@@ -54,6 +54,17 @@ class VoxStreamAccessibilityServiceTest {
     }
 
     @Test
+    fun `extractGenuineText keeps short mention text when the hint flag is set`() {
+        val node = AccessibilityNodeInfo.obtain()
+        node.text = "@princeniithompson"
+        node.hintText = "Ask Gemini"
+        node.isShowingHintText = true
+
+        val result = service.extractGenuineText(node)
+        assertEquals("@princeniithompson", result)
+    }
+
+    @Test
     fun `extractGenuineText preserves genuine user typed text`() {
         val node = AccessibilityNodeInfo.obtain()
         node.text = "Hello world"
@@ -82,7 +93,7 @@ class VoxStreamAccessibilityServiceTest {
 
     @Test
     fun `injectText returns false for empty text`() {
-        val result = service.injectText("")
+        val result = kotlinx.coroutines.runBlocking { service.injectText("") }
         org.junit.Assert.assertFalse(result)
     }
 
@@ -90,7 +101,7 @@ class VoxStreamAccessibilityServiceTest {
     fun `injectText is blocked when Smart Safe Mode is active`() {
         FloatingBubbleManager.updateCurrentForegroundPackage("com.chase.sig.android", null)
         try {
-            val result = service.injectText("Secret password")
+            val result = kotlinx.coroutines.runBlocking { service.injectText("Secret password") }
             org.junit.Assert.assertFalse("Injection must be blocked when Smart Safe Mode is active", result)
         } finally {
             FloatingBubbleManager.updateCurrentForegroundPackage("com.google.android.keep", null)

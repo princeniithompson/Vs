@@ -413,10 +413,10 @@ object FloatingBubbleManager {
     }
 
     /**
-     * Attempts to inject text into the currently active text field via AccessibilityService.
-     * If no active text field exists or injection fails, copies text to clipboard with a Toast.
+     * Injects text into the focused field. Copies to the clipboard only when no focused
+     * editable field exists.
      */
-    fun injectOrFallbackToClipboard(context: Context, text: String): Boolean {
+    suspend fun injectOrFallbackToClipboard(context: Context, text: String): Boolean {
         return com.example.service.floating.FloatingTextInjector.injectOrFallbackToClipboard(context, text)
     }
 }

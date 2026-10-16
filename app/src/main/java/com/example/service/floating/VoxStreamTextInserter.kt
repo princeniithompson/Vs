@@ -3,8 +3,6 @@ package com.example.service.floating
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethod
@@ -29,7 +27,6 @@ class VoxStreamTextInserter(private val context: Context) {
 
     // 1. Mutex to prevent race conditions during rapid typing/dictation
     private val insertionMutex = Mutex()
-    private val mainHandler = Handler(Looper.getMainLooper())
 
     sealed interface DirectInjectionResult {
         object Success : DirectInjectionResult
@@ -98,17 +95,26 @@ class VoxStreamTextInserter(private val context: Context) {
      * Tries to inject text directly using the active InputConnection or Accessibility Service pure ACTION_SET_TEXT.
      * Differentiates whether a field existed (write failed) vs NO field on screen.
      */
-    private fun tryDirectInjection(text: String, inputMethod: Any?): DirectInjectionResult {
+    private suspend fun tryDirectInjection(text: String, inputMethod: Any?): DirectInjectionResult {
         // Step 1: Attempt IME / InputConnection commit (Whisperflow IME path)
         try {
             val candidateIme = inputMethod ?: VoxStreamInputMethodService.instance
             if (candidateIme != null) {
                 val inputConnection: InputConnection? = when (candidateIme) {
                     is InputConnection -> candidateIme
-                    is android.inputmethodservice.InputMethodService -> candidateIme.currentInputConnection
+                    is android.inputmethodservice.InputMethodService -> {
+                        if (candidateIme.currentInputStarted) candidateIme.currentInputConnection else null
+                    }
                     else -> {
                         try {
-                            candidateIme.javaClass.getMethod("getCurrentInputConnection").invoke(candidateIme) as? InputConnection
+                            val started = candidateIme.javaClass.methods
+                                .firstOrNull { it.name == "getCurrentInputStarted" && it.parameterCount == 0 }
+                                ?.invoke(candidateIme) as? Boolean ?: true
+                            if (!started) {
+                                null
+                            } else {
+                                candidateIme.javaClass.getMethod("getCurrentInputConnection").invoke(candidateIme) as? InputConnection
+                            }
                         } catch (_: Throwable) {
                             null
                         }
@@ -138,19 +144,13 @@ class VoxStreamTextInserter(private val context: Context) {
                 return DirectInjectionResult.Success
             }
 
-            if (trace.injectionMethod == "DIRECT_ACTION_SET_TEXT") {
-                // Focused field existed, but writing/verification failed!
-                Log.w(TAG, "Focused editable field existed but ACTION_SET_TEXT failed (${trace.resultDetails})")
-                return DirectInjectionResult.FocusedFieldFailed(trace.resultDetails)
+            // Clipboard fallback is allowed only when no focused editable field exists.
+            if (trace.injectionMethod == "NO_TARGET_NODE") {
+                return DirectInjectionResult.NoFocusedField
             }
 
-            if (trace.injectionMethod == "BLOCKED_SAFE_MODE") {
-                Log.w(TAG, "Direct injection blocked by Smart Safe Mode")
-                return DirectInjectionResult.FocusedFieldFailed("Smart Safe Mode Active")
-            }
-
-            // trace.injectionMethod == "NO_TARGET_NODE"
-            return DirectInjectionResult.NoFocusedField
+            Log.w(TAG, "Focused field or blocked write (${trace.injectionMethod}): ${trace.resultDetails}. Clipboard fallback strictly suppressed.")
+            return DirectInjectionResult.FocusedFieldFailed(trace.resultDetails)
         }
 
         return DirectInjectionResult.NoFocusedField

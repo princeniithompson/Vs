@@ -387,27 +387,36 @@ class FloatingBubbleService : Service() {
             stopVoiceTyping()
         }
 
-        if (textToInject.isNotBlank()) {
-            val lockedCtx = FloatingBubbleManager.lockedSessionContext.value ?: "AI · VoxStream"
-            HistoryRepository.addHistoryItem(
-                text = textToInject,
-                appContext = lockedCtx,
-                durationSeconds = durationSec
-            )
-            FloatingTextInjector.injectOrFallbackToClipboard(this, textToInject)
-
-            val elapsedMs = maxOf(300L, android.os.SystemClock.elapsedRealtime() - startInjectTime)
-            val wordCount = textToInject.trim().split("\\s+".toRegex()).count { it.isNotBlank() }
-            AppLogRepository.recordInjectionResult(
-                durationMs = elapsedMs,
-                wordCount = wordCount,
-                targetApp = lockedCtx,
-                transcriptText = textToInject,
-                source = DiagnosticSource.BUBBLE
-            )
+        if (textToInject.isBlank()) {
+            resetAndCollapse()
+            return
         }
 
-        resetAndCollapse()
+        val lockedCtx = FloatingBubbleManager.lockedSessionContext.value ?: "AI · VoxStream"
+        HistoryRepository.addHistoryItem(
+            text = textToInject,
+            appContext = lockedCtx,
+            durationSeconds = durationSec
+        )
+
+        // Injection verifies off the main thread. Collapse only after it returns.
+        serviceScope.launch {
+            try {
+                FloatingTextInjector.injectOrFallbackToClipboard(this@FloatingBubbleService, textToInject)
+
+                val elapsedMs = maxOf(300L, android.os.SystemClock.elapsedRealtime() - startInjectTime)
+                val wordCount = textToInject.trim().split("\\s+".toRegex()).count { it.isNotBlank() }
+                AppLogRepository.recordInjectionResult(
+                    durationMs = elapsedMs,
+                    wordCount = wordCount,
+                    targetApp = lockedCtx,
+                    transcriptText = textToInject,
+                    source = DiagnosticSource.BUBBLE
+                )
+            } finally {
+                resetAndCollapse()
+            }
+        }
     }
 
     private fun onPolishClicked() {
