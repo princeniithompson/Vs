@@ -11,28 +11,25 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Dedicated text-injection engine for VoxStream:
- * - ACTION_SET_TEXT only for a genuinely empty, plain, non-notes field
- * - Existing content, spans, and notes apps are inserted at the caret (IME or paste)
- * - Intelligent hint & placeholder stripping via extractGenuineText
- * - Clipboard fallback ONLY when no focused editable field exists
+ * Clipboard-free text insertion for VoxStream (accessibility service, not a keyboard).
+ * Every focused field is written with a cursor-aware ACTION_SET_TEXT, then ACTION_SET_SELECTION.
+ * A two-step write nudges the app's text watcher so the replace is seen as a real edit.
+ * The clipboard is used only when no focused field exists.
+ *
+ * Rich fields keep the characters around the caret. ACTION_SET_TEXT replaces the node with a
+ * plain string, so spans, avatar pills, and child-node chips (Gemini) can be flattened.
  */
 object FloatingTextInjector {
 
     private const val TAG = "FloatingTextInjector"
 
-    private val KNOWN_PLACEHOLDERS = setOf(
-        "ask gemini", "ask gemini…", "ask gemini...",
-        "ask google", "ask google…", "ask google...",
-        "search", "search…", "search...",
-        "search or type url", "search or type web address",
-        "type a message", "message", "send a message", "write a message",
-        "write a comment…", "write a comment...", "add a comment…", "add a comment...",
-        "take a note", "take a note…", "take a note...", "note", "note…", "note...", "title",
-        "title…", "title...", "start typing", "start typing…", "start typing...",
-        "write a note", "write a note…", "write a note...", "enter notes", "add note",
-        "text note", "body"
+    /** Packages whose editors keep mention pills or other spans ACTION_SET_TEXT would flatten. */
+    private val RICH_FIELD_PACKAGES = listOf(
+        "com.google.android.apps.bard",
+        "com.google.android.apps.gemini"
     )
+
+    data class CursorMerge(val text: String, val cursor: Int)
 
     /**
      * Checks if a package belongs to known note-taking apps requiring careful empty/placeholder handling
@@ -62,92 +59,84 @@ object FloatingTextInjector {
     }
 
     /**
-     * Helper to determine if a field is rich or unsafe to rewrite with ACTION_SET_TEXT:
-     * - node.text is a Spanned and has at least one span of any kind
-     * - the package is a known note or rich-text app
-     * - the node has a child node
-     * - the node does not support ACTION_SET_TEXT
+     * Rich editors cannot survive a full [AccessibilityNodeInfo.ACTION_SET_TEXT] rewrite
+     * without losing spans or mention pills. Notes apps are not rich: they use SET_TEXT.
+     * A field is rich when it has spans, child nodes, or a known rich package such as Gemini.
      */
-    fun isRichOrUnsafeToRewrite(node: AccessibilityNodeInfo): Boolean {
-        // 1. node.text is a Spanned and has at least one span of any kind
+    fun isRichField(node: AccessibilityNodeInfo): Boolean {
         val rawText = node.text
         if (rawText is Spanned) {
             try {
                 val spans = rawText.getSpans(0, rawText.length, Any::class.java)
-                if (spans != null && spans.isNotEmpty()) {
-                    return true
-                }
+                if (spans != null && spans.isNotEmpty()) return true
             } catch (_: Throwable) {}
         }
-
-        // 2. the package is a known note or rich-text app (use the existing isNoteAppPackage)
-        val pkg = try { node.packageName?.toString() ?: "" } catch (_: Throwable) { "" }
-        if (isNoteAppPackage(pkg)) {
-            return true
-        }
-
-        // 3. the node has a child node
         try {
-            if (node.childCount > 0) {
-                return true
-            }
+            if (node.childCount > 0) return true
         } catch (_: Throwable) {}
-
-        // 4. the node does not support ACTION_SET_TEXT
-        if (!supportsActionSetText(node)) {
-            return true
-        }
-
-        return false
+        val pkg = try { node.packageName?.toString()?.lowercase() ?: "" } catch (_: Throwable) { "" }
+        return RICH_FIELD_PACKAGES.any { pkg.contains(it) }
     }
 
+    fun isRichOrUnsafeToRewrite(node: AccessibilityNodeInfo): Boolean = isRichField(node)
+
     /**
-     * ACTION_SET_TEXT replaces the entire field and does not emit real input events.
-     * It is safe only when the field is genuinely empty, plain, and not a notes app.
-     * Existing text (including short mentions) must be inserted at the caret instead.
+     * True only when the node is displaying its hint: [AccessibilityNodeInfo.isShowingHintText]
+     * is set and the visible text equals [AccessibilityNodeInfo.getHintText].
+     * Real content, including short mentions, is never treated as a hint.
      */
-    fun canSafelyRewriteWithSetText(node: AccessibilityNodeInfo): Boolean {
-        val pkg = try { node.packageName?.toString() ?: "" } catch (_: Throwable) { "" }
-        if (isNoteAppPackage(pkg)) return false
-        if (isRichOrUnsafeToRewrite(node)) return false
-        if (extractGenuineText(node).isNotEmpty()) return false
-        return true
+    fun isActiveHint(node: AccessibilityNodeInfo): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        return try {
+            if (!node.isShowingHintText) return false
+            val rawText = node.text?.toString() ?: return false
+            val hintText = node.hintText?.toString() ?: return false
+            hintText.isNotBlank() && rawText.trim().equals(hintText.trim(), ignoreCase = true)
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     /**
-     * Determines whether the given node contains real, genuine user text versus an empty
-     * field or a placeholder/hint string.
-     *
-     * isShowingHintText is NOT enough to discard short text. Apps such as Gemini report
-     * that flag while a mention like "@princeniithompson" or an avatar pill is present.
-     * Only a blank field, an exact hint match, or a known placeholder is treated as empty.
-     * Text longer than 25 characters is always kept.
+     * Real user text. Blank text and an active hint (flag set and text equal to hintText) are empty.
      */
     fun extractGenuineText(node: AccessibilityNodeInfo): String {
         val rawText = node.text?.toString() ?: ""
         if (rawText.isBlank()) return ""
-
-        // SAFETY CHECK: Long text in Chrome, WhatsApp, Keep, or Gemini is NEVER a hint.
-        if (rawText.length > 25) {
-            return rawText
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                val hintText = node.hintText?.toString()
-                if (!hintText.isNullOrBlank() && rawText.trim().equals(hintText.trim(), ignoreCase = true)) return ""
-            } catch (_: Throwable) {}
-        }
-
-        val trimmed = rawText.trim().lowercase()
-        if (KNOWN_PLACEHOLDERS.contains(trimmed)) return ""
-
-        val viewId = try { node.viewIdResourceName?.lowercase() ?: "" } catch (_: Throwable) { "" }
-        if (viewId.contains("editor_title") && trimmed == "title") return ""
-        if (viewId.contains("edit_note_text") && (trimmed == "note" || trimmed == "take a note")) return ""
-
-        // Do not drop short real text just because isShowingHintText is set.
+        if (isActiveHint(node)) return ""
         return rawText
+    }
+
+    /**
+     * Builds before + transcript + after using the node's selection.
+     * A single space is inserted when the character before the caret is not whitespace,
+     * so dictated words do not glue to existing text. An active hint is treated as an empty field.
+     */
+    fun buildCursorMerge(node: AccessibilityNodeInfo, dictatedText: String): CursorMerge? {
+        val transcript = dictatedText.trim()
+        if (transcript.isEmpty()) return null
+        val rawText = node.text?.toString() ?: ""
+        if (extractGenuineText(node).isEmpty()) {
+            return CursorMerge(transcript, transcript.length)
+        }
+
+        var start = rawText.length
+        var end = rawText.length
+        val selStart = try { node.textSelectionStart } catch (_: Throwable) { -1 }
+        val selEnd = try { node.textSelectionEnd } catch (_: Throwable) { -1 }
+        if (selStart in 0..rawText.length && selEnd in selStart..rawText.length) {
+            start = selStart
+            end = selEnd
+        }
+        val before = rawText.substring(0, start)
+        val after = rawText.substring(end)
+        val needsSpace = before.isNotEmpty() &&
+            !before.last().isWhitespace() &&
+            !transcript.startsWith(" ") &&
+            !transcript.startsWith("\n")
+        val insertion = if (needsSpace) " $transcript" else transcript
+        val merged = before + insertion + after
+        return CursorMerge(merged, (start + insertion.length).coerceAtMost(merged.length))
     }
 
     /**
@@ -175,25 +164,24 @@ object FloatingTextInjector {
     }
 
     /**
-     * Writes dictated text with ACTION_SET_TEXT only when [canSafelyRewriteWithSetText] is true.
-     * Refuses notes apps and any field that already has content so the caller can insert at the caret.
-     * Never rebuilds beforeCursor + text + afterCursor.
+     * Inserts [dictatedText] with ACTION_SET_TEXT at the caret, then places the caret after it.
+     * Every field gets a two-step write so text watchers observe a real character diff.
+     * Does not touch the clipboard. On a rich field the surrounding characters are kept;
+     * spans and mention pills may be flattened.
      */
     fun injectTextSafely(node: AccessibilityNodeInfo, dictatedText: String): Boolean {
         if (dictatedText.isBlank()) {
             Log.w(TAG, "injectTextSafely: dictatedText is blank, aborting to prevent clearing field / note discard")
             return false
         }
-
-        if (!canSafelyRewriteWithSetText(node)) {
-            Log.d(TAG, "injectTextSafely: refusing ACTION_SET_TEXT (existing content, rich field, or notes app)")
+        val merge = buildCursorMerge(node, dictatedText)
+        if (merge == null || merge.text.isBlank()) {
+            Log.w(TAG, "injectTextSafely: resulting text is blank, aborting to prevent 'Empty note discarded'")
             return false
         }
 
-        val textToInsert = dictatedText.trim()
-        if (textToInsert.isEmpty()) {
-            Log.w(TAG, "injectTextSafely: resulting text is blank, aborting to prevent 'Empty note discarded'")
-            return false
+        if (isRichField(node)) {
+            Log.w(TAG, "Rich field: keeping surrounding characters. ACTION_SET_TEXT may flatten spans, mention pills, or child chips.")
         }
 
         try {
@@ -202,25 +190,61 @@ object FloatingTextInjector {
             }
         } catch (_: Throwable) {}
 
-        val arguments = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToInsert)
-        }
-        val success = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-        Log.d(TAG, "injectTextSafely ACTION_SET_TEXT on empty plain field result: $success, len=${textToInsert.length}")
+        val wrote = writeTextWithWatcherNudge(node, merge.text)
+        if (!wrote) return false
+        setCaret(node, merge.cursor)
+        return true
+    }
 
-        if (success) {
-            val newCursorPos = textToInsert.length
-            val selectionArgs = Bundle().apply {
-                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, newCursorPos)
-                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, newCursorPos)
+    /**
+     * ACTION_SET_TEXT often does not produce a TextWatcher diff the app treats as a user edit.
+     * Keep and Samsung Notes then discard a brand-new note ("Empty note discarded").
+     * Writing everything except the last character, then the full string, produces an
+     * onTextChanged event whose diff is that last character. The caller then sends
+     * ACTION_SET_SELECTION, which nudges selection listeners.
+     *
+     * If the first write lands and the second returns false, the full string is retried once
+     * here. Callers must not rebuild before + transcript + after on that partial text, or the
+     * transcript is inserted twice.
+     *
+     * This is still uncertain when the accessibility node is not the EditText the app watches:
+     * neither step reaches that TextWatcher, and the note can still be discarded.
+     */
+    private fun writeTextWithWatcherNudge(node: AccessibilityNodeInfo, fullText: String): Boolean {
+        if (fullText.length >= 2) {
+            val partial = fullText.dropLast(1)
+            if (!performSetText(node, partial)) return false
+            if (!performSetText(node, fullText)) {
+                Log.w(TAG, "Second SET_TEXT of the edit nudge returned false. Retrying the full string once.")
+                if (!performSetText(node, fullText)) return false
             }
-            try {
-                node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selectionArgs)
-            } catch (_: Throwable) {}
+            Log.d(TAG, "Edit nudge: two-step SET_TEXT len=${fullText.length}")
             return true
         }
+        return performSetText(node, fullText)
+    }
 
-        return false
+    private fun performSetText(node: AccessibilityNodeInfo, text: String): Boolean {
+        if (text.isEmpty()) {
+            Log.w(TAG, "Refusing empty ACTION_SET_TEXT")
+            return false
+        }
+        val arguments = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        val success = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+        Log.d(TAG, "ACTION_SET_TEXT result=$success len=${text.length}")
+        return success
+    }
+
+    private fun setCaret(node: AccessibilityNodeInfo, cursor: Int) {
+        val selectionArgs = Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, cursor)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, cursor)
+        }
+        try {
+            node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selectionArgs)
+        } catch (_: Throwable) {}
     }
 
     /**

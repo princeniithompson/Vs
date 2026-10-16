@@ -15,9 +15,31 @@ class VoxStreamAccessibilityServiceTest {
     private val service = VoxStreamAccessibilityService()
 
     @Test
-    fun `extractGenuineText returns empty when isShowingHintText is true`() {
+    fun `extractGenuineText keeps text when the hint flag is set but hintText does not match`() {
         val node = AccessibilityNodeInfo.obtain()
         node.text = "Ask Google…"
+        node.isShowingHintText = true
+
+        val result = service.extractGenuineText(node)
+        assertEquals("Ask Google…", result)
+    }
+
+    @Test
+    fun `extractGenuineText keeps text that matches hintText when the hint flag is off`() {
+        val node = AccessibilityNodeInfo.obtain()
+        node.text = "Message"
+        node.hintText = "Message"
+        node.isShowingHintText = false
+
+        val result = service.extractGenuineText(node)
+        assertEquals("Message", result)
+    }
+
+    @Test
+    fun `extractGenuineText returns empty only for an active hint`() {
+        val node = AccessibilityNodeInfo.obtain()
+        node.text = "Ask Google…"
+        node.hintText = "Ask Google…"
         node.isShowingHintText = true
 
         val result = service.extractGenuineText(node)
@@ -25,32 +47,12 @@ class VoxStreamAccessibilityServiceTest {
     }
 
     @Test
-    fun `extractGenuineText returns empty when text matches hintText exactly`() {
-        val node = AccessibilityNodeInfo.obtain()
-        node.text = "Message"
-        node.hintText = "Message"
-        node.isShowingHintText = false
-
-        val result = service.extractGenuineText(node)
-        assertEquals("", result)
-    }
-
-    @Test
-    fun `extractGenuineText returns empty for Google Search placeholder`() {
-        val node = AccessibilityNodeInfo.obtain()
-        node.text = "Ask Google…"
-
-        val result = service.extractGenuineText(node)
-        assertEquals("", result)
-    }
-
-    @Test
-    fun `extractGenuineText returns empty for WhatsApp Message placeholder`() {
+    fun `extractGenuineText keeps a short placeholder that is not an active hint`() {
         val node = AccessibilityNodeInfo.obtain()
         node.text = "Message"
 
         val result = service.extractGenuineText(node)
-        assertEquals("", result)
+        assertEquals("Message", result)
     }
 
     @Test

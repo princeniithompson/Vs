@@ -2,14 +2,10 @@ package com.example.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -25,18 +21,11 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
         const val VERIFY_WAIT_MS = 150L
         /** Verification may poll, but a slow read must not be treated as a failed insert. */
         const val VERIFY_POLL_BUDGET_MS = 600L
-        /** Let the target editor read the paste clip, then restore or clear. */
-        const val CLIPBOARD_RESTORE_DELAY_MS = 120L
         var instance: VoxStreamAccessibilityService? = null
             internal set
     }
 
     private var lastFocusedEditableNode: AccessibilityNodeInfo? = null
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private var pendingClipboardRestore: Runnable? = null
-    /** Clip to put back. Null means the clipboard was empty and should be cleared. */
-    private var clipboardRestoreTarget: ClipData? = null
-    private var hasClipboardRestoreTarget = false
 
     @Volatile
     var lastSeenClassName: String? = null
@@ -306,9 +295,10 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
     /**
      * Injects transcribed text into the focused editable field.
      * 1. Resolves the active focused editable node.
-     * 2. Inserts at the caret (IME commitText, else ACTION_PASTE) when the field has content,
-     *    is rich, or belongs to a notes app. ACTION_SET_TEXT is used only for a genuinely empty plain field.
-     * 3. Does not leave the transcript on the clipboard when a field is present.
+     * 2. Inserts at the caret with ACTION_SET_TEXT, ACTION_SET_SELECTION, and an edit nudge.
+     *    This path never reads or writes the clipboard, including for notes and Gemini.
+     * 3. Reports NO_TARGET_NODE when no focused field exists. Only that outcome may copy
+     *    the transcript to the clipboard, and that copy happens outside this method.
      */
     open suspend fun injectTextDetailed(newText: String): com.example.data.InjectionEvent {
         val startTime = android.os.SystemClock.elapsedRealtime()
@@ -397,97 +387,6 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
         )
     }
 
-    private fun getClipboardManager(): ClipboardManager? {
-        return try {
-            (applicationContext ?: this).getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        } catch (_: Throwable) {
-            try {
-                getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            } catch (_: Throwable) {
-                null
-            }
-        }
-    }
-
-    /**
-     * Pastes [text] into [node] with ACTION_PASTE.
-     * The temporary clip is ordinary plain text (not marked sensitive, so the keyboard
-     * clipboard strip does not show masked dots). About 120ms after ACTION_PASTE returns,
-     * the user's previous clip is restored. If there was no previous clip, the clipboard
-     * is cleared on API 28+ so the transcript does not linger.
-     */
-    fun performDirectPasteIntoNode(node: AccessibilityNodeInfo, text: String): Boolean {
-        val clipboard = getClipboardManager() ?: return false
-        val (previousClip, capturedPrevious) = readClipboardToRestore(clipboard)
-
-        return try {
-            val tempClip = ClipData.newPlainText("VoxStream Direct Insertion", text)
-            clipboard.setPrimaryClip(tempClip)
-
-            try {
-                if (!node.isFocused) {
-                    node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-                }
-            } catch (_: Throwable) {}
-
-            val pasted = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-            Log.d(TAG, "performDirectPasteIntoNode ACTION_PASTE result: $pasted")
-            pasted
-        } catch (e: Exception) {
-            Log.w(TAG, "performDirectPasteIntoNode failed: ${e.message}", e)
-            false
-        } finally {
-            if (capturedPrevious) {
-                scheduleClipboardRestore(clipboard, previousClip)
-            }
-        }
-    }
-
-    /**
-     * The live clipboard may already be our temporary transcript if a restore is queued.
-     * Keep restoring the user's original clip instead of that transcript.
-     */
-    private fun readClipboardToRestore(clipboard: ClipboardManager): Pair<ClipData?, Boolean> {
-        if (hasClipboardRestoreTarget) {
-            return Pair(clipboardRestoreTarget, true)
-        }
-        return try {
-            Pair(clipboard.primaryClip, true)
-        } catch (e: Throwable) {
-            Log.w(TAG, "performDirectPasteIntoNode: could not read previous clip: ${e.message}")
-            Pair(null, false)
-        }
-    }
-
-    private fun scheduleClipboardRestore(clipboard: ClipboardManager, previousClip: ClipData?) {
-        pendingClipboardRestore?.let { mainHandler.removeCallbacks(it) }
-        clipboardRestoreTarget = previousClip
-        hasClipboardRestoreTarget = true
-        val restore = Runnable {
-            pendingClipboardRestore = null
-            hasClipboardRestoreTarget = false
-            val clipToRestore = clipboardRestoreTarget
-            clipboardRestoreTarget = null
-            restoreOrClearClipboard(clipboard, clipToRestore)
-        }
-        pendingClipboardRestore = restore
-        mainHandler.postDelayed(restore, CLIPBOARD_RESTORE_DELAY_MS)
-    }
-
-    private fun restoreOrClearClipboard(clipboard: ClipboardManager, previousClip: ClipData?) {
-        try {
-            if (previousClip != null) {
-                clipboard.setPrimaryClip(previousClip)
-                Log.d(TAG, "Restored previous clipboard after ACTION_PASTE")
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                clipboard.clearPrimaryClip()
-                Log.d(TAG, "Cleared clipboard after ACTION_PASTE; there was no previous clip")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Notice restoring previous clip: ${e.message}")
-        }
-    }
-
     /**
      * Checks if there is an active focused editable node on screen.
      */
@@ -496,13 +395,9 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Inserts [textToInsert] into [targetNode].
-     * 1. Notes apps, rich fields, and any field that already has content are never rewritten.
-     *    Order: VoxStream IME commitText when that IME is active, otherwise selection is placed
-     *    at the caret and ACTION_PASTE runs with the previous clipboard saved and restored.
-     *    ACTION_PASTE returning true is success. A verify poll of up to ~600ms only logs.
-     * 2. ACTION_SET_TEXT runs only for a genuinely empty, plain, non-notes field.
-     *    A rejected action may be retried once. A successful action is never written again.
+     * Inserts [textToInsert] into [targetNode] with cursor-aware ACTION_SET_TEXT,
+     * ACTION_SET_SELECTION, and a two-step edit nudge. Never touches the clipboard.
+     * A focused field that fails to accept the write does not copy to the clipboard.
      */
     suspend fun writeRangeAndVerify(
         targetNode: AccessibilityNodeInfo,
@@ -520,110 +415,23 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
         }
 
         if (replaceRange) {
-            Log.d(TAG, "replaceRange requested; inserting at the caret instead of rewriting the field")
+            Log.d(TAG, "replaceRange requested; text is still merged at the caret")
         }
 
-        if (!FloatingTextInjector.canSafelyRewriteWithSetText(targetNode)) {
-            return insertAtCursor(targetNode, textToInsert)
+        if (FloatingTextInjector.isRichField(targetNode)) {
+            Log.w(TAG, "Rich field: ACTION_SET_TEXT keeps surrounding text. Spans, mention pills, and child chips may be flattened.")
         }
 
-        return writeEmptyPlainField(targetNode, textToInsert, attempts)
+        return writeWithSetText(targetNode, textToInsert, attempts)
     }
 
     /**
-     * Inserts at the caret. Never calls ACTION_SET_TEXT and never leaves the transcript
-     * on the clipboard when paste fails or verification is slow.
+     * Cursor-aware ACTION_SET_TEXT. Retries the merge only when the action returns false
+     * and the node text is unchanged. A partial nudge that already changed the field is not
+     * merged again, because that would insert the transcript twice.
+     * A successful write is not repeated.
      */
-    private suspend fun insertAtCursor(
-        targetNode: AccessibilityNodeInfo,
-        textToInsert: String
-    ): NodeWriteResult {
-        val pkgName = try { targetNode.packageName?.toString() ?: "" } catch (_: Throwable) { "" }
-        Log.d(TAG, "insertAtCursor: existing content, rich field, or notes app (pkg=$pkgName). Not using ACTION_SET_TEXT.")
-
-        val savedSelStart = try { targetNode.textSelectionStart } catch (_: Throwable) { -1 }
-        val savedSelEnd = try { targetNode.textSelectionEnd } catch (_: Throwable) { -1 }
-
-        try {
-            if (!targetNode.isFocused) {
-                targetNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-            }
-        } catch (_: Throwable) {}
-
-        if (savedSelStart >= 0) {
-            val selectionEnd = if (savedSelEnd >= savedSelStart) savedSelEnd else savedSelStart
-            val selArgs = Bundle().apply {
-                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, savedSelStart)
-                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, selectionEnd)
-            }
-            try {
-                targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selArgs)
-            } catch (_: Throwable) {}
-        }
-
-        val rawText = targetNode.text?.toString() ?: ""
-        val initialLen = rawText.length
-        val charBeforeCaret = if (savedSelStart in 1..rawText.length) rawText[savedSelStart - 1] else null
-        val needLeadingSpace = charBeforeCaret != null && !charBeforeCaret.isWhitespace() && !textToInsert.startsWith(" ")
-        val insertionText = if (needLeadingSpace) " $textToInsert" else textToInsert
-
-        if (VoxStreamInputMethodService.isServiceActive) {
-            val committed = VoxStreamInputMethodService.commitText(insertionText)
-            if (committed) {
-                Log.d(TAG, "insertAtCursor: IME commitText returned true (clipboard not used)")
-                val observed = pollTextLanded(targetNode, rawText, insertionText)
-                if (!observed) {
-                    Log.w(TAG, "IME commitText returned true but text was not observed within ${VERIFY_POLL_BUDGET_MS}ms. Treating as success.")
-                }
-                return NodeWriteResult(
-                    outcome = AxWriteOutcome.SUCCESS,
-                    details = if (observed) "IME commitText verified" else "IME commitText returned true (verification logged only)",
-                    writtenText = textToInsert,
-                    initialTextLength = initialLen,
-                    verificationAttemptsUsed = 1
-                )
-            }
-            Log.w(TAG, "VoxStream IME is active but commitText returned false. Not falling back to the clipboard.")
-            return NodeWriteResult(
-                outcome = AxWriteOutcome.FAILED,
-                details = "IME commitText returned false",
-                writtenText = textToInsert,
-                initialTextLength = initialLen
-            )
-        }
-
-        val pasted = performDirectPasteIntoNode(targetNode, insertionText)
-        if (!pasted) {
-            Log.w(TAG, "ACTION_PASTE returned false. Clipboard fallback suppressed; a focused field exists.")
-            return NodeWriteResult(
-                outcome = AxWriteOutcome.FAILED,
-                details = "ACTION_PASTE returned false",
-                writtenText = textToInsert,
-                initialTextLength = initialLen
-            )
-        }
-
-        val observed = pollTextLanded(targetNode, rawText, insertionText)
-        if (!observed) {
-            Log.w(TAG, "ACTION_PASTE returned true but text was not observed within ${VERIFY_POLL_BUDGET_MS}ms. Treating paste as success; clipboard restored; no toast.")
-        }
-        val refreshedLen = try { targetNode.text?.length ?: initialLen } catch (_: Throwable) { initialLen }
-        return NodeWriteResult(
-            outcome = AxWriteOutcome.SUCCESS,
-            details = if (observed) "ACTION_PASTE succeeded and verified" else "ACTION_PASTE returned true (verification logged only)",
-            writtenText = textToInsert,
-            initialTextLength = initialLen,
-            finalTextLength = refreshedLen,
-            verificationAttemptsUsed = 1
-        )
-    }
-
-    /**
-     * ACTION_SET_TEXT for a genuinely empty plain field.
-     * Retries the write only when the action itself returns false.
-     * A true result is never written a second time, so a slow verify cannot double-insert.
-     */
-    private suspend fun writeEmptyPlainField(
+    private suspend fun writeWithSetText(
         targetNode: AccessibilityNodeInfo,
         textToInsert: String,
         attempts: Int
@@ -634,21 +442,25 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
             Log.w(TAG, "Error refreshing targetNode before write: ${e.message}")
         }
 
+        val textBefore = try { targetNode.text?.toString() ?: "" } catch (_: Throwable) { "" }
         val initialText = extractGenuineText(targetNode)
         val initialLen = initialText.length
-        Log.d(TAG, "writeEmptyPlainField: initialTextLen=$initialLen")
 
         var attemptsUsed = 1
-        var wrote = performEmptySetText(targetNode, textToInsert)
+        var wrote = injectTextSafely(targetNode, textToInsert)
         if (!wrote && attempts > 1) {
-            Log.w(TAG, "ACTION_SET_TEXT returned false. Retrying the rejected write once.")
-            attemptsUsed = 2
             try {
                 targetNode.refresh()
             } catch (_: Throwable) {}
-            wrote = performEmptySetText(targetNode, textToInsert)
+            val textAfter = try { targetNode.text?.toString() ?: "" } catch (_: Throwable) { "" }
+            if (textAfter == textBefore) {
+                Log.w(TAG, "ACTION_SET_TEXT returned false and the field is unchanged. Retrying the merge once.")
+                attemptsUsed = 2
+                wrote = injectTextSafely(targetNode, textToInsert)
+            } else {
+                Log.w(TAG, "ACTION_SET_TEXT changed the field before failing. Not merging the transcript again.")
+            }
         }
-
         if (!wrote) {
             return NodeWriteResult(
                 outcome = AxWriteOutcome.FAILED,
@@ -670,13 +482,11 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
                 verificationAttemptsUsed = attemptsUsed
             )
         }
-
         val details = if (attemptsUsed > 1) {
             "Verified on retry attempt: text landed"
         } else {
             "Verified on attempt 1: text landed"
         }
-        Log.d(TAG, "ACTION_SET_TEXT $details")
         return NodeWriteResult(
             outcome = AxWriteOutcome.SUCCESS,
             details = details,
@@ -685,15 +495,6 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
             finalTextLength = initialLen + textToInsert.trim().length,
             verificationAttemptsUsed = attemptsUsed
         )
-    }
-
-    private fun performEmptySetText(targetNode: AccessibilityNodeInfo, textToInsert: String): Boolean {
-        try {
-            if (!targetNode.isFocused) {
-                targetNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-            }
-        } catch (_: Throwable) {}
-        return injectTextSafely(targetNode, textToInsert)
     }
 
     private suspend fun pollTextLanded(

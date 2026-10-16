@@ -11,16 +11,15 @@ import com.example.data.InjectionLogRepository
 import com.example.service.AppContextResolver
 import com.example.service.FloatingBubbleManager
 import com.example.service.VoxStreamAccessibilityService
-import com.example.service.VoxStreamInputMethodService
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
  * Production-ready text insertion engine for VoxStream based on Whisperflow's architecture:
  * 1. Mutex-protected insertion loop ensuring zero race conditions during rapid typing/dictation.
- * 2. Attempts direct caret-level injection into the active text field first (IME InputConnection & AccessibilityService ACTION_SET_TEXT / ACTION_PASTE).
- * 3. Keeps user's clipboard 100% clean during normal voice typing.
- * 4. Conditional clipboard fallback ONLY when no editable field exists on screen.
+ * 2. Inserts at the caret through the accessibility service (ACTION_SET_TEXT, ACTION_SET_SELECTION, edit nudge). An IME InputConnection is ignored.
+ * 3. Never reads or writes the clipboard while a focused editable field exists.
+ * 4. Copies to the clipboard only when no editable field exists on screen.
  * 5. Silent copy with subtle floating ring indicator on fallback (zero intrusive toasts).
  */
 class VoxStreamTextInserter(private val context: Context) {
@@ -36,7 +35,7 @@ class VoxStreamTextInserter(private val context: Context) {
 
     /**
      * The Main Entry Point:
-     * 1. Attempts direct insertion via pure ACTION_SET_TEXT / IME InputConnection.
+     * 1. Attempts direct insertion via cursor-aware ACTION_SET_TEXT. The IME is ignored.
      * 2. Only falls back to clipboard when there is NO focused editable text field at all.
      * 3. Never uses clipboard if a focused editable field exists (even if the write fails).
      */
@@ -92,48 +91,15 @@ class VoxStreamTextInserter(private val context: Context) {
     ): InsertionResult = insertTranscript(transcript, inputConnection ?: inputMethod)
 
     /**
-     * Tries to inject text directly using the active InputConnection or Accessibility Service pure ACTION_SET_TEXT.
+     * Inserts through the accessibility service. An InputConnection is not an insertion path.
      * Differentiates whether a field existed (write failed) vs NO field on screen.
      */
     private suspend fun tryDirectInjection(text: String, inputMethod: Any?): DirectInjectionResult {
-        // Step 1: Attempt IME / InputConnection commit (Whisperflow IME path)
-        try {
-            val candidateIme = inputMethod ?: VoxStreamInputMethodService.instance
-            if (candidateIme != null) {
-                val inputConnection: InputConnection? = when (candidateIme) {
-                    is InputConnection -> candidateIme
-                    is android.inputmethodservice.InputMethodService -> {
-                        if (candidateIme.currentInputStarted) candidateIme.currentInputConnection else null
-                    }
-                    else -> {
-                        try {
-                            val started = candidateIme.javaClass.methods
-                                .firstOrNull { it.name == "getCurrentInputStarted" && it.parameterCount == 0 }
-                                ?.invoke(candidateIme) as? Boolean ?: true
-                            if (!started) {
-                                null
-                            } else {
-                                candidateIme.javaClass.getMethod("getCurrentInputConnection").invoke(candidateIme) as? InputConnection
-                            }
-                        } catch (_: Throwable) {
-                            null
-                        }
-                    }
-                }
-                if (inputConnection != null) {
-                    val committed = inputConnection.commitText(text, 1)
-                    if (committed) {
-                        Log.d(TAG, "Direct injection succeeded via InputConnection")
-                        logInjectionTrace(text, "INPUT_CONNECTION", "SUCCESS: Committed via InputConnection", "SUCCESS")
-                        return DirectInjectionResult.Success
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "InputConnection direct commit exception: ${e.message}")
+        // VoxStream is not a keyboard. An InputConnection is not the insertion strategy.
+        if (inputMethod != null) {
+            Log.d(TAG, "Ignoring IME/InputConnection; inserting through the accessibility service")
         }
 
-        // Step 2: Attempt Accessibility Service direct node editing (pure ACTION_SET_TEXT)
         val a11y = VoxStreamAccessibilityService.instance
         if (a11y != null) {
             val trace = a11y.injectTextDetailed(text)
@@ -157,7 +123,7 @@ class VoxStreamTextInserter(private val context: Context) {
     }
 
     /**
-     * Strict Fallback: Copies to clipboard ONLY when no text field or InputConnection is available.
+     * Strict Fallback: Copies to clipboard ONLY when no focused editable field is available.
      * Silent copy with subtle floating ring indicator (no intrusive toasts).
      */
     private fun fallbackToClipboard(text: String): Boolean {
