@@ -14,6 +14,7 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import android.widget.Toast
 import com.example.service.floating.FloatingTextInjector
 
 open class VoxStreamAccessibilityService : AccessibilityService() {
@@ -396,6 +397,20 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
         )
     }
 
+    private var pendingClipboardRestore: Runnable? = null
+
+    private fun getClipboardManager(): ClipboardManager? {
+        return try {
+            (applicationContext ?: this).getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        } catch (_: Throwable) {
+            try {
+                getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            } catch (_: Throwable) {
+                null
+            }
+        }
+    }
+
     /**
      * Directly pastes text into the targeted node via ACTION_PASTE, temporarily placing
      * the transcribed text on the clipboard and immediately restoring previous user clipboard
@@ -404,8 +419,12 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
      */
     fun performDirectPasteIntoNode(node: AccessibilityNodeInfo, text: String): Boolean {
         return try {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
+            val clipboard = getClipboardManager() ?: return false
             val previousClip = clipboard.primaryClip
+
+            // Cancel any previously scheduled clipboard restoration
+            pendingClipboardRestore?.let { mainHandler.removeCallbacks(it) }
+            pendingClipboardRestore = null
 
             // Temporarily set the dictation text on clipboard
             val tempClip = ClipData.newPlainText("VoxStream Direct Insertion", text)
@@ -413,31 +432,69 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
 
             // Ensure the target node is focused
             try {
-                node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                if (!node.isFocused) {
+                    node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                }
             } catch (_: Throwable) {}
 
             // Trigger ACTION_PASTE on the target editable node
             val pasted = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
             Log.d(TAG, "performDirectPasteIntoNode ACTION_PASTE result: $pasted")
 
-            // Restore previous user clipboard after target editor has consumed the paste event
-            mainHandler.postDelayed({
-                try {
-                    if (previousClip != null) {
-                        clipboard.setPrimaryClip(previousClip)
-                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        clipboard.clearPrimaryClip()
+            if (pasted) {
+                // Restore previous user clipboard after target editor has consumed the paste event
+                val restoreRunnable = Runnable {
+                    try {
+                        if (previousClip != null) {
+                            clipboard.setPrimaryClip(previousClip)
+                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            clipboard.clearPrimaryClip()
+                        }
+                        Log.d(TAG, "Restored previous clipboard state after ACTION_PASTE")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Notice restoring previous clip: ${e.message}")
                     }
-                    Log.d(TAG, "Restored previous clipboard state after ACTION_PASTE")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Notice restoring previous clip: ${e.message}")
                 }
-            }, 300L)
+                pendingClipboardRestore = restoreRunnable
+                mainHandler.postDelayed(restoreRunnable, 300L)
+            }
 
             pasted
         } catch (e: Exception) {
             Log.w(TAG, "performDirectPasteIntoNode failed: ${e.message}", e)
             false
+        }
+    }
+
+    private fun handlePasteFailure(textToInsert: String) {
+        pendingClipboardRestore?.let { mainHandler.removeCallbacks(it) }
+        pendingClipboardRestore = null
+
+        val context = try { applicationContext ?: this } catch (_: Throwable) { this }
+        try {
+            val clipboard = getClipboardManager()
+            val clip = ClipData.newPlainText("VoxStream Dictation", textToInsert)
+            clipboard?.setPrimaryClip(clip)
+        } catch (e: Throwable) {
+            Log.w(TAG, "handlePasteFailure: Failed to set clipboard: ${e.message}")
+        }
+
+        val showToast = Runnable {
+            try {
+                Toast.makeText(
+                    context,
+                    "Dictation copied to clipboard — paste manually",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } catch (e: Throwable) {
+                Log.w(TAG, "handlePasteFailure: Failed to show toast: ${e.message}")
+            }
+        }
+
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            showToast.run()
+        } else {
+            mainHandler.post(showToast)
         }
     }
 
@@ -450,11 +507,15 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
 
     /**
      * Verifies that the target node accepted the written text by:
-     * 1. Refreshing the node before writing and verifying ACTION_SET_TEXT support.
-     * 2. Executing pure ACTION_SET_TEXT with note app placeholder safety.
-     * 3. Waiting ~150–250 ms (VERIFY_WAIT_MS = 200L).
-     * 4. Refreshing the node again and verifying that the text actually landed.
-     * 5. If verification fails, retrying the write + verify once.
+     * 1. If rich or unsafe (spanned text with spans, note app package, child nodes, or no ACTION_SET_TEXT):
+     *    Uses PASTE path to insert at cursor without replacing avatar pills, chips, or mentions.
+     *    Never calls ACTION_SET_TEXT on rich nodes.
+     * 2. If plain EditText:
+     *    Uses injectTextSafely cursor-splice logic and verifies with ACTION_SET_TEXT.
+     *    Never overwrites with bare textToInsert on failure.
+     * 3. If paste fails or verification fails on rich field:
+     *    Copies dictation to clipboard, shows toast "Dictation copied to clipboard — paste manually",
+     *    and preserves existing user field content.
      */
     fun writeRangeAndVerify(
         targetNode: AccessibilityNodeInfo,
@@ -474,14 +535,111 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
         val pkgName = try { targetNode.packageName?.toString()?.lowercase() ?: "" } catch (_: Throwable) { "" }
         val isNoteApp = FloatingTextInjector.isNoteAppPackage(pkgName)
 
-        // Requirement 4: Refresh the focused node before writing
+        // Step 1: Choose write method by field type
+        val isRich = FloatingTextInjector.isRichOrUnsafeToRewrite(targetNode)
+
+        // Step 2: Rich or unsafe fields use the PASTE path (insert at cursor)
+        if (isRich) {
+            Log.d(TAG, "writeRangeAndVerify: Rich or unsafe field detected (isRichOrUnsafeToRewrite=true). Using PASTE path (insert at cursor).")
+
+            // a. Read textSelectionStart and textSelectionEnd FIRST, before any focus action
+            val savedSelStart = try { targetNode.textSelectionStart } catch (_: Throwable) { -1 }
+            val savedSelEnd = try { targetNode.textSelectionEnd } catch (_: Throwable) { -1 }
+
+            // b. If the node is not focused, call ACTION_FOCUS
+            try {
+                if (!targetNode.isFocused) {
+                    targetNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                }
+            } catch (_: Throwable) {}
+
+            // c. If saved selection start is >= 0, call ACTION_SET_SELECTION so caret is preserved. If -1, do not touch selection.
+            if (savedSelStart >= 0) {
+                val selectionEnd = if (savedSelEnd >= savedSelStart) savedSelEnd else savedSelStart
+                val selArgs = Bundle().apply {
+                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, savedSelStart)
+                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, selectionEnd)
+                }
+                try {
+                    targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selArgs)
+                } catch (_: Throwable) {}
+            }
+
+            // d. Call performDirectPasteIntoNode with leading space added only when character before caret is not whitespace
+            val rawText = targetNode.text?.toString() ?: ""
+            val initialLen = rawText.length
+            val charBeforeCaret = if (savedSelStart in 1..rawText.length) {
+                rawText[savedSelStart - 1]
+            } else null
+
+            val needLeadingSpace = charBeforeCaret != null && !charBeforeCaret.isWhitespace() && !textToInsert.startsWith(" ")
+            val pasteText = if (needLeadingSpace) " $textToInsert" else textToInsert
+
+            // e. Never call ACTION_SET_TEXT on this node.
+            val pasted = performDirectPasteIntoNode(targetNode, pasteText)
+            if (!pasted) {
+                Log.w(TAG, "Rich field ACTION_PASTE returned false. Protecting user content.")
+                handlePasteFailure(textToInsert)
+                return NodeWriteResult(
+                    outcome = AxWriteOutcome.FAILED,
+                    details = "Rich field ACTION_PASTE returned false",
+                    writtenText = textToInsert
+                )
+            }
+
+            // Verification after paste: wait ~150-250 ms, refresh, and verify
+            try {
+                Thread.sleep(VERIFY_WAIT_MS)
+            } catch (_: InterruptedException) {}
+
+            try {
+                targetNode.refresh()
+            } catch (e: Throwable) {
+                Log.w(TAG, "Post-paste refresh failed: ${e.message}")
+            }
+
+            val refreshedRaw = targetNode.text?.toString() ?: ""
+            val refreshedGenuine = extractGenuineText(targetNode)
+
+            val landed = verifyTextLanded(
+                initialText = rawText,
+                insertedText = pasteText,
+                refreshedRaw = refreshedRaw,
+                refreshedGenuine = refreshedGenuine,
+                targetNode = targetNode
+            )
+
+            if (!landed) {
+                Log.w(TAG, "Rich field paste verification failed: text did not land. Protecting user content.")
+                handlePasteFailure(textToInsert)
+                return NodeWriteResult(
+                    outcome = AxWriteOutcome.FAILED,
+                    details = "Rich field paste verification failed: text did not land",
+                    writtenText = textToInsert,
+                    initialTextLength = initialLen,
+                    finalTextLength = refreshedRaw.length,
+                    verificationAttemptsUsed = 1
+                )
+            }
+
+            Log.d(TAG, "Rich field paste verified successfully")
+            return NodeWriteResult(
+                outcome = AxWriteOutcome.SUCCESS,
+                details = "Rich field paste verified",
+                writtenText = textToInsert,
+                initialTextLength = initialLen,
+                finalTextLength = refreshedRaw.length,
+                verificationAttemptsUsed = 1
+            )
+        }
+
+        // Step 3 & Step 4: Plain fields keep current behavior; dangerous backup removed.
         try {
             targetNode.refresh()
         } catch (e: Throwable) {
             Log.w(TAG, "Error refreshing targetNode before write: ${e.message}")
         }
 
-        // Requirement 4: Check that the node supports ACTION_SET_TEXT (0x200000)
         val supportsActionSetText = FloatingTextInjector.supportsActionSetText(targetNode)
         if (!supportsActionSetText) {
             Log.w(TAG, "writeRangeAndVerify: Target node does NOT support ACTION_SET_TEXT: actions=0x${Integer.toHexString(targetNode.actions)}, class=${targetNode.className}")
@@ -510,26 +668,15 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
 
             val directSuccess = injectTextSafely(targetNode, textToInsert)
             if (!directSuccess) {
-                val args = Bundle().apply {
-                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToInsert.trim())
-                }
-                val rawSuccess = try {
-                    targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-                } catch (e: Throwable) {
-                    Log.w(TAG, "Raw performAction(ACTION_SET_TEXT) failed on attempt #$attemptNumber: ${e.message}")
-                    false
-                }
-                if (!rawSuccess) {
-                    return Pair(false, "performAction(ACTION_SET_TEXT) returned false")
-                }
+                // Step 4: Remove fallback that overwrites field with textToInsert.trim(). Return FAILED.
+                return Pair(false, "injectTextSafely returned false")
             }
 
-            // Requirement 5: Wait ~150–250 ms after writing
+            // Wait ~150–250 ms after writing
             try {
                 Thread.sleep(VERIFY_WAIT_MS)
             } catch (_: InterruptedException) {}
 
-            // Requirement 5: Refresh the node again and verify the text actually landed
             val refreshed = try {
                 targetNode.refresh()
             } catch (e: Throwable) {
@@ -544,7 +691,8 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
                 initialText = initialText,
                 insertedText = textToInsert,
                 refreshedRaw = refreshedRaw,
-                refreshedGenuine = refreshedGenuine
+                refreshedGenuine = refreshedGenuine,
+                targetNode = targetNode
             )
 
             Log.d(TAG, "Post-write attempt #$attemptNumber: refreshed=$refreshed, landed=$landed, rawLen=${refreshedRaw.length}, genuineLen=${refreshedGenuine.length}, rawPreview='${refreshedRaw.take(30)}'")
@@ -565,7 +713,7 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
             )
         }
 
-        // Requirement 5: If verification fails, retry the write + verify once
+        // Retry once
         Log.w(TAG, "Attempt 1 verification failed ($details1). Retrying write + verify once per requirement...")
         try {
             targetNode.refresh()
@@ -601,7 +749,8 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
         initialText: String,
         insertedText: String,
         refreshedRaw: String,
-        refreshedGenuine: String
+        refreshedGenuine: String,
+        targetNode: AccessibilityNodeInfo? = null
     ): Boolean {
         val trimmedInsert = insertedText.trim()
         if (trimmedInsert.isEmpty()) return true
@@ -626,6 +775,24 @@ open class VoxStreamAccessibilityService : AccessibilityService() {
             }
         }
 
+        // 4. In rich text nodes or containers with child nodes, inspect children
+        if (targetNode != null && targetNode.childCount > 0) {
+            if (searchNodeText(targetNode, trimmedInsert)) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private fun searchNodeText(node: AccessibilityNodeInfo, target: String): Boolean {
+        if (node.text?.toString()?.contains(target) == true) return true
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = searchNodeText(child, target)
+            try { child.recycle() } catch (_: Throwable) {}
+            if (found) return true
+        }
         return false
     }
 

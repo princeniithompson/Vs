@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Spanned
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
@@ -63,6 +64,46 @@ object FloatingTextInjector {
         return className.contains("EditText", ignoreCase = true) ||
                className.contains("NoteEditText", ignoreCase = true) ||
                className.contains("ComposeEditableText", ignoreCase = true)
+    }
+
+    /**
+     * Helper to determine if a field is rich or unsafe to rewrite with ACTION_SET_TEXT:
+     * - node.text is a Spanned and has at least one span of any kind
+     * - the package is a known note or rich-text app
+     * - the node has a child node
+     * - the node does not support ACTION_SET_TEXT
+     */
+    fun isRichOrUnsafeToRewrite(node: AccessibilityNodeInfo): Boolean {
+        // 1. node.text is a Spanned and has at least one span of any kind
+        val rawText = node.text
+        if (rawText is Spanned) {
+            try {
+                val spans = rawText.getSpans(0, rawText.length, Any::class.java)
+                if (spans != null && spans.isNotEmpty()) {
+                    return true
+                }
+            } catch (_: Throwable) {}
+        }
+
+        // 2. the package is a known note or rich-text app (use the existing isNoteAppPackage)
+        val pkg = try { node.packageName?.toString() ?: "" } catch (_: Throwable) { "" }
+        if (isNoteAppPackage(pkg)) {
+            return true
+        }
+
+        // 3. the node has a child node
+        try {
+            if (node.childCount > 0) {
+                return true
+            }
+        } catch (_: Throwable) {}
+
+        // 4. the node does not support ACTION_SET_TEXT
+        if (!supportsActionSetText(node)) {
+            return true
+        }
+
+        return false
     }
 
     /**

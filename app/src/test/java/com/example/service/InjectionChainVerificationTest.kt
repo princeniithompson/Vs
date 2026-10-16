@@ -24,10 +24,11 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class InjectionChainVerificationTest {
 
-    private val service = VoxStreamAccessibilityService()
+    private lateinit var service: VoxStreamAccessibilityService
 
     @Before
     fun setUp() {
+        service = org.robolectric.Robolectric.buildService(VoxStreamAccessibilityService::class.java).create().get()
         FloatingBubbleManager.updateCurrentForegroundPackage("com.google.android.keep", null)
         FloatingBubbleManager.resetClipboardFallbackIndicator()
     }
@@ -214,28 +215,128 @@ class InjectionChainVerificationTest {
     }
 
     @Test
-    fun `writeRangeAndVerify returns FAILED when node does not support ACTION_SET_TEXT`() {
+    fun `isRichOrUnsafeToRewrite returns true for spanned text with spans`() {
         val node = AccessibilityNodeInfo.obtain()
-        node.isEditable = false
-        node.text = ""
-        // No ACTION_SET_TEXT added
+        node.isEditable = true
+        node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
+        val spanned = android.text.SpannableString("@Gemini user mention")
+        spanned.setSpan(android.text.style.UnderlineSpan(), 0, 7, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        node.text = spanned
 
-        val result = service.writeRangeAndVerify(node, "Unsupported action text", replaceRange = false, attempts = 1)
-        assertEquals(AxWriteOutcome.FAILED, result.outcome)
-        assertTrue(result.details?.contains("does not support ACTION_SET_TEXT") == true)
+        assertTrue(FloatingTextInjector.isRichOrUnsafeToRewrite(node))
     }
 
     @Test
-    fun `writeRangeAndVerify returns FAILED when node rejects updates after retry`() {
+    fun `isRichOrUnsafeToRewrite returns true for note app package`() {
         val node = AccessibilityNodeInfo.obtain()
+        node.packageName = "com.google.android.keep"
         node.isEditable = true
-        node.text = ""
+        node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
+        node.text = "Simple plain text"
+
+        assertTrue(FloatingTextInjector.isRichOrUnsafeToRewrite(node))
+    }
+
+    @Test
+    fun `isRichOrUnsafeToRewrite returns false for plain EditText with no spans or children`() {
+        val node = AccessibilityNodeInfo.obtain()
+        node.packageName = "com.example.simpleapp"
+        node.className = "android.widget.EditText"
+        node.isEditable = true
+        node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
+        node.text = "Simple plain text"
+
+        assertFalse(FloatingTextInjector.isRichOrUnsafeToRewrite(node))
+    }
+
+    @Test
+    fun `rich field uses PASTE path and never executes ACTION_SET_TEXT`() {
+        val node = AccessibilityNodeInfo.obtain()
+        node.packageName = "com.google.android.keep"
+        node.isEditable = true
+        node.text = "Existing Keep note"
+        node.addAction(AccessibilityNodeInfo.ACTION_PASTE)
         node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
 
-        // Without updating node.text, simulating editor rejecting ACTION_SET_TEXT
-        val result = service.writeRangeAndVerify(node, "Rejected text", replaceRange = false, attempts = 2)
+        var actionSetTextCalled = false
+        var actionPasteCalled = false
+
+        val shadow = org.robolectric.Shadows.shadowOf(node)
+        shadow.setOnPerformActionListener { action, _ ->
+            when (action) {
+                AccessibilityNodeInfo.ACTION_SET_TEXT -> {
+                    actionSetTextCalled = true
+                    true
+                }
+                AccessibilityNodeInfo.ACTION_PASTE -> {
+                    actionPasteCalled = true
+                    node.text = "Existing Keep note dictated text"
+                    true
+                }
+                else -> true
+            }
+        }
+
+        val result = service.writeRangeAndVerify(node, "dictated text", replaceRange = false, attempts = 1)
+        assertEquals(AxWriteOutcome.SUCCESS, result.outcome)
+        assertTrue("ACTION_PASTE must be invoked for rich/note fields", actionPasteCalled)
+        assertFalse("ACTION_SET_TEXT must NEVER be called on rich/note fields", actionSetTextCalled)
+    }
+
+    @Test
+    fun `rich field paste failure copies to clipboard, shows toast, and never calls ACTION_SET_TEXT`() {
+        val context = RuntimeEnvironment.getApplication()
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Initial", "Initial clipboard"))
+
+        val node = AccessibilityNodeInfo.obtain()
+        node.packageName = "com.google.android.keep"
+        node.isEditable = true
+        node.text = "Original protected content"
+        node.addAction(AccessibilityNodeInfo.ACTION_PASTE)
+        node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
+
+        var actionSetTextCalled = false
+        val shadow = org.robolectric.Shadows.shadowOf(node)
+        shadow.setOnPerformActionListener { action, _ ->
+            if (action == AccessibilityNodeInfo.ACTION_SET_TEXT) {
+                actionSetTextCalled = true
+                true
+            } else if (action == AccessibilityNodeInfo.ACTION_PASTE) {
+                // Simulate paste failure
+                false
+            } else {
+                true
+            }
+        }
+
+        val result = service.writeRangeAndVerify(node, "My dictated paragraph", replaceRange = false, attempts = 1)
         assertEquals(AxWriteOutcome.FAILED, result.outcome)
-        assertEquals(2, result.verificationAttemptsUsed)
+        assertFalse("ACTION_SET_TEXT must NEVER be used as a fallback on rich fields", actionSetTextCalled)
+        assertEquals("Original protected content", node.text.toString())
+
+        // Dictation text must be placed on system clipboard for manual pasting
+        assertEquals("My dictated paragraph", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        assertEquals("Dictation copied to clipboard — paste manually", org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
+    }
+
+    @Test
+    fun `plain field write failure returns FAILED without wiping field with bare text`() {
+        val node = AccessibilityNodeInfo.obtain()
+        node.packageName = "com.example.plainapp"
+        node.className = "android.widget.EditText"
+        node.isEditable = true
+        node.text = "Existing user draft that should not be wiped"
+        node.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
+
+        // Mock node where performAction returns false
+        val shadow = org.robolectric.Shadows.shadowOf(node)
+        shadow.setOnPerformActionListener { _, _ -> false }
+
+        val result = service.writeRangeAndVerify(node, "Dictated text", replaceRange = false, attempts = 1)
+        assertEquals(AxWriteOutcome.FAILED, result.outcome)
+        // Original text in node remains untouched
+        assertEquals("Existing user draft that should not be wiped", node.text.toString())
     }
 
     @Test
