@@ -190,6 +190,8 @@ fun DiagnosticEntryRow(entry: DiagnosticLogEntry, timeFormat: SimpleDateFormat) 
         DiagnosticType.SAFE_MODE_TRIGGERED -> Triple(Color(0xFFFEF3C7), Color(0xFFB45309), "SAFE_MODE")
         DiagnosticType.AUDIO_STYLE_CHANGED -> Triple(Color(0xFFE0E7FF), Color(0xFF4338CA), "AUDIO_STYLE")
         DiagnosticType.VOICE_ID_EVENT -> Triple(Color(0xFFEDE9FE), Color(0xFF6D28D9), "VOICE_ID")
+        DiagnosticType.CRASH -> Triple(Color(0xFFFEE2E2), Color(0xFF991B1B), "CRASH")
+        DiagnosticType.PROCESS_EXIT -> Triple(Color(0xFFFFEDD5), Color(0xFF9A3412), "EXIT")
     }
 
     Card(
@@ -256,7 +258,7 @@ fun DiagnosticEntryRow(entry: DiagnosticLogEntry, timeFormat: SimpleDateFormat) 
                 text = entry.message,
                 style = MaterialTheme.typography.bodySmall,
                 fontSize = 12.sp,
-                color = if (entry.type == DiagnosticType.ERROR || entry.type == DiagnosticType.POLISH_FAILED) Color(0xFFDC2626)
+                color = if (entry.type == DiagnosticType.ERROR || entry.type == DiagnosticType.POLISH_FAILED || entry.type == DiagnosticType.CRASH) Color(0xFFDC2626)
                        else Color(0xFF0F172A),
                 fontWeight = if (entry.type == DiagnosticType.ERROR) FontWeight.Bold else FontWeight.Normal,
                 modifier = Modifier.weight(1f)

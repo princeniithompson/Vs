@@ -74,27 +74,23 @@ object AppLogRepository {
         transcriptText: String,
         source: DiagnosticSource
     ) {
+        val summary = TranscriptPrivacy.summary(transcriptText)
         _liveStats.update {
             it.copy(
                 source = source,
                 lastInjectionDurationMs = durationMs,
                 lastInjectionWordCount = wordCount,
                 lastInjectionTargetApp = targetApp,
-                lastTranscriptSummary = transcriptText,
+                lastTranscriptSummary = summary,
                 totalWordsSpoken = it.totalWordsSpoken + wordCount
             )
         }
         val secStr = String.format(Locale.US, "%.1f", maxOf(0.2f, durationMs / 1000f))
-        logEvent(
-            source = source,
-            type = DiagnosticType.SESSION_END,
-            message = "Injected $wordCount words into $targetApp in ${secStr}s"
-        )
         addLog(
             level = LogLevel.INFO,
             tag = "Speed",
             message = "Finished typing $wordCount words into $targetApp in ${secStr}s",
-            payload = transcriptText,
+            payload = summary,
             source = source
         )
     }

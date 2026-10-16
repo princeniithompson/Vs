@@ -1,5 +1,7 @@
 package com.princeniithompson.rapcha.service
 
+import android.app.Activity
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -135,6 +137,37 @@ object FloatingBubbleManager {
         initialized = true
         checkPermissions(context)
 
+        if (shouldAutoStartBubbleFromInit(
+                enabled = _isBubbleEnabled.value,
+                canOverlay = canDrawOverlays(context),
+                uiForeground = isUiForeground(context)
+            )
+        ) {
+            startBubbleService(context)
+        }
+    }
+
+    /**
+     * Background init must not call startForegroundService. The accessibility
+     * service starts the bubble when it reconnects after an update.
+     */
+    internal fun shouldAutoStartBubbleFromInit(
+        enabled: Boolean,
+        canOverlay: Boolean,
+        uiForeground: Boolean
+    ): Boolean = enabled && canOverlay && uiForeground
+
+    internal fun isUiForeground(context: Context): Boolean {
+        if (context is Activity) return true
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
+        val mine = activityManager.runningAppProcesses?.firstOrNull { it.pid == android.os.Process.myPid() }
+        return mine?.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+    }
+
+    fun startEnabledBubble(context: Context) {
+        if (!initialized) {
+            init(context)
+        }
         if (_isBubbleEnabled.value && canDrawOverlays(context)) {
             startBubbleService(context)
         }

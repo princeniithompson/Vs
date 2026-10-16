@@ -19,6 +19,7 @@ import com.princeniithompson.rapcha.data.ConnectionState
 import com.princeniithompson.rapcha.data.CustomVocabularyRepository
 import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
+import com.princeniithompson.rapcha.data.DictationEndedReason
 import com.princeniithompson.rapcha.data.HistoryRepository
 import com.princeniithompson.rapcha.service.floating.FloatingDictationSessionManager
 import com.princeniithompson.rapcha.service.floating.FloatingHapticManager
@@ -76,18 +77,21 @@ class FloatingBubbleService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForegroundNotification()
-        return START_STICKY
+        if (!enterSpecialUseForeground()) {
+            stopSelf()
+        }
+        return START_NOT_STICKY
     }
 
     override fun onCreate() {
         super.onCreate()
         instance = this
+        if (!enterSpecialUseForeground()) {
+            stopSelf()
+            return
+        }
         Log.d(TAG, "FloatingBubbleService onCreate")
         CustomVocabularyRepository.init(this)
-
-        FloatingNotificationManager.createChannel(this)
-        startForegroundNotification()
 
         overlayWindowManager = FloatingOverlayWindowManager(this)
         sessionManager = FloatingDictationSessionManager(
@@ -119,10 +123,7 @@ class FloatingBubbleService : Service() {
                 overlayWindowManager.overlayAudioAmplitude.value = amp
             },
             onError = { err ->
-                val isPingTimeout = err.contains("ping", ignoreCase = true) ||
-                                   err.contains("pong", ignoreCase = true) ||
-                                   err.contains("timeout", ignoreCase = true)
-                val endedReasonTag = if (isPingTimeout) "ping_timeout" else "connection_drop"
+                val endedReasonTag = DictationEndedReason.fromMessage(err)
 
                 AppLogRepository.logEvent(
                     DiagnosticSource.BUBBLE,
@@ -154,11 +155,21 @@ class FloatingBubbleService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing overlay window", e)
         }
+        RapchaAccessibilityService.instance?.let { attachToAccessibilityService(it) }
     }
 
-    private fun startForegroundNotification() {
+    private fun componentsReady(): Boolean {
+        return ::overlayWindowManager.isInitialized && ::sessionManager.isInitialized
+    }
+
+    /**
+     * Must run before any other service work. A late or failed startForeground
+     * is what produces ForegroundServiceDidNotStartInTime after an update.
+     */
+    private fun enterSpecialUseForeground(): Boolean {
+        FloatingNotificationManager.createChannel(this)
         val notification = FloatingNotificationManager.buildNotification(this, "Floating voice bubble is active")
-        try {
+        return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(
                     FloatingNotificationManager.NOTIFICATION_ID,
@@ -170,12 +181,58 @@ class FloatingBubbleService : Service() {
             } else {
                 startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification)
             }
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to startForeground", e)
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.ERROR,
+                "startForeground failed: ${e.javaClass.simpleName}: ${e.message?.take(180)}"
+            )
+            false
+        }
+    }
+
+    private fun startMicrophoneForeground(): Boolean {
+        if (!MicrophoneForegroundPolicy.isAllowed(this)) {
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.WARNING,
+                "microphone startForeground skipped: app is not in an allowed state"
+            )
+            return false
+        }
+        val notification = FloatingNotificationManager.buildNotification(this, "Listening...")
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    FloatingNotificationManager.NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    FloatingNotificationManager.NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                )
+            } else {
+                startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification)
+            }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "microphone startForeground failed", e)
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.ERROR,
+                "microphone startForeground failed: ${e.javaClass.simpleName}: ${e.message?.take(180)}; recording stopped"
+            )
+            false
         }
     }
 
     fun onSensitiveAppEntered(pkg: String?) {
+        if (!componentsReady()) return
         serviceScope.launch(Dispatchers.Main) {
             val wasRecording = sessionManager.isRecording
             if (wasRecording) {
@@ -193,6 +250,7 @@ class FloatingBubbleService : Service() {
     }
 
     fun onSensitiveAppExited() {
+        if (!componentsReady()) return
         serviceScope.launch(Dispatchers.Main) {
             val isKeyboardOpen = FloatingBubbleManager.isKeyboardVisible.value
             overlayWindowManager.restoreOverlayVisibility(isKeyboardOpen = isKeyboardOpen)
@@ -244,25 +302,12 @@ class FloatingBubbleService : Service() {
             return
         }
 
-        val notification = FloatingNotificationManager.buildNotification(this, "Listening...")
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(
-                    FloatingNotificationManager.NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                )
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    FloatingNotificationManager.NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                )
-            } else {
-                startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification)
+        if (!startMicrophoneForeground()) {
+            Toast.makeText(this, "Microphone can't start right now. Open Rapcha and try again.", Toast.LENGTH_LONG).show()
+            if (::sessionManager.isInitialized && sessionManager.isRecording) {
+                stopVoiceTyping(endedReason = "microphone_foreground_denied")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not startForeground with microphone service type: ${e.message}")
+            return
         }
 
         overlayWindowManager.expandToFullSize()
@@ -363,6 +408,11 @@ class FloatingBubbleService : Service() {
                     )
                 } catch (e: Exception) {
                     Log.w(TAG, "Could not revert FGS to specialUse: ${e.message}")
+                    AppLogRepository.logEvent(
+                        DiagnosticSource.BUBBLE,
+                        DiagnosticType.WARNING,
+                        "Could not revert foreground service to specialUse: ${e.message?.take(180)}"
+                    )
                 }
             }
         }
@@ -458,10 +508,8 @@ class FloatingBubbleService : Service() {
         val wasRecording = sessionManager.isRecording
         if (wasRecording) {
             stopVoiceTyping(endedReason = "user_cancelled")
-        } else {
-            AppLogRepository.logEvent(
-                DiagnosticSource.BUBBLE,
-                DiagnosticType.SESSION_END,
+        } else if (::sessionManager.isInitialized) {
+            sessionManager.logSessionEndOnce(
                 "ended_reason: user_cancelled | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd"
             )
         }
@@ -488,6 +536,7 @@ class FloatingBubbleService : Service() {
     }
 
     fun onKeyboardVisibilityChanged(isVisible: Boolean) {
+        if (!componentsReady()) return
         val isSessionActive = sessionManager.isRecording ||
                              overlayWindowManager.overlayPendingFinalizing.value ||
                              polishCoordinator.isPolishingInProgress.get()
@@ -499,6 +548,7 @@ class FloatingBubbleService : Service() {
     }
 
     fun attachToAccessibilityService(accessService: RapchaAccessibilityService) {
+        if (!::overlayWindowManager.isInitialized) return
         overlayWindowManager.attachToAccessibilityService(accessService)
     }
 

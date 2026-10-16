@@ -40,7 +40,9 @@ enum class DiagnosticType {
     SESSION_RECONNECT,
     SAFE_MODE_TRIGGERED,
     AUDIO_STYLE_CHANGED,
-    VOICE_ID_EVENT
+    VOICE_ID_EVENT,
+    CRASH,
+    PROCESS_EXIT
 }
 
 data class DiagnosticLogEntry(
