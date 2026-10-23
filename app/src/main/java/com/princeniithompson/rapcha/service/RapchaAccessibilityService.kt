@@ -93,7 +93,7 @@ open class RapchaAccessibilityService : AccessibilityService() {
         }
 
         info.flags = flags
-        info.notificationTimeout = 30
+        info.notificationTimeout = 0
         serviceInfo = info
 
         // Check initial keyboard state

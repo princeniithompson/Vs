@@ -195,6 +195,12 @@ fun DiagnosticEntryRow(entry: DiagnosticLogEntry, timeFormat: SimpleDateFormat) 
         DiagnosticType.INTERIM_STALL -> Triple(Color(0xFFFEF3C7), Color(0xFFB45309), "STALL")
         DiagnosticType.INTERIM_RESUMED -> Triple(Color(0xFFD1FAE5), Color(0xFF047857), "RESUMED")
         DiagnosticType.SESSION_HEARTBEAT -> Triple(Color(0xFFF1F5F9), Color(0xFF475569), "BEAT")
+        DiagnosticType.SPLIT -> Triple(Color(0xFFDBEAFE), Color(0xFF1D4ED8), "SPLIT")
+        DiagnosticType.PIECE_FINAL -> Triple(Color(0xFFD1FAE5), Color(0xFF047857), "PIECE")
+        DiagnosticType.DEDUP -> Triple(Color(0xFFE0E7FF), Color(0xFF4338CA), "DEDUP")
+        DiagnosticType.SOCKET_OPEN -> Triple(Color(0xFFCCFBF1), Color(0xFF0F766E), "OPEN")
+        DiagnosticType.SOCKET_CLOSE -> Triple(Color(0xFFF1F5F9), Color(0xFF475569), "CLOSE")
+        DiagnosticType.CONNECTION_AGE -> Triple(Color(0xFFFEF3C7), Color(0xFFB45309), "AGE")
     }
 
     Card(

@@ -155,9 +155,10 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     private val sessionEndLogged = AtomicBoolean(false)
     private val _previewPhase = MutableStateFlow(com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase.LISTENING)
     val previewPhase: StateFlow<com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase> = _previewPhase.asStateFlow()
-    private val _polishingMessage = MutableStateFlow<String?>(null)
-    val polishingMessage: StateFlow<String?> = _polishingMessage.asStateFlow()
     private var connectionLostHapticSent = false
+    private var sessionClock = com.princeniithompson.rapcha.websocket.DictationSessionClock()
+    private var finishAtNextPause = false
+    private var sessionStartedAtMs = 0L
     private var durationJob: Job? = null
     private var drainJob: Job? = null
 
@@ -171,6 +172,23 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             _interimTranscript.value = text
             com.princeniithompson.rapcha.data.AppLogRepository.updateLiveStats { it.copy(source = com.princeniithompson.rapcha.data.DiagnosticSource.APP, interimCount = it.interimCount + 1) }
         },
+        onPieceCommitted = { piece ->
+            _finalizedTranscript.value = mergePiece(_finalizedTranscript.value, piece)
+            _interimTranscript.value = ""
+        },
+        onGoAway = {
+            val sessionMs = stats.value.durationSeconds * 1000L
+            if (sessionClock.shouldSplitOnGoAway(sessionMs)) {
+                splitOntoFreshSocket()
+            } else if (_isRecording.value) {
+                autoFinishSession()
+            }
+        },
+        onAudiblePause = {
+            if (finishAtNextPause && _isRecording.value) {
+                autoFinishSession()
+            }
+        },
         onFinalizedTranscription = { text ->
             val trimmedNew = text.trim()
             if (trimmedNew.isNotEmpty()) {
@@ -179,9 +197,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                     com.princeniithompson.rapcha.data.DiagnosticType.TRANSCRIPT_FINAL,
                     com.princeniithompson.rapcha.data.TranscriptPrivacy.summary(trimmedNew)
                 )
-            }
-            if (trimmedNew.isNotEmpty()) {
-                _finalizedTranscript.value = trimmedNew
+                _finalizedTranscript.value = mergePiece(_finalizedTranscript.value, trimmedNew)
             }
             _interimTranscript.value = ""
             com.princeniithompson.rapcha.data.AppLogRepository.updateLiveStats { it.copy(source = com.princeniithompson.rapcha.data.DiagnosticSource.APP, finalizedCount = it.finalizedCount + 1) }
@@ -206,23 +222,13 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             }
         },
         isSessionActive = { _isRecording.value },
-        onSessionLimit = { message, finalizeNow ->
-            addLog(LogLevel.INFO, TAG, message)
-            android.widget.Toast.makeText(getApplication(), message, android.widget.Toast.LENGTH_LONG).show()
-            if (finalizeNow && _isRecording.value) {
-                stopRecording(endedReason = "session_limit")
-            }
-        },
         diagnosticSource = com.princeniithompson.rapcha.data.DiagnosticSource.APP,
         onPreviewPhase = { phase ->
             _previewPhase.value = phase
             if (phase == com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase.CONNECTION_LOST) {
                 if (!connectionLostHapticSent) {
                     connectionLostHapticSent = true
-                    com.princeniithompson.rapcha.service.floating.FloatingHapticManager.trigger(
-                        getApplication(),
-                        com.princeniithompson.rapcha.service.floating.FloatingHapticType.CONNECTION_LOST
-                    )
+                    com.princeniithompson.rapcha.service.floating.DictationAlerts.connectionDropped(getApplication())
                 }
             } else {
                 connectionLostHapticSent = false
@@ -261,6 +267,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         onError = { err ->
             addLog(LogLevel.ERROR, TAG, "AudioRecorder Error: $err")
             com.princeniithompson.rapcha.data.AppLogRepository.updateLiveStats { it.copy(source = com.princeniithompson.rapcha.data.DiagnosticSource.APP, lastError = err) }
+            com.princeniithompson.rapcha.service.floating.DictationAlerts.microphoneFailed(getApplication())
         }
     )
 
@@ -314,8 +321,10 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
         sessionEndLogged.set(false)
         connectionLostHapticSent = false
+        finishAtNextPause = false
+        sessionClock = com.princeniithompson.rapcha.websocket.DictationSessionClock()
+        sessionStartedAtMs = System.currentTimeMillis()
         _previewPhase.value = com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase.LISTENING
-        _polishingMessage.value = null
         _isRecording.value = true
         _interimTranscript.value = ""
         audioQueue.clear()
@@ -371,12 +380,14 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         // 3. Start recording duration timer
         durationJob?.cancel()
         durationJob = viewModelScope.launch {
-            val start = System.currentTimeMillis()
+            val start = sessionStartedAtMs
             while (isActive && _isRecording.value) {
                 delay(500)
                 webSocketClient.pollInterimPreview()
-                val elapsedSec = ((System.currentTimeMillis() - start) / 1000).toInt()
+                val elapsedMs = System.currentTimeMillis() - start
+                val elapsedSec = (elapsedMs / 1000).toInt()
                 com.princeniithompson.rapcha.data.AppLogRepository.updateLiveStats { it.copy(source = com.princeniithompson.rapcha.data.DiagnosticSource.APP, durationSeconds = elapsedSec) }
+                onSessionClockTick(elapsedMs)
             }
         }
     }
@@ -401,9 +412,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         if (!_isRecording.value) return
         _isRecording.value = false
         val shouldLogEnd = sessionEndLogged.compareAndSet(false, true)
-        if (endedReason == "completed" || endedReason == "session_limit") {
-            _polishingMessage.value = com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.polishingMessage(stats.value.durationSeconds)
-        }
+        val sessionLimitStop = endedReason == "session_limit"
         durationJob?.cancel()
 
         addLog(LogLevel.INFO, TAG, "Stopping recording session ($endedReason)...")
@@ -430,6 +439,8 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                     if (finalText.isNotBlank()) {
                         _finalizedTranscript.value = finalText
                         _interimTranscript.value = ""
+                    } else if (stats.value.bytesSent > 32_000L) {
+                        com.princeniithompson.rapcha.service.floating.DictationAlerts.finalTextLost(getApplication())
                     }
                 }
                 webSocketClient.disconnect()
@@ -453,10 +464,12 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                     com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
                         com.princeniithompson.rapcha.data.DiagnosticSource.APP,
                         com.princeniithompson.rapcha.data.DiagnosticType.SESSION_END,
-                        "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${webSocketClient.interimPreviewMonitor.summary()}"
+                        "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${webSocketClient.sessionSummary()}"
                     )
                 }
-                _polishingMessage.value = null
+                if (sessionLimitStop && _finalizedTranscript.value.isNotBlank()) {
+                    com.princeniithompson.rapcha.service.floating.DictationAlerts.sessionEnded(getApplication(), copied = false)
+                }
                 _previewPhase.value = com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase.LISTENING
                 try {
                     if (wl?.isHeld == true) {
@@ -511,6 +524,39 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         _finalizedTranscript.value = ""
         _interimTranscript.value = ""
         addLog(LogLevel.INFO, TAG, "Transcript cleared")
+    }
+
+    private fun splitOntoFreshSocket() {
+        webSocketClient.requestFreshConnectionSplit()
+    }
+
+    private fun autoFinishSession() {
+        if (!_isRecording.value) return
+        stopRecording(endedReason = "session_limit")
+    }
+
+    private fun onSessionClockTick(sessionMs: Long) {
+        val tick = sessionClock.onTick(sessionMs, webSocketClient.isSingleConnection())
+        if (tick.warn) {
+            com.princeniithompson.rapcha.service.floating.DictationAlerts.endingSoon(getApplication())
+        }
+        if (tick.armFinishAtPause) {
+            finishAtNextPause = true
+            if (webSocketClient.currentPauseMs() >= com.princeniithompson.rapcha.websocket.DictationPiecePlanner.PAUSE_MS) {
+                autoFinishSession()
+            }
+        }
+        if (tick.hardStop) {
+            autoFinishSession()
+        }
+    }
+
+    private fun mergePiece(current: String, piece: String): String {
+        val trimmed = piece.trim()
+        if (trimmed.isEmpty()) return current.trim()
+        val base = current.trim()
+        if (base == trimmed || base.endsWith(" $trimmed")) return base
+        return com.princeniithompson.rapcha.websocket.TranscriptSeam.append(base, trimmed)
     }
 
     fun copyTranscript(context: Context): Boolean {

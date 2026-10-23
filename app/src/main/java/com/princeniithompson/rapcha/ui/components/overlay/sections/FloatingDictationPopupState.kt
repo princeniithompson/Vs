@@ -22,7 +22,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.delay
 
 /**
  * State holder managing animations, audio amplitude smoothing, and completion transitions
@@ -152,15 +151,7 @@ fun rememberFloatingDictationPopupState(
     )
     val waitingLoopProgress = if (isFinishingActive && morphProgress >= 0.999f) waitingLoopAnim else 0f
 
-    val sunsetEntranceAnim = remember { Animatable(0f) }
-    LaunchedEffect(Unit) {
-        delay(350L)
-        sunsetEntranceAnim.animateTo(
-            targetValue = 1f,
-            animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
-        )
-    }
-    val sunsetEntranceProgress = sunsetEntranceAnim.value
+    val sunsetEntranceProgress = 1f
 
     LaunchedEffect(isRecording) {
         if (isRecording) {

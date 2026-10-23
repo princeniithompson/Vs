@@ -43,10 +43,17 @@ class ManualEndpointingTest {
         val smartMode: Boolean = false,
         val onInterim: (String) -> Unit = {},
         val onFinal: (String) -> Unit = {},
-        val onSessionLimit: (String, Boolean) -> Unit = { _, _ -> }
+        val onPiece: (String) -> Unit = {},
+        val onGoAway: (Long?) -> Unit = {},
+        val onSessionLimit: (String, Boolean) -> Unit = { _, _ -> },
+        val sessionActive: () -> Boolean = { false }
     ) {
-        val socket = FakeWebSocket()
-        lateinit var listener: WebSocketListener
+        val sockets = mutableListOf<FakeWebSocket>()
+        val listeners = mutableListOf<WebSocketListener>()
+        val socket: FakeWebSocket
+            get() = sockets.first()
+        val listener: WebSocketListener
+            get() = listeners.first()
         val client = GeminiLiveWebSocketClient(
             onSetupComplete = {},
             onInterimTranscription = onInterim,
@@ -56,11 +63,16 @@ class ManualEndpointingTest {
             onError = {},
             okHttpClient = object : OkHttpClient() {
                 override fun newWebSocket(request: Request, listener: WebSocketListener): WebSocket {
-                    this@Harness.listener = listener
-                    return socket
+                    val created = FakeWebSocket()
+                    sockets.add(created)
+                    listeners.add(listener)
+                    return created
                 }
             },
-            onSessionLimit = onSessionLimit
+            isSessionActive = sessionActive,
+            onSessionLimit = onSessionLimit,
+            onPieceCommitted = onPiece,
+            onGoAway = onGoAway
         )
 
         fun open(modelSmart: Boolean = smartMode) {
@@ -145,6 +157,11 @@ class ManualEndpointingTest {
         assertTrue(harness.socket.sentMessages.any { JSONObject(it).optJSONObject("realtimeInput")?.has("activityStart") == true })
         assertTrue(harness.socket.sentMessages.any { JSONObject(it).optJSONObject("realtimeInput")?.has("activityEnd") == true })
         assertFalse(harness.socket.sentMessages.any { it.contains("audioStreamEnd") })
+        val audio = harness.socket.sentMessages
+            .mapNotNull { JSONObject(it).optJSONObject("realtimeInput")?.optJSONObject("audio") }
+        assertTrue(audio.isNotEmpty())
+        assertEquals("audio/pcm;rate=16000", audio.first().getString("mimeType"))
+        assertFalse(harness.socket.sentMessages.any { it.contains("mediaChunks") })
 
         harness.listener.onMessage(
             harness.socket,
@@ -179,26 +196,128 @@ class ManualEndpointingTest {
     }
 
     @Test
-    fun `session clock warns and then asks to finish before the ten minute limit`() {
+    fun `the socket does not arm the ten minute clock`() {
         val events = mutableListOf<Boolean>()
         val harness = Harness(onSessionLimit = { _, finalizeNow -> events.add(finalizeNow) })
         harness.open()
-        shadowOf(Looper.getMainLooper()).idleFor(
-            GeminiLiveWebSocketClient.SESSION_LIMIT_FINALIZE_MS,
-            TimeUnit.MILLISECONDS
-        )
-        assertEquals(listOf(false, true), events)
+        shadowOf(Looper.getMainLooper()).idleFor(2, TimeUnit.SECONDS)
+        assertTrue(events.isEmpty())
         harness.client.disconnect()
     }
 
     @Test
-    fun `goAway with little time left asks to finish`() {
-        val events = mutableListOf<Boolean>()
-        val harness = Harness(onSessionLimit = { _, finalizeNow -> events.add(finalizeNow) })
+    fun `goAway is handed to the session clock instead of finishing immediately`() {
+        var timeLeft: Long? = null
+        val finishes = mutableListOf<Boolean>()
+        val harness = Harness(
+            onGoAway = { timeLeft = it },
+            onSessionLimit = { _, finalizeNow -> finishes.add(finalizeNow) }
+        )
         harness.open()
         harness.listener.onMessage(harness.socket, """{"goAway":{"timeLeft":"20s"}}""")
         shadowOf(Looper.getMainLooper()).idle()
-        assertEquals(listOf(true), events)
+        assertEquals(20_000L, timeLeft)
+        assertTrue(finishes.isEmpty())
+        harness.client.disconnect()
+    }
+
+    @Test
+    fun `a pause after two and a half minutes commits the piece and keeps listening`() {
+        val pieces = mutableListOf<String>()
+        val harness = Harness(onPiece = { pieces.add(it) })
+        harness.open()
+        val silence = ByteArray(32_000)
+        repeat(151) {
+            harness.client.sendAudioChunk(silence)
+        }
+        harness.listener.onMessage(
+            harness.socket,
+            """{"serverContent":{"inputTranscription":{"text":"first piece stays"}}}"""
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(listOf("first piece stays"), pieces)
+        val starts = harness.socket.sentMessages.count {
+            JSONObject(it).optJSONObject("realtimeInput")?.has("activityStart") == true
+        }
+        val ends = harness.socket.sentMessages.count {
+            JSONObject(it).optJSONObject("realtimeInput")?.has("activityEnd") == true
+        }
+        assertEquals(2, starts)
+        assertEquals(1, ends)
+        assertFalse(harness.socket.sentMessages.any { it.contains("audioStreamEnd") })
+        harness.client.disconnect()
+    }
+
+    @Test
+    fun `reconnect keeps the words already heard`() {
+        val pieces = mutableListOf<String>()
+        val interims = mutableListOf<String>()
+        val harness = Harness(
+            onInterim = { interims.add(it) },
+            onPiece = { pieces.add(it) },
+            sessionActive = { true }
+        )
+        harness.open()
+        harness.listener.onMessage(
+            harness.socket,
+            """{"serverContent":{"interimInputTranscription":{"text":"keep these words"}}}"""
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        harness.listener.onClosed(harness.socket, 1001, "dropped")
+        shadowOf(Looper.getMainLooper()).idle()
+        harness.listener.onMessage(
+            harness.socket,
+            """{"serverContent":{"interimInputTranscription":{"text":"new piece"}}}"""
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(listOf("keep these words"), pieces)
+        assertEquals("new piece", interims.last())
+        harness.client.disconnect()
+    }
+
+    @Test
+    fun `a fresh split keeps listening on the next socket`() {
+        val pieces = mutableListOf<String>()
+        val harness = Harness(onPiece = { pieces.add(it) })
+        harness.open()
+        harness.client.sendAudioChunk(InterimPreviewMonitor.speechPcm(sampleCount = 1600))
+        harness.listener.onMessage(
+            harness.socket,
+            """{"serverContent":{"interimInputTranscription":{"text":"alpha beta stays"}}}"""
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        harness.client.requestFreshConnectionSplit()
+        harness.listener.onMessage(
+            harness.socket,
+            """{"serverContent":{"inputTranscription":{"text":"alpha beta stays"}}}"""
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(2, harness.sockets.size)
+        val nextListener = harness.listeners[1]
+        val nextSocket = harness.sockets[1]
+        val response = Response.Builder()
+            .request(Request.Builder().url("https://generativelanguage.googleapis.com").build())
+            .protocol(Protocol.HTTP_1_1)
+            .code(101)
+            .message("Switching Protocols")
+            .build()
+        nextListener.onOpen(nextSocket, response)
+        nextListener.onMessage(nextSocket, """{"setupComplete":{}}""")
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(listOf("alpha beta stays"), pieces)
+        assertTrue(nextSocket.sentMessages.any {
+            JSONObject(it).optJSONObject("realtimeInput")?.has("activityStart") == true
+        })
+        assertTrue(nextSocket.sentMessages.any {
+            JSONObject(it).optJSONObject("realtimeInput")?.optJSONObject("audio") != null
+        })
+        nextListener.onMessage(
+            nextSocket,
+            """{"serverContent":{"interimInputTranscription":{"text":"gamma delta"}}}"""
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals("alpha beta stays gamma delta", harness.client.fullTranscript())
         harness.client.disconnect()
     }
 }

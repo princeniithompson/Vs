@@ -53,9 +53,13 @@ class GeminiLiveWebSocketClient(
     okHttpClient: OkHttpClient? = null,
     private val onStructuredError: ((GeminiLiveError) -> Unit)? = null,
     private val isSessionActive: () -> Boolean = { false },
+    @Suppress("unused")
     private val onSessionLimit: (message: String, finalizeNow: Boolean) -> Unit = { _, _ -> },
     private val diagnosticSource: DiagnosticSource = DiagnosticSource.BUBBLE,
-    private val onPreviewPhase: (InterimPreviewMonitor.Phase) -> Unit = {}
+    private val onPreviewPhase: (InterimPreviewMonitor.Phase) -> Unit = {},
+    private val onPieceCommitted: (String) -> Unit = {},
+    private val onGoAway: (Long?) -> Unit = {},
+    private val onAudiblePause: () -> Unit = {}
 ) {
     companion object {
         private const val TAG = "GeminiLiveWS"
@@ -66,12 +70,11 @@ class GeminiLiveWebSocketClient(
         const val PING_INTERVAL_SECONDS = 45L
 
         /**
-         * gemini-3.5-transcribe-live documents a 10 minute continuous session.
-         * Warn before that, then finish the utterance while there is still time
-         * for the final transcript to arrive.
+         * The 10 minute clock lives in [DictationSessionClock], outside this
+         * socket, so piece splits and fresh connections do not restart it.
          */
-        const val SESSION_LIMIT_WARNING_MS = 9 * 60 * 1000L
-        const val SESSION_LIMIT_FINALIZE_MS = 9 * 60 * 1000L + 30_000L
+        const val SESSION_LIMIT_WARNING_MS = DictationSessionClock.WARNING_MS
+        const val SESSION_LIMIT_FINALIZE_MS = DictationSessionClock.SINGLE_CONNECTION_HARD_STOP_MS
         const val FINAL_TRANSCRIPT_TIMEOUT_MS = 8_000L
         const val GO_AWAY_FINALIZE_THRESHOLD_MS = 45_000L
 
@@ -129,15 +132,10 @@ class GeminiLiveWebSocketClient(
     private val activityStarted = AtomicBoolean(false)
     private val activityEnded = AtomicBoolean(false)
     private val endpointSettled = AtomicBoolean(false)
-    private val sessionClockStarted = AtomicBoolean(false)
-    private val sessionLimitWarned = AtomicBoolean(false)
-    private val sessionLimitFinalized = AtomicBoolean(false)
     @Volatile private var lastInterimText: String = ""
     @Volatile private var resolvedEndpointText: String = ""
     private val endpointContinuation = AtomicReference<CancellableContinuation<String>?>(null)
     private var endpointTimeoutRunnable: Runnable? = null
-    private var sessionWarningRunnable: Runnable? = null
-    private var sessionFinalizeRunnable: Runnable? = null
 
     val setupComplete: Boolean
         get() = isSetupComplete.get()
@@ -152,6 +150,35 @@ class GeminiLiveWebSocketClient(
         get() = webSocket != null
 
     val interimPreviewMonitor = InterimPreviewMonitor()
+    private val planner = DictationPiecePlanner()
+
+    /** Tests advance this so a rescue split does not wait on the wall clock. */
+    @Volatile
+    var clock: () -> Long = { System.currentTimeMillis() }
+
+    private val holdQueue = ArrayDeque<ByteArray>()
+    private val replayQueue = ArrayDeque<ByteArray>()
+    private var replayBytes = 0
+    @Volatile private var holdingAudio = false
+    private val flushing = AtomicBoolean(false)
+    private val splitting = AtomicBoolean(false)
+    private val sessionFinalizing = AtomicBoolean(false)
+    private var pendingSplit: DictationPiecePlanner.Split? = null
+    private var pieceTimeout: Runnable? = null
+    private var pieceEndAtMs = 0L
+    private var pendingAfterSplit: (() -> Unit)? = null
+    private var committedText: String = ""
+    private var committedPieces = 0
+    private var maxPieceMs = 0L
+    private var socketsOpened = 0
+    private var sawInterimPast223 = false
+    private var companionSocket: WebSocket? = null
+    private val companionReady = AtomicBoolean(false)
+    private val companionOpening = AtomicBoolean(false)
+    @Volatile private var awaitingCompanion = false
+    @Volatile private var resumeHeldOnSetup = false
+    private var pendingReplayOnResume = false
+    private var companionWait: Runnable? = null
 
     private var isSmartMode: Boolean = false
     private var customVocabularyList: List<String> = emptyList()
@@ -259,6 +286,9 @@ class GeminiLiveWebSocketClient(
                 }
 
                 val currentLiveCount = activeSocketCount.incrementAndGet()
+                socketsOpened += 1
+                planner.onConnectionOpened(clock())
+                logDiag(DiagnosticType.SOCKET_OPEN, "connection_age_ms=0 sockets=$socketsOpened")
                 activeTurnText.clear()
                 if (!activityEnded.get()) {
                     activityStarted.set(false)
@@ -268,82 +298,16 @@ class GeminiLiveWebSocketClient(
                 Log.i(TAG, "[ConnectionState] CONNECTED: $openMsg")
                 onLog(LogLevel.INFO, TAG, "WebSocket connected successfully (HTTP ${response.code}). Active sockets: $currentLiveCount. Sending initial setup payload ($modeLabel, vocab=$vocabCount)...", null)
                 notifyStateChanged(ConnectionState.ConnectedWaitingSetup)
-
-                // Step A: Send initial setup JSON
-                val transcriptionConfig = JSONObject().apply {
-                    if (isSmartMode) {
-                        // AudioTranscriptionConfig.mode is documented for gemini-3.5-transcribe-live.
-                        put("mode", "SMART")
-                    }
-                    if (customVocabularyList.isNotEmpty()) {
-                        val vocabArray = org.json.JSONArray()
-                        customVocabularyList.forEach { term ->
-                            val trimmed = term.trim()
-                            if (trimmed.isNotEmpty()) {
-                                vocabArray.put(trimmed)
-                            }
-                        }
-                        put("customVocabulary", vocabArray)
-                    }
-                }
-
-                val systemPromptText = buildString {
-                    append("You are an ultra-accurate real-time voice dictation engine. Transcribe ONLY the words spoken by the primary user closest to the microphone. Completely ignore background ambient sounds, restaurant noise, kitchen clatter, passing vehicles, and background conversations. Never transcribe non-speech sounds. Output only the transcribed text with proper capitalization and punctuation. Do not reply conversationally, do not answer questions, and do not add commentary—only output the verbatim transcription of what was said.")
-                    if (customVocabularyList.isNotEmpty()) {
-                        val termsStr = customVocabularyList.filter { it.isNotBlank() }.joinToString(", ")
-                        if (termsStr.isNotBlank()) {
-                            append(" Prioritize and accurately transcribe the following custom vocabulary terms, names, and email addresses with exact casing and spelling: $termsStr.")
-                        }
-                    }
-                }
-
-                val setupJson = JSONObject().apply {
-                    val setupObj = JSONObject().apply {
-                        put("model", activeModel)
-                        put("systemInstruction", JSONObject().apply {
-                            put("parts", org.json.JSONArray().apply {
-                                put(JSONObject().apply {
-                                    put("text", systemPromptText)
-                                })
-                            })
-                        })
-                        put("generationConfig", JSONObject().apply {
-                            put("responseModalities", org.json.JSONArray().apply {
-                                put("TEXT")
-                            })
-                        })
-                        put("inputAudioTranscription", transcriptionConfig)
-                        put("realtimeInputConfig", JSONObject().apply {
-                            put("automaticActivityDetection", JSONObject().apply {
-                                put("disabled", true)
-                            })
-                        })
-                    }
-                    put("setup", setupObj)
-                }
-
-                val payload = setupJson.toString()
-                val sent = webSocket.send(payload)
-                if (sent) {
-                    val vadDiagnostics = "[Manual VAD] automaticActivityDetection.disabled=true; activityEnd is sent only when the user completes"
-                    Log.i(TAG, vadDiagnostics)
-                    onLog(LogLevel.SENT, TAG, "Setup message sent to server ($vadDiagnostics)", payload)
-                } else {
-                    val err = "Failed to send setup message over socket"
-                    Log.e(TAG, "[ConnectionState] FAILED: $err")
-                    onLog(LogLevel.ERROR, TAG, err, payload)
-                    notifyStateChanged(ConnectionState.Error(err))
-                    notifyError(err, GeminiLiveError.SetupFailed(err))
-                }
+                sendSetup(webSocket)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (this@GeminiLiveWebSocketClient.webSocket !== webSocket) return
                 handleIncomingMessage(text)
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                val text = bytes.utf8()
-                handleIncomingMessage(text)
+                onMessage(webSocket, bytes.utf8())
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -356,9 +320,14 @@ class GeminiLiveWebSocketClient(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                val drained = this@GeminiLiveWebSocketClient.webSocket != null &&
+                    this@GeminiLiveWebSocketClient.webSocket !== webSocket
+                if (drained) {
+                    return
+                }
                 val currentLiveCount = releaseActiveSocket()
                 val reasonDetail = if (reason.isNotBlank()) reason else "No reason provided"
-                Log.i(TAG, "[SingleConnection] WebSocket closed (code: $code, reason: $reasonDetail). Active live sockets: $currentLiveCount")
+                Log.i(TAG, "[LiveSocket] WebSocket closed (code: $code, reason: $reasonDetail). Active live sockets: $currentLiveCount")
                 isSetupComplete.set(false)
 
                 if (isExplicitlyClosed.get()) {
@@ -372,8 +341,11 @@ class GeminiLiveWebSocketClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (this@GeminiLiveWebSocketClient.webSocket != null && this@GeminiLiveWebSocketClient.webSocket !== webSocket) {
+                    return
+                }
                 val currentLiveCount = releaseActiveSocket()
-                Log.i(TAG, "[SingleConnection] WebSocket failure: ${t.message}. Active live sockets: $currentLiveCount")
+                Log.i(TAG, "[LiveSocket] WebSocket failure: ${t.message}. Active live sockets: $currentLiveCount")
 
                 val primaryMsg = t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
                 val endedReason = DictationEndedReason.fromMessage(primaryMsg)
@@ -403,8 +375,18 @@ class GeminiLiveWebSocketClient(
     }
 
     private fun handleDisconnectOrFailure(errorDetails: String, throwable: Throwable?) {
+        if (splitting.get() && !sessionFinalizing.get()) {
+            planner.armFreshMode()
+            pendingSplit = pendingSplit?.copy(freshConnection = true)
+            val orphan = lastInterimText
+            mainHandler.post { completePieceSplit(orphan, timedOut = true) }
+            return
+        }
+        if (!activityEnded.get() && !sessionFinalizing.get()) {
+            preserveOpenPiece()
+        }
         if (activityEnded.get()) {
-            settleEndpoint(lastInterimText)
+            settleEndpoint(lastInterimText, timedOut = true)
         }
         if (isExplicitlyClosed.get() || activityEnded.get()) {
             isConnectingGuard.set(false)
@@ -502,7 +484,19 @@ class GeminiLiveWebSocketClient(
                     )
                 }
                 notifyStateChanged(ConnectionState.Streaming)
-                scheduleSessionLimitClock()
+                if (resumeHeldOnSetup) {
+                    resumeHeldOnSetup = false
+                    val replay = pendingReplayOnResume
+                    planner.onPieceStarted(clock())
+                    activityStarted.set(false)
+                    activityEnded.set(false)
+                    endpointSettled.set(false)
+                    signalActivityStart()
+                    flushHeld(replay)
+                    finishSplitHold()
+                } else {
+                    planner.onPieceStarted(clock())
+                }
                 notifySetupComplete()
                 return
             }
@@ -575,15 +569,20 @@ class GeminiLiveWebSocketClient(
                     if (turnFinished) {
                         activeTurnText.clear()
                     }
-                } else if (finalizedText.isNotEmpty()) {
-                    onLog(LogLevel.RECEIVED, TAG, "Finalized: ${TranscriptPrivacy.summary(finalizedText)}", null)
-                    settleEndpoint(finalizedText)
-                } else if (turnFinished) {
-                    val completedText = activeTurnText.toString().trim()
+                } else if (finalizedText.isNotEmpty() || turnFinished) {
+                    val completedText = if (finalizedText.isNotEmpty()) {
+                        finalizedText
+                    } else {
+                        activeTurnText.toString().trim()
+                    }
                     activeTurnText.clear()
                     if (completedText.isNotEmpty()) {
-                        onLog(LogLevel.INFO, TAG, "Turn completed: ${TranscriptPrivacy.summary(completedText)}", null)
-                        settleEndpoint(completedText)
+                        onLog(LogLevel.RECEIVED, TAG, "Finalized: ${TranscriptPrivacy.summary(completedText)}", null)
+                    }
+                    if (sessionFinalizing.get()) {
+                        settleEndpoint(completedText.ifBlank { lastInterimText }, timedOut = false)
+                    } else if (splitting.get()) {
+                        completePieceSplit(completedText.ifBlank { lastInterimText }, timedOut = false)
                     }
                 }
             } else {
@@ -603,45 +602,44 @@ class GeminiLiveWebSocketClient(
     }
 
     /**
-     * Step C: Send 100ms PCM chunk Base64-encoded via realtimeInput.mediaChunks
-     * CRITICAL: Must only be called once isSetupComplete is true.
+     * Sends one PCM chunk on the documented realtimeInput.audio field.
+     * Past 2:30 of piece audio the chunk may be held locally while this piece
+     * is finalized, then flushed into the next activity.
      */
     fun sendAudioChunk(pcmChunk: ByteArray): Boolean {
-        val ws = webSocket
-        if (ws == null || !isSetupComplete.get() || isExplicitlyClosed.get() || activityEnded.get()) {
+        if (flushing.get()) {
+            return sendPcm(webSocket, pcmChunk, countReplay = false)
+        }
+        if (holdingAudio || splitting.get()) {
+            hold(pcmChunk)
+            return true
+        }
+        val socketUsable = webSocket != null && isSetupComplete.get() && !isExplicitlyClosed.get() && !activityEnded.get()
+        if (!socketUsable) {
             if (!activityEnded.get() && isSetupComplete.get()) {
-                interimPreviewMonitor.onPcm(pcmChunk, accepted = false, nowMs = System.currentTimeMillis())
+                interimPreviewMonitor.onPcm(pcmChunk, accepted = false, nowMs = clock())
                 publishInterimPreview()
             }
             return false
         }
+        val now = clock()
+        val decision = planner.onAudio(pcmChunk, now)
+        if (planner.consumePreconnect()) {
+            openCompanionSocket()
+        }
+        logAge(planner.ageMarker(now))
+        if (planner.consumeAudiblePause()) {
+            dispatch { onAudiblePause() }
+        }
+        if (decision != null && !sessionFinalizing.get()) {
+            hold(pcmChunk)
+            beginPieceSplit(decision)
+            return true
+        }
         if (!signalActivityStart()) {
             return false
         }
-
-        return try {
-            val base64Data = Base64.encodeToString(pcmChunk, Base64.NO_WRAP)
-            val chunkJson = JSONObject().apply {
-                put("realtimeInput", JSONObject().apply {
-                    val mediaChunksArray = org.json.JSONArray().apply {
-                        put(JSONObject().apply {
-                            put("mimeType", "audio/pcm;rate=16000")
-                            put("data", base64Data)
-                        })
-                    }
-                    put("mediaChunks", mediaChunksArray)
-                })
-            }
-            val sent = ws.send(chunkJson.toString())
-            interimPreviewMonitor.onPcm(pcmChunk, accepted = sent, nowMs = System.currentTimeMillis())
-            publishInterimPreview()
-            sent
-        } catch (e: Exception) {
-            Log.w(TAG, "Error sending audio chunk (socket disconnected or buffer full): ${e.message}")
-            interimPreviewMonitor.onPcm(pcmChunk, accepted = false, nowMs = System.currentTimeMillis())
-            publishInterimPreview()
-            false
-        }
+        return sendPcm(webSocket, pcmChunk, countReplay = true)
     }
 
     /**
@@ -680,13 +678,13 @@ class GeminiLiveWebSocketClient(
     }
 
     /**
-     * Ends the manual activity. This is the only endpoint signal, and callers must use it
-     * only when the user presses Complete or the session limit is reached.
-     * audioStreamEnd is not used while automatic activity detection is disabled.
+     * Ends the current manual activity. Piece splits and the final Complete
+     * both use this. audioStreamEnd stays suppressed.
      */
-    fun signalActivityEnd(): Boolean {
+    fun signalActivityEnd(): Boolean = signalActivityEnd(recordMonitor = true)
+
+    private fun signalActivityEnd(recordMonitor: Boolean): Boolean {
         val firstEnd = activityEnded.compareAndSet(false, true)
-        cancelSessionLimitTimers()
         val ws = webSocket
         if (!firstEnd) {
             return ws != null && isSetupComplete.get() && !isExplicitlyClosed.get()
@@ -700,7 +698,9 @@ class GeminiLiveWebSocketClient(
             }
             val sent = ws.send(endJson.toString())
             if (sent) {
-                interimPreviewMonitor.onActivityEnd(System.currentTimeMillis())
+                if (recordMonitor) {
+                    interimPreviewMonitor.onActivityEnd(clock())
+                }
                 onLog(LogLevel.SENT, TAG, "Sent activityEnd", endJson.toString())
             }
             sent
@@ -715,18 +715,28 @@ class GeminiLiveWebSocketClient(
      * If the server does not answer in time, the last interim preview is returned.
      */
     suspend fun endActivityAndAwaitFinal(): String {
-        if (endpointSettled.get()) return resolvedEndpointText.ifBlank { lastInterimText.trim() }
+        if (splitting.get()) {
+            suspendCancellableCoroutine<Unit> { cont ->
+                pendingAfterSplit = {
+                    if (cont.isActive) cont.resume(Unit)
+                }
+            }
+        }
+        if (sessionFinalizing.get() && endpointSettled.get()) {
+            return committedText.ifBlank { resolvedEndpointText.ifBlank { lastInterimText.trim() } }
+        }
+        sessionFinalizing.set(true)
         return suspendCancellableCoroutine { cont ->
             endpointContinuation.set(cont)
             cont.invokeOnCancellation {
                 endpointContinuation.compareAndSet(cont, null)
             }
-            val sent = signalActivityEnd()
+            val sent = signalActivityEnd(recordMonitor = true)
             if (!sent) {
-                settleEndpoint(lastInterimText)
+                settleEndpoint(lastInterimText, timedOut = true)
                 return@suspendCancellableCoroutine
             }
-            val timeout = Runnable { settleEndpoint(lastInterimText) }
+            val timeout = Runnable { settleEndpoint(lastInterimText, timedOut = true) }
             endpointTimeoutRunnable = timeout
             mainHandler.postDelayed(timeout, FINAL_TRANSCRIPT_TIMEOUT_MS)
         }
@@ -749,9 +759,20 @@ class GeminiLiveWebSocketClient(
         isExplicitlyClosed.set(true)
         reconnectAttempts.set(MAX_RECONNECT_ATTEMPTS)
         cancelPendingReconnect()
-        cancelSessionLimitTimers()
+        pieceTimeout?.let { mainHandler.removeCallbacks(it) }
+        pieceTimeout = null
+        cancelCompanionWait()
+        if (splitting.get()) {
+            val orphan = lastInterimText.trim()
+            if (orphan.isNotEmpty() && endpointSettled.compareAndSet(false, true)) {
+                commitPiece(orphan, dedup = false)
+            }
+            splitting.set(false)
+            holdingAudio = false
+            awaitingCompanion = false
+        }
         if (activityEnded.get()) {
-            settleEndpoint(lastInterimText)
+            settleEndpoint(lastInterimText, timedOut = true)
         }
         closeExistingWebSocket()
 
@@ -772,20 +793,15 @@ class GeminiLiveWebSocketClient(
     }
 
     private fun closeExistingWebSocket() {
+        val age = planner.connectionAge(clock())
         val existing = webSocket
         webSocket = null
-        if (existing != null) {
-            try {
-                val count = releaseActiveSocket()
-                Log.i(TAG, "[SingleConnection] Existing WebSocket cancelled. Active live sockets: $count")
-                try {
-                    existing.close(1000, "Session ended")
-                } catch (_: Exception) {}
-                existing.cancel()
-            } catch (e: Exception) {
-                Log.w(TAG, "Error cancelling existing WebSocket: ${e.message}")
-            }
-        }
+        closeQuietly(existing, age)
+        val companion = companionSocket
+        companionSocket = null
+        companionReady.set(false)
+        companionOpening.set(false)
+        closeQuietly(companion, 0L)
     }
 
     private fun notifyError(message: String, structuredError: GeminiLiveError? = null) {
@@ -831,7 +847,10 @@ class GeminiLiveWebSocketClient(
     }
 
     private fun noteLiveTranscription(text: String) {
-        val resumed = interimPreviewMonitor.onInterim(System.currentTimeMillis())
+        val now = clock()
+        planner.onInterim(now)
+        logAge(planner.ageMarker(now))
+        val resumed = interimPreviewMonitor.onInterim(now)
         if (resumed != null) {
             logMonitorEvent(resumed)
         }
@@ -885,84 +904,57 @@ class GeminiLiveWebSocketClient(
         activityStarted.set(false)
         activityEnded.set(false)
         endpointSettled.set(false)
-        sessionClockStarted.set(false)
-        sessionLimitWarned.set(false)
-        sessionLimitFinalized.set(false)
         lastInterimText = ""
         resolvedEndpointText = ""
+        committedText = ""
+        committedPieces = 0
+        maxPieceMs = 0L
+        socketsOpened = 0
+        sawInterimPast223 = false
+        holdingAudio = false
+        splitting.set(false)
+        sessionFinalizing.set(false)
+        awaitingCompanion = false
+        pendingSplit = null
+        pendingAfterSplit = null
+        holdQueue.clear()
+        replayQueue.clear()
+        replayBytes = 0
+        planner.resetSession()
         endpointContinuation.set(null)
-        cancelSessionLimitTimers()
         endpointTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         endpointTimeoutRunnable = null
-    }
-
-    private fun scheduleSessionLimitClock() {
-        if (!sessionClockStarted.compareAndSet(false, true)) return
-        val warning = Runnable {
-            notifySessionLimit(
-                "Rapcha's live session is nearing its 10 minute limit. Press Complete soon.",
-                finalizeNow = false
-            )
-        }
-        val finalize = Runnable {
-            notifySessionLimit(
-                "Rapcha is finishing this dictation before the 10 minute live session limit.",
-                finalizeNow = true
-            )
-        }
-        sessionWarningRunnable = warning
-        sessionFinalizeRunnable = finalize
-        mainHandler.postDelayed(warning, SESSION_LIMIT_WARNING_MS)
-        mainHandler.postDelayed(finalize, SESSION_LIMIT_FINALIZE_MS)
-    }
-
-    private fun cancelSessionLimitTimers() {
-        sessionWarningRunnable?.let { mainHandler.removeCallbacks(it) }
-        sessionFinalizeRunnable?.let { mainHandler.removeCallbacks(it) }
-        sessionWarningRunnable = null
-        sessionFinalizeRunnable = null
+        pieceTimeout?.let { mainHandler.removeCallbacks(it) }
+        pieceTimeout = null
+        cancelCompanionWait()
     }
 
     private fun handleGoAway(goAway: JSONObject) {
         val timeLeftMs = parseDurationMillis(goAway.opt("timeLeft"))
-        val finalizeNow = timeLeftMs == null || timeLeftMs <= GO_AWAY_FINALIZE_THRESHOLD_MS
-        val message = if (finalizeNow) {
-            "Rapcha is finishing this dictation because the live session is about to close."
-        } else {
-            "Rapcha's live session will close soon. Press Complete to keep this dictation."
-        }
-        onLog(LogLevel.INFO, TAG, "goAway timeLeftMs=$timeLeftMs finalize=$finalizeNow", goAway.toString())
-        notifySessionLimit(message, finalizeNow)
+        onLog(LogLevel.INFO, TAG, "goAway timeLeftMs=$timeLeftMs", goAway.toString())
+        dispatch { onGoAway(timeLeftMs) }
     }
 
-    private fun notifySessionLimit(message: String, finalizeNow: Boolean) {
-        if (finalizeNow) {
-            if (!sessionLimitFinalized.compareAndSet(false, true)) return
-            cancelSessionLimitTimers()
-        } else if (!sessionLimitWarned.compareAndSet(false, true)) {
-            return
-        }
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            onSessionLimit(message, finalizeNow)
-        } else {
-            mainHandler.post { onSessionLimit(message, finalizeNow) }
-        }
-    }
-
-    private fun settleEndpoint(text: String) {
-        if (!activityEnded.get()) return
+    private fun settleEndpoint(text: String, timedOut: Boolean) {
+        if (!activityEnded.get() && !sessionFinalizing.get()) return
         if (!endpointSettled.compareAndSet(false, true)) return
-        interimPreviewMonitor.onFinalTranscript(System.currentTimeMillis())
+        interimPreviewMonitor.onFinalTranscript(clock())
         endpointTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         endpointTimeoutRunnable = null
-        val resolved = text.trim().ifBlank { lastInterimText.trim() }
-        resolvedEndpointText = resolved
-        if (resolved.isNotEmpty()) {
-            notifyFinalizedTranscription(resolved)
+        val piece = text.trim().ifBlank { lastInterimText.trim() }
+        if (piece.isNotEmpty()) {
+            committedText = TranscriptSeam.append(committedText, piece)
+            committedPieces += 1
+            lastInterimText = ""
+            notifyFinalizedTranscription(piece)
+        }
+        resolvedEndpointText = committedText
+        if (timedOut && piece.isEmpty() && committedText.isEmpty()) {
+            Log.i(TAG, "Session final timed out with no transcript")
         }
         val cont = endpointContinuation.getAndSet(null)
         if (cont != null && cont.isActive) {
-            cont.resume(resolved)
+            cont.resume(committedText)
         }
     }
 
@@ -991,6 +983,450 @@ class GeminiLiveWebSocketClient(
             else -> trimmed.toDoubleOrNull()?.times(1000.0)?.toLong()
         }
     }
+
+    fun isSingleConnection(): Boolean = socketsOpened <= 1
+
+    fun currentPauseMs(): Long = planner.quietMs
+
+    fun fullTranscript(): String {
+        val committed = committedText.trim()
+        val live = lastInterimText.trim()
+        if (live.isEmpty()) return committed
+        if (committed.isEmpty() || committed == live || committed.endsWith(" $live")) return committed.ifBlank { live }
+        return TranscriptSeam.append(committed, live)
+    }
+
+    fun sessionSummary(): String {
+        val past = if (sawInterimPast223 || planner.interimPastDeathAge()) "yes" else "no"
+        val fresh = if (planner.freshConnectionMode) "yes" else "no"
+        return "pieces=$committedPieces max_piece_s=${maxPieceMs / 1000} interim_past_223s=$past sockets=$socketsOpened fresh_mode=$fresh | ${interimPreviewMonitor.summary()}"
+    }
+
+    fun requestFreshConnectionSplit() {
+        if (isExplicitlyClosed.get() || sessionFinalizing.get()) return
+        planner.armFreshMode()
+        if (splitting.get()) return
+        beginPieceSplit(planner.forceFreshSplit(clock()))
+    }
+
+    private fun sendSetup(socket: WebSocket) {
+        val transcriptionConfig = JSONObject().apply {
+            if (isSmartMode) {
+                put("mode", "SMART")
+            }
+            if (customVocabularyList.isNotEmpty()) {
+                val vocabArray = org.json.JSONArray()
+                customVocabularyList.forEach { term ->
+                    val trimmed = term.trim()
+                    if (trimmed.isNotEmpty()) vocabArray.put(trimmed)
+                }
+                put("customVocabulary", vocabArray)
+            }
+        }
+        val systemPromptText = buildString {
+            append("You are an ultra-accurate real-time voice dictation engine. Transcribe ONLY the words spoken by the primary user closest to the microphone. Completely ignore background ambient sounds, restaurant noise, kitchen clatter, passing vehicles, and background conversations. Never transcribe non-speech sounds. Output only the transcribed text with proper capitalization and punctuation. Do not reply conversationally, do not answer questions, and do not add commentary—only output the verbatim transcription of what was said.")
+            if (customVocabularyList.isNotEmpty()) {
+                val termsStr = customVocabularyList.filter { it.isNotBlank() }.joinToString(", ")
+                if (termsStr.isNotBlank()) {
+                    append(" Prioritize and accurately transcribe the following custom vocabulary terms, names, and email addresses with exact casing and spelling: $termsStr.")
+                }
+            }
+        }
+        val setupJson = JSONObject().apply {
+            put("setup", JSONObject().apply {
+                put("model", activeModel)
+                put("systemInstruction", JSONObject().apply {
+                    put("parts", org.json.JSONArray().apply {
+                        put(JSONObject().apply { put("text", systemPromptText) })
+                    })
+                })
+                put("generationConfig", JSONObject().apply {
+                    put("responseModalities", org.json.JSONArray().apply { put("TEXT") })
+                })
+                put("inputAudioTranscription", transcriptionConfig)
+                put("realtimeInputConfig", JSONObject().apply {
+                    put("automaticActivityDetection", JSONObject().apply {
+                        put("disabled", true)
+                    })
+                })
+            })
+        }
+        val payload = setupJson.toString()
+        val sent = socket.send(payload)
+        if (sent) {
+            val vadDiagnostics = "[Manual VAD] automaticActivityDetection.disabled=true; activityEnd closes one piece, not a pause"
+            Log.i(TAG, vadDiagnostics)
+            onLog(LogLevel.SENT, TAG, "Setup message sent to server ($vadDiagnostics)", payload)
+        } else {
+            val err = "Failed to send setup message over socket"
+            Log.e(TAG, "[ConnectionState] FAILED: $err")
+            onLog(LogLevel.ERROR, TAG, err, payload)
+            notifyStateChanged(ConnectionState.Error(err))
+            notifyError(err, GeminiLiveError.SetupFailed(err))
+        }
+    }
+
+    private fun sendPcm(ws: WebSocket?, pcm: ByteArray, countReplay: Boolean): Boolean {
+        if (ws == null) return false
+        return try {
+            val base64Data = Base64.encodeToString(pcm, Base64.NO_WRAP)
+            val chunkJson = JSONObject().apply {
+                put("realtimeInput", JSONObject().apply {
+                    put("audio", JSONObject().apply {
+                        put("mimeType", "audio/pcm;rate=16000")
+                        put("data", base64Data)
+                    })
+                })
+            }
+            val sent = ws.send(chunkJson.toString())
+            if (sent && countReplay && ws === webSocket) {
+                rememberReplay(pcm)
+            }
+            interimPreviewMonitor.onPcm(pcm, accepted = sent, nowMs = clock())
+            publishInterimPreview()
+            sent
+        } catch (e: Exception) {
+            Log.w(TAG, "Error sending audio chunk (socket disconnected or buffer full): ${e.message}")
+            interimPreviewMonitor.onPcm(pcm, accepted = false, nowMs = clock())
+            publishInterimPreview()
+            false
+        }
+    }
+
+    private fun hold(pcm: ByteArray) {
+        synchronized(holdQueue) {
+            holdQueue.addLast(pcm.copyOf())
+        }
+    }
+
+    private fun rememberReplay(pcm: ByteArray) {
+        val copy = pcm.copyOf()
+        replayQueue.addLast(copy)
+        replayBytes += copy.size
+        while (replayBytes > DictationPiecePlanner.REPLAY_BYTES && replayQueue.isNotEmpty()) {
+            replayBytes -= replayQueue.removeFirst().size
+        }
+    }
+
+    private fun beginPieceSplit(split: DictationPiecePlanner.Split) {
+        if (sessionFinalizing.get()) return
+        if (!splitting.compareAndSet(false, true)) return
+        holdingAudio = true
+        pendingSplit = split
+        if (split.pieceAudioMs > maxPieceMs) maxPieceMs = split.pieceAudioMs
+        logDiag(
+            DiagnosticType.SPLIT,
+            "piece=${split.pieceNumber} reason=${split.reason.name.lowercase()} piece_s=${split.pieceAudioMs / 1000} connection_age_s=${split.connectionAgeMs / 1000} pause_ms=${split.pauseLengthMs} rms_min=${fmt(split.rmsMin)} rms_max=${fmt(split.rmsMax)} rms_mean=${fmt(split.rmsMean)}"
+        )
+        pieceEndAtMs = clock()
+        val sent = signalActivityEnd(recordMonitor = false)
+        if (!sent) {
+            mainHandler.post { completePieceSplit(lastInterimText, timedOut = true) }
+            return
+        }
+        val timeout = Runnable { completePieceSplit(lastInterimText, timedOut = true) }
+        pieceTimeout = timeout
+        mainHandler.postDelayed(timeout, DictationPiecePlanner.PIECE_FINAL_TIMEOUT_MS)
+    }
+
+    private fun completePieceSplit(text: String, timedOut: Boolean) {
+        if (!splitting.get()) return
+        if (!endpointSettled.compareAndSet(false, true)) return
+        pieceTimeout?.let { mainHandler.removeCallbacks(it) }
+        pieceTimeout = null
+        val split = pendingSplit
+        val raw = text.trim().ifBlank { lastInterimText.trim() }
+        val overlap = if (split?.replay == true) {
+            TranscriptSeam.dropOverlap(committedText, raw)
+        } else {
+            TranscriptSeam.Overlap(raw, 0)
+        }
+        if (overlap.wordsRemoved > 0) {
+            logDiag(DiagnosticType.DEDUP, "words_removed=${overlap.wordsRemoved}")
+        }
+        val piece = overlap.text.trim()
+        val latency = (clock() - pieceEndAtMs).coerceAtLeast(0L)
+        if (piece.isNotEmpty()) {
+            commitPiece(piece, dedup = false)
+        }
+        logDiag(
+            DiagnosticType.PIECE_FINAL,
+            "piece=${split?.pieceNumber ?: committedPieces} latency_ms=$latency words=${TranscriptPrivacy.wordCount(piece)} timed_out=${if (timedOut) "yes" else "no"}"
+        )
+        lastInterimText = ""
+        resetPieceFlags()
+        planner.advancePieceNumber()
+        planner.onPieceStarted(clock())
+        if (split?.freshConnection == true) {
+            handoffToFreshSocket(split.replay)
+        } else {
+            signalActivityStart()
+            flushHeld(split?.replay == true)
+            finishSplitHold()
+        }
+    }
+
+    private fun commitPiece(piece: String, dedup: Boolean) {
+        val resolved = if (dedup) TranscriptSeam.dropOverlap(committedText, piece) else TranscriptSeam.Overlap(piece.trim(), 0)
+        if (resolved.wordsRemoved > 0) {
+            logDiag(DiagnosticType.DEDUP, "words_removed=${resolved.wordsRemoved}")
+        }
+        val text = resolved.text.trim()
+        if (text.isEmpty()) return
+        committedText = TranscriptSeam.append(committedText, text)
+        committedPieces += 1
+        dispatch { onPieceCommitted(text) }
+    }
+
+    private fun preserveOpenPiece() {
+        val orphan = lastInterimText.trim()
+        if (orphan.isEmpty() || endpointSettled.get()) return
+        commitPiece(orphan, dedup = false)
+        lastInterimText = ""
+        logDiag(
+            DiagnosticType.PIECE_FINAL,
+            "piece=${committedPieces} latency_ms=0 words=${TranscriptPrivacy.wordCount(orphan)} timed_out=yes"
+        )
+    }
+
+    private fun handoffToFreshSocket(replay: Boolean) {
+        if (!companionReady.get()) {
+            awaitingCompanion = true
+            openCompanionSocket()
+            scheduleCompanionWait(replay)
+            return
+        }
+        activateCompanion(replay)
+    }
+
+    private fun scheduleCompanionWait(replay: Boolean) {
+        cancelCompanionWait()
+        val timeout = Runnable {
+            if (!splitting.get() || !awaitingCompanion) return@Runnable
+            if (companionReady.get()) {
+                activateCompanion(replay)
+            } else {
+                Log.w(TAG, "Next live socket was not ready; opening a replacement connection")
+                fallbackReconnectForSplit(replay)
+            }
+        }
+        companionWait = timeout
+        mainHandler.postDelayed(timeout, 8_000L)
+    }
+
+    private fun cancelCompanionWait() {
+        companionWait?.let { mainHandler.removeCallbacks(it) }
+        companionWait = null
+    }
+
+    /**
+     * The preconnected socket never became ready. Open a normal replacement
+     * without clearing the pieces already committed.
+     */
+    private fun fallbackReconnectForSplit(replay: Boolean) {
+        if (resumeHeldOnSetup || !splitting.get() || sessionFinalizing.get() || isExplicitlyClosed.get()) return
+        cancelCompanionWait()
+        awaitingCompanion = false
+        resumeHeldOnSetup = true
+        pendingReplayOnResume = replay
+        isSetupComplete.set(false)
+        connectInternal()
+    }
+
+    private fun activateCompanion(replay: Boolean) {
+        if (!splitting.get() || resumeHeldOnSetup) return
+        val next = companionSocket
+        if (next == null || !companionReady.get()) {
+            awaitingCompanion = true
+            openCompanionSocket()
+            scheduleCompanionWait(replay)
+            return
+        }
+        cancelCompanionWait()
+        awaitingCompanion = false
+        val old = webSocket
+        val age = planner.connectionAge(clock())
+        webSocket = next
+        companionSocket = null
+        companionReady.set(false)
+        companionOpening.set(false)
+        isSetupComplete.set(true)
+        planner.onConnectionOpened(clock())
+        planner.onPieceStarted(clock())
+        closeQuietly(old, age)
+        activityStarted.set(false)
+        activityEnded.set(false)
+        endpointSettled.set(false)
+        signalActivityStart()
+        flushHeld(replay)
+        finishSplitHold()
+    }
+
+    private fun openCompanionSocket() {
+        if (companionSocket != null || isExplicitlyClosed.get() || lastApiKey.isBlank()) return
+        if (!companionOpening.compareAndSet(false, true)) return
+        val request = try {
+            buildWebSocketRequest(lastApiKey)
+        } catch (e: Exception) {
+            companionOpening.set(false)
+            Log.w(TAG, "Could not open the next live socket: ${e.message}")
+            return
+        }
+        companionSocket = client.newWebSocket(request, object : WebSocketListener() {
+            private val opened = AtomicBoolean(false)
+
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (isExplicitlyClosed.get()) {
+                    webSocket.close(1000, "Closed by client")
+                    companionOpening.set(false)
+                    return
+                }
+                opened.set(true)
+                activeSocketCount.incrementAndGet()
+                socketsOpened += 1
+                logDiag(DiagnosticType.SOCKET_OPEN, "connection_age_ms=0 sockets=$socketsOpened")
+                sendSetup(webSocket)
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (this@GeminiLiveWebSocketClient.webSocket === webSocket) {
+                    if (text.contains("setupComplete") && isSetupComplete.get() && !resumeHeldOnSetup) return
+                    handleIncomingMessage(text)
+                    return
+                }
+                if (!text.contains("setupComplete")) return
+                if (!companionReady.compareAndSet(false, true)) return
+                companionOpening.set(false)
+                if (awaitingCompanion && !resumeHeldOnSetup) {
+                    val replay = pendingSplit?.replay == true
+                    mainHandler.post { activateCompanion(replay) }
+                }
+            }
+
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                onMessage(webSocket, bytes.utf8())
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                val promoted = this@GeminiLiveWebSocketClient.webSocket === webSocket
+                if (opened.compareAndSet(true, false)) releaseActiveSocket()
+                if (promoted) {
+                    val message = t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
+                    handleDisconnectOrFailure("WebSocket failure: $message", t)
+                    return
+                }
+                companionReady.set(false)
+                companionOpening.set(false)
+                if (companionSocket === webSocket) companionSocket = null
+                Log.w(TAG, "Next live socket failed: ${t.message}")
+                if (awaitingCompanion && splitting.get() && !resumeHeldOnSetup) {
+                    val replay = pendingSplit?.replay == true
+                    mainHandler.post { fallbackReconnectForSplit(replay) }
+                }
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                val promoted = this@GeminiLiveWebSocketClient.webSocket === webSocket
+                if (opened.compareAndSet(true, false)) releaseActiveSocket()
+                if (promoted) {
+                    if (!isExplicitlyClosed.get()) {
+                        val detail = if (reason.isNotBlank()) reason else "No reason provided"
+                        handleDisconnectOrFailure("WebSocket closed (code: $code, reason: $detail)", null)
+                    }
+                    return
+                }
+                if (companionSocket === webSocket) {
+                    companionSocket = null
+                    companionReady.set(false)
+                    companionOpening.set(false)
+                }
+                if (awaitingCompanion && splitting.get() && !isExplicitlyClosed.get() && !resumeHeldOnSetup) {
+                    val replay = pendingSplit?.replay == true
+                    mainHandler.post { fallbackReconnectForSplit(replay) }
+                }
+            }
+        })
+    }
+
+    private fun flushHeld(replay: Boolean) {
+        val replayChunks = if (replay) replayQueue.toList() else emptyList()
+        val held = synchronized(holdQueue) {
+            val copy = holdQueue.toList()
+            holdQueue.clear()
+            copy
+        }
+        flushing.set(true)
+        val previousHold = holdingAudio
+        holdingAudio = false
+        try {
+            for (chunk in replayChunks) {
+                sendPcm(webSocket, chunk, countReplay = false)
+            }
+            for (chunk in held) {
+                planner.onAudio(chunk, clock())
+                sendPcm(webSocket, chunk, countReplay = true)
+            }
+        } finally {
+            flushing.set(false)
+            holdingAudio = previousHold && splitting.get()
+        }
+    }
+
+    private fun finishSplitHold() {
+        cancelCompanionWait()
+        holdingAudio = false
+        awaitingCompanion = false
+        splitting.set(false)
+        pendingSplit = null
+        val after = pendingAfterSplit
+        pendingAfterSplit = null
+        after?.invoke()
+    }
+
+    private fun resetPieceFlags() {
+        activityStarted.set(false)
+        activityEnded.set(false)
+        endpointSettled.set(false)
+        lastInterimText = ""
+        resolvedEndpointText = ""
+    }
+
+    private fun closeQuietly(socket: WebSocket?, ageMs: Long) {
+        if (socket == null) return
+        if (ageMs > 0L) {
+            logDiag(DiagnosticType.SOCKET_CLOSE, "connection_age_ms=$ageMs")
+        }
+        try {
+            val count = releaseActiveSocket()
+            Log.i(TAG, "[LiveSocket] WebSocket closed. Active live sockets: $count")
+            try {
+                socket.close(1000, "Session ended")
+            } catch (_: Exception) {}
+            socket.cancel()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error closing WebSocket: ${e.message}")
+        }
+    }
+
+    private fun logAge(marker: DictationPiecePlanner.AgeMarker?) {
+        if (marker == null) return
+        if (marker.interimPastLimit) sawInterimPast223 = true
+        val flag = if (marker.interimPastLimit) "yes" else "no"
+        logDiag(
+            DiagnosticType.CONNECTION_AGE,
+            "interim_past_223s=$flag connection_age_ms=${marker.connectionAgeMs}"
+        )
+    }
+
+    private fun logDiag(type: DiagnosticType, message: String) {
+        AppLogRepository.logEvent(diagnosticSource, type, message)
+    }
+
+    private fun dispatch(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else mainHandler.post(block)
+    }
+
+    private fun fmt(value: Double): String = String.format(Locale.US, "%.0f", value)
 
     private fun notifyFinalizedTranscription(text: String) {
         if (Looper.myLooper() == Looper.getMainLooper()) {

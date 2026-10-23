@@ -15,7 +15,10 @@ enum class FloatingHapticType {
     BUBBLE_MOVE,
     BUBBLE_SETTLE,
     CLIPBOARD_FALLBACK,
-    CONNECTION_LOST
+    CONNECTION_LOST,
+    ENDING_SOON,
+    ENDED,
+    PROBLEM
 }
 
 object FloatingHapticManager {
@@ -84,6 +87,15 @@ object FloatingHapticManager {
                             VibrationEffect.createWaveform(longArrayOf(0, 40, 50, 40), -1)
                         }
                     }
+                    FloatingHapticType.ENDING_SOON -> {
+                        VibrationEffect.createWaveform(longArrayOf(0, 30, 40, 30), -1)
+                    }
+                    FloatingHapticType.ENDED -> {
+                        VibrationEffect.createOneShot(80, VibrationEffect.DEFAULT_AMPLITUDE)
+                    }
+                    FloatingHapticType.PROBLEM -> {
+                        VibrationEffect.createWaveform(longArrayOf(0, 40, 40, 40, 40, 40), -1)
+                    }
                     FloatingHapticType.BUBBLE_SETTLE -> {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
@@ -104,6 +116,9 @@ object FloatingHapticManager {
                     FloatingHapticType.BUBBLE_SETTLE -> 40L
                     FloatingHapticType.CLIPBOARD_FALLBACK -> 35L
                     FloatingHapticType.CONNECTION_LOST -> 70L
+                    FloatingHapticType.ENDING_SOON -> 80L
+                    FloatingHapticType.ENDED -> 80L
+                    FloatingHapticType.PROBLEM -> 120L
                 }
                 vibrator.vibrate(millis)
             }

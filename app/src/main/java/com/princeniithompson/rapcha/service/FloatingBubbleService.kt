@@ -21,6 +21,7 @@ import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.data.DictationEndedReason
 import com.princeniithompson.rapcha.data.HistoryRepository
+import com.princeniithompson.rapcha.service.floating.DictationAlerts
 import com.princeniithompson.rapcha.service.floating.FloatingDictationSessionManager
 import com.princeniithompson.rapcha.service.floating.FloatingHapticManager
 import com.princeniithompson.rapcha.service.floating.FloatingHapticType
@@ -28,6 +29,7 @@ import com.princeniithompson.rapcha.service.floating.FloatingNotificationManager
 import com.princeniithompson.rapcha.service.floating.FloatingOverlayWindowManager
 import com.princeniithompson.rapcha.service.floating.FloatingPolishCoordinator
 import com.princeniithompson.rapcha.service.floating.FloatingTextInjector
+import com.princeniithompson.rapcha.service.floating.RapchaTextInserter
 import com.princeniithompson.rapcha.websocket.GeminiLiveWebSocketClient
 import com.princeniithompson.rapcha.websocket.InterimPreviewMonitor
 import kotlinx.coroutines.CoroutineScope
@@ -71,6 +73,8 @@ class FloatingBubbleService : Service() {
 
     @Volatile
     private var isPendingInjectionOnSmartCompletion = false
+    @Volatile
+    private var sessionLimitAutoFinish = false
     private var pendingCompletionTimeoutJob: Job? = null
     private var activeDetectionJob: Job? = null
     private var fgsDowngradeJob: Job? = null
@@ -137,10 +141,12 @@ class FloatingBubbleService : Service() {
                 }
             },
             onDurationTicked = { _ -> },
-            onSessionLimit = { message, finalizeNow ->
+            onSessionLimit = { _, finalizeNow ->
                 serviceScope.launch(Dispatchers.Main) {
-                    Toast.makeText(this@FloatingBubbleService, message, Toast.LENGTH_LONG).show()
-                    if (finalizeNow && sessionManager.isRecording) {
+                    if (!finalizeNow) {
+                        DictationAlerts.endingSoon(this@FloatingBubbleService)
+                    } else if (sessionManager.isRecording) {
+                        sessionLimitAutoFinish = true
                         onConfirmClicked()
                     }
                 }
@@ -150,8 +156,10 @@ class FloatingBubbleService : Service() {
                 if (phase == InterimPreviewMonitor.Phase.CONNECTION_LOST) {
                     if (!connectionLostHapticSent) {
                         connectionLostHapticSent = true
-                        FloatingHapticManager.trigger(this, FloatingHapticType.CONNECTION_LOST)
+                        DictationAlerts.connectionDropped(this@FloatingBubbleService)
                     }
+                } else if (phase == InterimPreviewMonitor.Phase.PREVIEW_DELAYED) {
+                    // The stall is already in the diagnostic log. The bubble stays quiet.
                 } else {
                     connectionLostHapticSent = false
                 }
@@ -316,7 +324,7 @@ class FloatingBubbleService : Service() {
         }
 
         if (!startMicrophoneForeground()) {
-            Toast.makeText(this, "Microphone can't start right now. Open Rapcha and try again.", Toast.LENGTH_LONG).show()
+            DictationAlerts.microphoneFailed(this)
             if (::sessionManager.isInitialized && sessionManager.isRecording) {
                 stopVoiceTyping(endedReason = "microphone_foreground_denied")
             }
@@ -438,8 +446,6 @@ class FloatingBubbleService : Service() {
         overlayWindowManager.overlayRecording.value = false
 
         pendingCompletionTimeoutJob?.cancel()
-        overlayWindowManager.overlayPolishingMessage.value =
-            InterimPreviewMonitor.polishingMessage(sessionManager.durationSeconds)
         pendingCompletionTimeoutJob = serviceScope.launch {
             val textToInject = sessionManager.finishActivityAndAwaitTranscript()
             if (isActive) {
@@ -458,6 +464,10 @@ class FloatingBubbleService : Service() {
         }
 
         if (textToInject.isBlank()) {
+            if (sessionManager.sessionBytesSent > 32_000L) {
+                DictationAlerts.finalTextLost(this)
+            }
+            sessionLimitAutoFinish = false
             resetAndCollapse()
             return
         }
@@ -472,7 +482,18 @@ class FloatingBubbleService : Service() {
         // Injection verifies off the main thread. Collapse only after it returns.
         serviceScope.launch {
             try {
-                FloatingTextInjector.injectOrFallbackToClipboard(this@FloatingBubbleService, textToInject)
+                val placed = FloatingTextInjector.injectReporting(this@FloatingBubbleService, textToInject)
+                if (sessionLimitAutoFinish) {
+                    when (placed) {
+                        is RapchaTextInserter.InsertionResult.SuccessClipboardFallback ->
+                            DictationAlerts.sessionEnded(this@FloatingBubbleService, copied = true)
+                        is RapchaTextInserter.InsertionResult.SuccessDirect ->
+                            DictationAlerts.sessionEnded(this@FloatingBubbleService, copied = false)
+                        is RapchaTextInserter.InsertionResult.Failed ->
+                            FloatingHapticManager.trigger(this@FloatingBubbleService, FloatingHapticType.PROBLEM)
+                    }
+                }
+                sessionLimitAutoFinish = false
 
                 val elapsedMs = maxOf(300L, android.os.SystemClock.elapsedRealtime() - startInjectTime)
                 val wordCount = textToInject.trim().split("\\s+".toRegex()).count { it.isNotBlank() }
@@ -547,6 +568,7 @@ class FloatingBubbleService : Service() {
 
         sessionManager.clearTranscripts()
         connectionLostHapticSent = false
+        sessionLimitAutoFinish = false
         overlayWindowManager.overlayPreviewPhase.value = InterimPreviewMonitor.Phase.LISTENING
         overlayWindowManager.overlayPolishingMessage.value = null
         overlayWindowManager.collapsePanel()
@@ -562,7 +584,8 @@ class FloatingBubbleService : Service() {
     }
 
     fun onFieldFocusChanged(isFocused: Boolean) {
-        // No-op: Visibility is strictly governed by TYPE_INPUT_METHOD window presence in onKeyboardVisibilityChanged
+        if (!componentsReady() || !isFocused) return
+        overlayWindowManager.showImmediately()
     }
 
     fun attachToAccessibilityService(accessService: RapchaAccessibilityService) {

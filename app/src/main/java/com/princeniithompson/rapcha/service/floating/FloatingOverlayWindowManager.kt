@@ -137,8 +137,6 @@ class FloatingOverlayWindowManager(private val context: Context) {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool)
             setContent {
                 val transcript by overlayTranscript.collectAsState()
-                val previewPhase by overlayPreviewPhase.collectAsState()
-                val polishingMessage by overlayPolishingMessage.collectAsState()
                 val recording by overlayRecording.collectAsState()
                 val pendingFinalizing by overlayPendingFinalizing.collectAsState()
                 val polishing by overlayPolishing.collectAsState()
@@ -157,8 +155,6 @@ class FloatingOverlayWindowManager(private val context: Context) {
 
                 FloatingOverlayContent(
                     transcript = transcript,
-                    previewPhase = previewPhase,
-                    polishingMessage = polishingMessage,
                     recording = recording,
                     pendingFinalizing = pendingFinalizing,
                     polishing = polishing,
@@ -353,12 +349,30 @@ class FloatingOverlayWindowManager(private val context: Context) {
         }, 1300L)
     }
 
-    fun onKeyboardVisibilityChanged(isVisible: Boolean, isSessionActive: Boolean) {
-        mainHandler.post {
-            val root = overlayView ?: return@post
+    fun showImmediately() {
+        fun apply() {
+            val root = overlayView ?: return
             if (FloatingBubbleManager.isCurrentAppSensitive.value) {
                 root.visibility = View.GONE
-                return@post
+                return
+            }
+            root.animate().cancel()
+            root.alpha = 1f
+            root.visibility = View.VISIBLE
+        }
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            apply()
+        } else {
+            mainHandler.post { apply() }
+        }
+    }
+
+    fun onKeyboardVisibilityChanged(isVisible: Boolean, isSessionActive: Boolean) {
+        fun apply() {
+            val root = overlayView ?: return
+            if (FloatingBubbleManager.isCurrentAppSensitive.value) {
+                root.visibility = View.GONE
+                return
             }
             if (isVisible) {
                 root.animate().cancel()
@@ -384,6 +398,11 @@ class FloatingOverlayWindowManager(private val context: Context) {
                     root.visibility = View.VISIBLE
                 }
             }
+        }
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            apply()
+        } else {
+            mainHandler.post { apply() }
         }
     }
 
