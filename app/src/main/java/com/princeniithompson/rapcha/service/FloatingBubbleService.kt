@@ -56,21 +56,35 @@ class FloatingBubbleService : Service() {
         var instance: FloatingBubbleService? = null
             private set
 
+        @Suppress("UNUSED_PARAMETER")
         internal fun decideRingTap(
             recording: Boolean,
             keyboardVisible: Boolean,
             fieldFocused: Boolean
         ): RingTap {
-            return if (!recording && !keyboardVisible && !fieldFocused) RingTap.HIDE else RingTap.CONTINUE
+            // A blinking cursor with no keyboard is the same as nothing focused: hide, don't start.
+            return if (!recording && !keyboardVisible) RingTap.HIDE else RingTap.CONTINUE
         }
 
-        /** A shrunk bubble uses the same rule: a live keyboard or a live focused field starts recording. */
+        /** Field focus alone does not start a session. The keyboard has to be on screen. */
         internal fun startsRecordingOnTap(
             recording: Boolean,
             keyboardVisible: Boolean,
             fieldFocused: Boolean
         ): Boolean {
-            return !recording && decideRingTap(recording, keyboardVisible, fieldFocused) == RingTap.CONTINUE
+            return !recording && keyboardVisible &&
+                decideRingTap(recording, keyboardVisible, fieldFocused) == RingTap.CONTINUE
+        }
+
+        /** The field-focus path may reveal the bubble only when the IME window is already up. */
+        internal fun fieldFocusRevealsBubble(keyboardVisible: Boolean): Boolean = keyboardVisible
+
+        /**
+         * The short keyboard re-check hides the bubble whenever the IME window is gone,
+         * including when an editable field is still focused. An active session stays up.
+         */
+        internal fun keyboardRecheckShouldHide(imeVisible: Boolean, sessionActive: Boolean): Boolean {
+            return !imeVisible && !sessionActive
         }
     }
 
@@ -655,13 +669,29 @@ class FloatingBubbleService : Service() {
     fun onFieldFocusChanged(isFocused: Boolean) {
         if (!componentsReady()) return
         if (isFocused) {
-            overlayWindowManager.showImmediately()
+            if (fieldFocusRevealsBubble(FloatingBubbleManager.isKeyboardVisible.value)) {
+                overlayWindowManager.showImmediately()
+            }
             return
         }
         val sessionActive = sessionManager.isRecording ||
             overlayWindowManager.overlayPendingFinalizing.value ||
             polishCoordinator.isPolishingInProgress.get()
-        if (!FloatingBubbleManager.isKeyboardVisible.value && !sessionActive) {
+        if (keyboardRecheckShouldHide(FloatingBubbleManager.isKeyboardVisible.value, sessionActive)) {
+            overlayWindowManager.onKeyboardVisibilityChanged(isVisible = false, isSessionActive = false)
+        }
+    }
+
+    /**
+     * Fired by the ~300ms keyboard re-check. A focused field is not a reason to stay visible.
+     */
+    fun onKeyboardWatch(imeVisible: Boolean) {
+        if (!componentsReady()) return
+        val sessionActive = sessionManager.isRecording ||
+            overlayWindowManager.overlayPendingFinalizing.value ||
+            polishCoordinator.isPolishingInProgress.get()
+        if (keyboardRecheckShouldHide(imeVisible, sessionActive)) {
+            FloatingBubbleManager.noteBubbleHideSignal()
             overlayWindowManager.onKeyboardVisibilityChanged(isVisible = false, isSessionActive = false)
         }
     }

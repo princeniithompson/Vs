@@ -357,6 +357,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
     fun showImmediately() {
         fun apply() {
             val root = overlayView ?: return
+            if (!FloatingBubbleManager.isKeyboardVisible.value) return
             if (FloatingBubbleManager.isCurrentAppSensitive.value) {
                 root.visibility = View.GONE
                 return

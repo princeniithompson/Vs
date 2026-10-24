@@ -167,10 +167,19 @@ class BubbleSyncAndVocabTest {
             FloatingBubbleService.RingTap.CONTINUE,
             FloatingBubbleService.decideRingTap(recording = false, keyboardVisible = true, fieldFocused = false)
         )
+        assertEquals(
+            FloatingBubbleService.RingTap.HIDE,
+            FloatingBubbleService.decideRingTap(recording = false, keyboardVisible = false, fieldFocused = true)
+        )
         assertTrue(FloatingBubbleService.startsRecordingOnTap(recording = false, keyboardVisible = true, fieldFocused = false))
-        assertTrue(FloatingBubbleService.startsRecordingOnTap(recording = false, keyboardVisible = false, fieldFocused = true))
+        assertFalse(FloatingBubbleService.startsRecordingOnTap(recording = false, keyboardVisible = false, fieldFocused = true))
         assertFalse(FloatingBubbleService.startsRecordingOnTap(recording = false, keyboardVisible = false, fieldFocused = false))
         assertFalse(FloatingBubbleService.startsRecordingOnTap(recording = true, keyboardVisible = true, fieldFocused = true))
+        assertTrue(FloatingBubbleService.fieldFocusRevealsBubble(keyboardVisible = true))
+        assertFalse(FloatingBubbleService.fieldFocusRevealsBubble(keyboardVisible = false))
+        assertTrue(FloatingBubbleService.keyboardRecheckShouldHide(imeVisible = false, sessionActive = false))
+        assertFalse(FloatingBubbleService.keyboardRecheckShouldHide(imeVisible = false, sessionActive = true))
+        assertFalse(FloatingBubbleService.keyboardRecheckShouldHide(imeVisible = true, sessionActive = false))
     }
 
     @Test

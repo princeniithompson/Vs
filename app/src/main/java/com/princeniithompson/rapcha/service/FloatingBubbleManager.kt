@@ -319,9 +319,10 @@ object FloatingBubbleManager {
     }
 
     fun notifyFieldFocus(isFocused: Boolean) {
-        if (isFocused && !_isFieldActive.value) {
+        val keyboardUp = _isKeyboardVisible.value
+        if (isFocused && !_isFieldActive.value && keyboardUp) {
             bubbleSignalAtElapsed = SystemClock.elapsedRealtime()
-        } else if (!isFocused && _isFieldActive.value) {
+        } else if (!isFocused && _isFieldActive.value && !keyboardUp) {
             noteBubbleHideSignal()
         }
         _isFieldActive.value = isFocused

@@ -200,6 +200,9 @@ open class RapchaAccessibilityService : AccessibilityService() {
                     lastFocusedEditableNode = source
                     if (type == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
                         FloatingBubbleManager.notifyFieldFocus(true)
+                        // The keyboard check above ran before this flag flipped. Arm the
+                        // re-check so a focused field with no IME window cannot leave the bubble up.
+                        scheduleKeyboardWatch()
                     }
                 }
             }
@@ -398,8 +401,12 @@ open class RapchaAccessibilityService : AccessibilityService() {
             if (!isImePresent && !hasFocusedEditableField()) {
                 FloatingBubbleManager.notifyFieldFocus(false)
             }
-        } else if (fromWatch && !isImePresent && FloatingBubbleManager.isFieldActive.value && !hasFocusedEditableField()) {
-            FloatingBubbleManager.notifyFieldFocus(false)
+        } else if (fromWatch && !isImePresent) {
+            // A focused field or a blinking cursor is not enough to keep the bubble.
+            FloatingBubbleService.instance?.onKeyboardWatch(imeVisible = false)
+            if (!hasFocusedEditableField()) {
+                FloatingBubbleManager.notifyFieldFocus(false)
+            }
         }
         scheduleKeyboardWatch()
     }
