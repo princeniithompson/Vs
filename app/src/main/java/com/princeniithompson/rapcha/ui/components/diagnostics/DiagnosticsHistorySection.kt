@@ -209,6 +209,9 @@ fun DiagnosticEntryRow(entry: DiagnosticLogEntry, timeFormat: SimpleDateFormat) 
         DiagnosticType.MAIN_THREAD_STALL -> Triple(Color(0xFFFEE2E2), Color(0xFFB91C1C), "STALL_UI")
         DiagnosticType.A11Y_EVENT -> Triple(Color(0xFFFEF3C7), Color(0xFFB45309), "A11Y")
         DiagnosticType.TEXT_INSERTED -> Triple(Color(0xFFDCFCE7), Color(0xFF15803D), "INSERT")
+        DiagnosticType.SAFE_MODE_ENGAGED -> Triple(Color(0xFFFEF3C7), Color(0xFFB45309), "SAFE_ON")
+        DiagnosticType.SAFE_MODE_EXITED -> Triple(Color(0xFFF1F5F9), Color(0xFF475569), "SAFE_OFF")
+        DiagnosticType.SILENCE_DROPPED -> Triple(Color(0xFFFEF3C7), Color(0xFFB45309), "SILENCE")
     }
 
     Card(

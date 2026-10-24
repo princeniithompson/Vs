@@ -63,6 +63,15 @@ class FloatingBubbleService : Service() {
         ): RingTap {
             return if (!recording && !keyboardVisible && !fieldFocused) RingTap.HIDE else RingTap.CONTINUE
         }
+
+        /** A shrunk bubble uses the same rule: a live keyboard or a live focused field starts recording. */
+        internal fun startsRecordingOnTap(
+            recording: Boolean,
+            keyboardVisible: Boolean,
+            fieldFocused: Boolean
+        ): Boolean {
+            return !recording && decideRingTap(recording, keyboardVisible, fieldFocused) == RingTap.CONTINUE
+        }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -263,21 +272,63 @@ class FloatingBubbleService : Service() {
     }
 
     fun onSensitiveAppEntered(pkg: String?) {
+        Log.d(TAG, "Safe Mode entered during session check for $pkg")
         if (!componentsReady()) return
         serviceScope.launch(Dispatchers.Main) {
-            val wasRecording = sessionManager.isRecording
-            if (wasRecording) {
-                stopVoiceTyping(endedReason = "smart_safe_mode_triggered")
+            if (sessionManager.isRecording) {
+                preserveSessionForSafeMode()
+            } else {
+                concealForSafeMode()
             }
-            overlayWindowManager.collapsePanel()
-            resetAndCollapse()
-            overlayWindowManager.hideOverlayImmediately()
-            AppLogRepository.logEvent(
-                DiagnosticSource.BUBBLE,
-                DiagnosticType.SAFE_MODE_TRIGGERED,
-                "Smart Safe Mode auto-hide engaged for package: $pkg"
-            )
         }
+    }
+
+    /**
+     * Safe Mode hid the bubble while the user was still talking. Finish the turn and
+     * place the words. A successful insert or clipboard copy is not an alert.
+     */
+    private suspend fun preserveSessionForSafeMode() {
+        FloatingHapticManager.trigger(this, FloatingHapticType.TRANSCRIPTION_STOP)
+        FloatingBubbleManager.setRecordingState(false)
+        overlayWindowManager.overlayRecording.value = false
+        overlayWindowManager.overlayPendingFinalizing.value = true
+        try {
+            val text = sessionManager.finishActivityAndAwaitTranscript().trim()
+            downgradeMicrophoneForeground()
+            if (text.isBlank()) {
+                if (sessionManager.sessionBytesSent > 32_000L) {
+                    DictationAlerts.finalTextLost(this)
+                }
+                return
+            }
+            val durationSec = sessionManager.durationSeconds
+            val lockedCtx = FloatingBubbleManager.lockedSessionContext.value ?: "Rapcha"
+            HistoryRepository.addHistoryItem(
+                text = text,
+                appContext = lockedCtx,
+                durationSeconds = durationSec
+            )
+            FloatingBubbleManager.allowSafeModeInjection = true
+            val placed = try {
+                FloatingTextInjector.injectReporting(this, text)
+            } finally {
+                FloatingBubbleManager.allowSafeModeInjection = false
+            }
+            if (placed is RapchaTextInserter.InsertionResult.Failed) {
+                DictationAlerts.placementFailed(this)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Safe Mode handoff failed", e)
+            DictationAlerts.placementFailed(this)
+        } finally {
+            concealForSafeMode()
+        }
+    }
+
+    private fun concealForSafeMode() {
+        overlayWindowManager.collapsePanel()
+        resetAndCollapse()
+        overlayWindowManager.hideOverlayImmediately()
     }
 
     fun onSensitiveAppExited() {
@@ -285,18 +336,13 @@ class FloatingBubbleService : Service() {
         serviceScope.launch(Dispatchers.Main) {
             val isKeyboardOpen = FloatingBubbleManager.isKeyboardVisible.value
             overlayWindowManager.restoreOverlayVisibility(isKeyboardOpen = isKeyboardOpen)
-            AppLogRepository.logEvent(
-                DiagnosticSource.BUBBLE,
-                DiagnosticType.SAFE_MODE_TRIGGERED,
-                "Smart Safe Mode auto-hide exited, restored visibility"
-            )
         }
     }
 
     private fun onRingClicked() {
-        val keyboard = FloatingBubbleManager.isKeyboardVisible.value
-        val field = RapchaAccessibilityService.instance?.hasFocusedEditableField() == true ||
-            FloatingBubbleManager.isFieldActive.value
+        val access = RapchaAccessibilityService.instance
+        val keyboard = access?.isImeVisibleNow() == true
+        val field = access?.hasFocusedEditableField() == true
         val recording = ::sessionManager.isInitialized && sessionManager.isRecording
         AppLogRepository.logEvent(
             DiagnosticSource.BUBBLE,
@@ -307,20 +353,17 @@ class FloatingBubbleService : Service() {
             return
         }
         if (decideRingTap(recording, keyboard, field) == RingTap.HIDE) {
+            FloatingBubbleManager.noteBubbleHideSignal()
             overlayWindowManager.onKeyboardVisibilityChanged(isVisible = false, isSessionActive = false)
             return
         }
-        if (overlayWindowManager.overlayShrunk.value) {
-            overlayWindowManager.expandToFullSize()
-            FloatingHapticManager.trigger(this, FloatingHapticType.BUBBLE_HOLD)
-            overlayWindowManager.resetInactivityTimer()
-            return
-        }
-        if (!sessionManager.isRecording && !overlayWindowManager.overlayExpanded.value) {
-            overlayWindowManager.expandToFullSize()
-            overlayWindowManager.expandPanel()
-            startVoiceTyping()
-        } else if (!sessionManager.isRecording) {
+        if (startsRecordingOnTap(recording, keyboard, field)) {
+            if (overlayWindowManager.overlayShrunk.value || !overlayWindowManager.overlayExpanded.value) {
+                overlayWindowManager.expandToFullSize()
+            }
+            if (!overlayWindowManager.overlayExpanded.value) {
+                overlayWindowManager.expandPanel()
+            }
             startVoiceTyping()
         } else {
             FloatingHapticManager.trigger(this, FloatingHapticType.BUBBLE_HOLD)
@@ -439,7 +482,10 @@ class FloatingBubbleService : Service() {
         overlayWindowManager.resetInactivityTimer()
 
         sessionManager.stopSession(serviceScope, endedReason)
+        downgradeMicrophoneForeground()
+    }
 
+    private fun downgradeMicrophoneForeground() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             fgsDowngradeJob?.cancel()
             fgsDowngradeJob = serviceScope.launch {

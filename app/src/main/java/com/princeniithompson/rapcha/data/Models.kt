@@ -59,7 +59,10 @@ enum class DiagnosticType {
     BUBBLE_TAP,
     MAIN_THREAD_STALL,
     A11Y_EVENT,
-    TEXT_INSERTED
+    TEXT_INSERTED,
+    SAFE_MODE_ENGAGED,
+    SAFE_MODE_EXITED,
+    SILENCE_DROPPED
 }
 
 data class DiagnosticLogEntry(

@@ -436,9 +436,16 @@ class FloatingOverlayWindowManager(private val context: Context) {
             .start()
     }
 
+    private val bubbleSignalLog = BubbleSignalLog()
+
     private fun logBubble(shown: Boolean) {
-        val signal = FloatingBubbleManager.bubbleSignalAtElapsed
-        val latency = if (signal > 0L) (SystemClock.elapsedRealtime() - signal).coerceAtLeast(0L) else 0L
+        if (!bubbleSignalLog.shouldLog(shown)) return
+        val signal = if (shown) {
+            FloatingBubbleManager.bubbleSignalAtElapsed
+        } else {
+            FloatingBubbleManager.bubbleHideSignalAtElapsed
+        }
+        val latency = BubbleTiming.latencyMs(signal, SystemClock.elapsedRealtime())
         AppLogRepository.logEvent(
             DiagnosticSource.BUBBLE,
             if (shown) DiagnosticType.BUBBLE_SHOWN else DiagnosticType.BUBBLE_HIDDEN,
@@ -447,6 +454,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
     }
 
     fun hideOverlayImmediately() {
+        bubbleSignalLog.forget()
         mainHandler.post {
             overlayView?.visibility = View.GONE
         }

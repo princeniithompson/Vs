@@ -11,6 +11,9 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
+import com.princeniithompson.rapcha.data.AppLogRepository
+import com.princeniithompson.rapcha.data.DiagnosticSource
+import com.princeniithompson.rapcha.data.DiagnosticType
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -208,14 +211,21 @@ object FloatingBubbleManager {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putBoolean(KEY_SMART_SAFE_MODE, enabled).apply()
 
-        // Re-evaluate current package sensitivity with new setting
-        val currentPkg = _currentForegroundPackage.value
-        val isSensitive = if (enabled) {
-            SafeModeClassifier.isSensitiveApp(context, currentPkg)
+        if (!enabled) {
+            safeModeHandler.removeCallbacks(safeModeConfirm)
+            pendingSafeMode = SafeModeClassifier.Verdict.notSensitive()
+            safeModeGate.notePublished(false)
+            updateSensitivity(false, SafeModeClassifier.Verdict.notSensitive().describe(_currentForegroundPackage.value))
         } else {
-            false
+            val pkg = _currentForegroundPackage.value
+            submitSafeMode(
+                SafeModeClassifier.classify(
+                    context = context,
+                    packageName = pkg,
+                    resolvedAppName = _currentResolvedAppContext.value?.name
+                )
+            )
         }
-        updateSensitivity(isSensitive, "toggle_safe_mode")
     }
 
     fun canDrawOverlays(context: Context): Boolean {
@@ -296,9 +306,23 @@ object FloatingBubbleManager {
     var bubbleSignalAtElapsed: Long = 0L
         private set
 
+    @Volatile
+    var bubbleHideSignalAtElapsed: Long = 0L
+        private set
+
+    /** Set only while a mid-session Safe Mode handoff is inserting the words the user already said. */
+    @Volatile
+    var allowSafeModeInjection: Boolean = false
+
+    fun noteBubbleHideSignal() {
+        bubbleHideSignalAtElapsed = SystemClock.elapsedRealtime()
+    }
+
     fun notifyFieldFocus(isFocused: Boolean) {
         if (isFocused && !_isFieldActive.value) {
             bubbleSignalAtElapsed = SystemClock.elapsedRealtime()
+        } else if (!isFocused && _isFieldActive.value) {
+            noteBubbleHideSignal()
         }
         _isFieldActive.value = isFocused
         FloatingBubbleService.instance?.onFieldFocusChanged(isFocused)
@@ -307,6 +331,8 @@ object FloatingBubbleManager {
     fun notifyKeyboardVisibility(visible: Boolean) {
         if (visible && !_isKeyboardVisible.value) {
             bubbleSignalAtElapsed = SystemClock.elapsedRealtime()
+        } else if (!visible && _isKeyboardVisible.value) {
+            noteBubbleHideSignal()
         }
         _isKeyboardVisible.value = visible
         Log.d(TAG, "notifyKeyboardVisibility: $visible")
@@ -368,13 +394,47 @@ object FloatingBubbleManager {
                 _isCurrentAppAi.value = false
             }
 
-            val isSensitive = if (_isSmartSafeModeEnabled.value) {
-                SafeModeClassifier.isSensitiveApp(context, pkg, _currentResolvedAppContext.value?.name)
-            } else {
-                false
-            }
-            updateSensitivity(isSensitive, "pkg_change: $pkg")
         }
+    }
+
+    private val safeModeGate = SafeModeGate(now = { SystemClock.uptimeMillis() })
+    private val safeModeHandler = Handler(Looper.getMainLooper())
+    private var pendingSafeMode: SafeModeClassifier.Verdict? = null
+    private val safeModeConfirm = Runnable { publishPendingSafeMode() }
+
+    /**
+     * Single Safe Mode entry. Package changes and learned categories do not publish on their own.
+     */
+    fun submitSafeMode(verdict: SafeModeClassifier.Verdict) {
+        if (!_isSmartSafeModeEnabled.value) return
+        pendingSafeMode = verdict
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            publishPendingSafeMode()
+        } else {
+            safeModeHandler.post { publishPendingSafeMode() }
+        }
+    }
+
+    private fun publishPendingSafeMode() {
+        if (!_isSmartSafeModeEnabled.value) return
+        val verdict = pendingSafeMode ?: return
+        if (safeModeGate.published == verdict.sensitive && _isCurrentAppSensitive.value == verdict.sensitive) {
+            safeModeHandler.removeCallbacks(safeModeConfirm)
+            return
+        }
+        val decision = safeModeGate.consider(verdict.sensitive)
+        if (decision == null) {
+            if (safeModeGate.published == verdict.sensitive) {
+                safeModeHandler.removeCallbacks(safeModeConfirm)
+                return
+            }
+            safeModeHandler.removeCallbacks(safeModeConfirm)
+            safeModeHandler.postDelayed(safeModeConfirm, SafeModeGate.STABLE_MS)
+            return
+        }
+        safeModeHandler.removeCallbacks(safeModeConfirm)
+        val logged = if (decision) verdict else SafeModeClassifier.Verdict.notSensitive()
+        updateSensitivity(decision, logged.describe(_currentForegroundPackage.value))
     }
 
     fun updateSensitivity(isSensitive: Boolean, triggerReason: String = "") {
@@ -382,9 +442,19 @@ object FloatingBubbleManager {
         _isCurrentAppSensitive.value = isSensitive
         if (isSensitive && !wasSensitive) {
             Log.d(TAG, "Smart Safe Mode engaged ($triggerReason)")
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.SAFE_MODE_ENGAGED,
+                triggerReason
+            )
             FloatingBubbleService.instance?.onSensitiveAppEntered(_currentForegroundPackage.value)
         } else if (!isSensitive && wasSensitive) {
             Log.d(TAG, "Smart Safe Mode exited ($triggerReason)")
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.SAFE_MODE_EXITED,
+                triggerReason
+            )
             FloatingBubbleService.instance?.onSensitiveAppExited()
         }
     }
@@ -401,11 +471,6 @@ object FloatingBubbleManager {
         _currentResolvedAppContext.value = updated
         _isCurrentAppAi.value = isAi
         Log.d(TAG, "Updated learned app context in bubble: ${updated.formatted}")
-
-        val isBanking = category.equals("Banking", ignoreCase = true) || category.equals("Finance", ignoreCase = true)
-        if (isBanking && _isSmartSafeModeEnabled.value) {
-            updateSensitivity(true, "learned_banking_category: $appName")
-        }
     }
 
     fun setAiPolishMode(mode: com.princeniithompson.rapcha.service.floating.AiPolishMode) {

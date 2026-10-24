@@ -13,7 +13,12 @@ class ForegroundContextScheduler(
     private val debounceMs: Long = DEBOUNCE_MS,
     private val evaluate: (packageName: String, className: String?, windowTitle: String?) -> Evaluation
 ) {
-    data class Evaluation(val sensitive: Boolean, val appName: String, val category: String)
+    data class Evaluation(
+        val sensitive: Boolean,
+        val appName: String,
+        val category: String,
+        val verdict: SafeModeClassifier.Verdict = SafeModeClassifier.Verdict.notSensitive()
+    )
 
     private var pending: Runnable? = null
     private var lastKey: String? = null

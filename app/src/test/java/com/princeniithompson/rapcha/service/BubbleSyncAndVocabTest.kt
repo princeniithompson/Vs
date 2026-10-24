@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.Context
 import com.princeniithompson.rapcha.data.CustomVocabularyRepository
 import com.princeniithompson.rapcha.data.HistoryRepository
+import com.princeniithompson.rapcha.service.floating.BubbleSignalLog
+import com.princeniithompson.rapcha.service.floating.BubbleTiming
 import com.princeniithompson.rapcha.service.floating.FloatingDictationSessionManager
 import com.princeniithompson.rapcha.ui.VoiceTypingViewModel
 import com.princeniithompson.rapcha.websocket.TranscriptAcceptance
@@ -84,6 +86,11 @@ class BubbleSyncAndVocabTest {
         assertTrue(clause.contains("Never insert a term that was not spoken"))
         assertFalse(clause.contains("Prioritize and accurately transcribe"))
         assertEquals("", TranscriptAcceptance.vocabularyClause(emptyList()))
+        val dropped = TranscriptAcceptance.silenceDroppedMessage("prince niithompson", "", 129.0, 239.0)
+        assertEquals("words=2 rms_mean=129 rms_max=239", dropped)
+        assertFalse(dropped!!.contains("prince"))
+        assertNull(TranscriptAcceptance.silenceDroppedMessage("send the invoice", "send the invoice", 1800.0, 4200.0))
+        assertNull(TranscriptAcceptance.silenceDroppedMessage("", "", 10.0, 10.0))
     }
 
     @Test
@@ -160,6 +167,34 @@ class BubbleSyncAndVocabTest {
             FloatingBubbleService.RingTap.CONTINUE,
             FloatingBubbleService.decideRingTap(recording = false, keyboardVisible = true, fieldFocused = false)
         )
+        assertTrue(FloatingBubbleService.startsRecordingOnTap(recording = false, keyboardVisible = true, fieldFocused = false))
+        assertTrue(FloatingBubbleService.startsRecordingOnTap(recording = false, keyboardVisible = false, fieldFocused = true))
+        assertFalse(FloatingBubbleService.startsRecordingOnTap(recording = false, keyboardVisible = false, fieldFocused = false))
+        assertFalse(FloatingBubbleService.startsRecordingOnTap(recording = true, keyboardVisible = true, fieldFocused = true))
+    }
+
+    @Test
+    fun `stall lateness uses the handler clock and pauses while the screen is off`() {
+        assertEquals(2_000L, MainThreadStall.INTERVAL_MS)
+        assertFalse(MainThreadStall.shouldSchedule(screenInteractive = false))
+        assertTrue(MainThreadStall.shouldSchedule(screenInteractive = true))
+        val posted = 10_000L
+        assertEquals(0L, MainThreadStall.latenessMs(posted, posted + MainThreadStall.INTERVAL_MS))
+        assertFalse(MainThreadStall.shouldReport(MainThreadStall.latenessMs(posted, posted + MainThreadStall.INTERVAL_MS)))
+        assertTrue(MainThreadStall.shouldReport(MainThreadStall.latenessMs(posted, posted + MainThreadStall.INTERVAL_MS + 501L)))
+    }
+
+    @Test
+    fun `bubble hide latency is measured from the hide signal and logged once`() {
+        assertEquals(180L, BubbleTiming.latencyMs(15_000L, 15_180L))
+        assertEquals(0L, BubbleTiming.latencyMs(0L, 50_000L))
+        val log = BubbleSignalLog()
+        assertTrue(log.shouldLog(shown = true))
+        assertFalse(log.shouldLog(shown = true))
+        assertTrue(log.shouldLog(shown = false))
+        assertFalse(log.shouldLog(shown = false))
+        log.forget()
+        assertTrue(log.shouldLog(shown = true))
     }
 
     @Test

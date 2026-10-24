@@ -142,10 +142,11 @@ class RapchaTextInserter(private val context: Context) {
 
     private fun logDiagnosticInsertion(method: String, success: Boolean) {
         val label = if (success) method else "failed"
+        val pkg = FloatingBubbleManager.currentForegroundPackage.value?.takeIf { it.isNotBlank() } ?: "unknown"
         AppLogRepository.logEvent(
             DiagnosticSource.BUBBLE,
             DiagnosticType.TEXT_INSERTED,
-            "method=$label"
+            "method=$label package=$pkg"
         )
     }
 

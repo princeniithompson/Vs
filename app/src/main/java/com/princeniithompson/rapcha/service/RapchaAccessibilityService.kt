@@ -3,11 +3,13 @@ package com.princeniithompson.rapcha.service
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
+import android.content.Intent
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -31,7 +33,6 @@ open class RapchaAccessibilityService : AccessibilityService() {
         /** Verification may poll, but a slow read must not be treated as a failed insert. */
         const val VERIFY_POLL_BUDGET_MS = 600L
         const val KEYBOARD_WATCH_MS = 300L
-        const val STALL_PROBE_MS = 500L
         var instance: RapchaAccessibilityService? = null
             internal set
     }
@@ -62,9 +63,10 @@ open class RapchaAccessibilityService : AccessibilityService() {
     }
 
     private var stallProbePostedAt = 0L
+    private var screenInteractive = true
     private val stallProbe = Runnable {
-        val lateBy = SystemClock.elapsedRealtime() - stallProbePostedAt - STALL_PROBE_MS
-        if (lateBy > 500L) {
+        val lateBy = MainThreadStall.latenessMs(stallProbePostedAt, SystemClock.uptimeMillis())
+        if (MainThreadStall.shouldReport(lateBy)) {
             AppLogRepository.logEvent(
                 DiagnosticSource.BUBBLE,
                 DiagnosticType.MAIN_THREAD_STALL,
@@ -72,6 +74,21 @@ open class RapchaAccessibilityService : AccessibilityService() {
             )
         }
         armStallProbe()
+    }
+
+    private val screenReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    screenInteractive = false
+                    mainHandler.removeCallbacks(stallProbe)
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    screenInteractive = true
+                    armStallProbe()
+                }
+            }
+        }
     }
 
     private val packageReceiver = object : android.content.BroadcastReceiver() {
@@ -135,7 +152,21 @@ open class RapchaAccessibilityService : AccessibilityService() {
         serviceInfo = info
 
         // Check initial keyboard state, then watch for a stuck bubble and a frozen main thread.
+        // The stall watchdog uses uptimeMillis and stays quiet while the screen is off.
         checkAndNotifyKeyboard()
+        screenInteractive = isScreenInteractive()
+        try {
+            val screenFilter = android.content.IntentFilter(Intent.ACTION_SCREEN_OFF).apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(screenReceiver, screenFilter, RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(screenReceiver, screenFilter)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error registering screen receiver: ${e.message}")
+        }
         armStallProbe()
 
         // Ensure floating bubble is using accessibility overlay layer for highest z-order
@@ -213,8 +244,8 @@ open class RapchaAccessibilityService : AccessibilityService() {
 
     /**
      * App detection and the Safe Mode tree walk run off the main thread.
-     * A thrown node query falls back to the package and screen name so a
-     * banking app still hides the bubble.
+     * A thrown node query falls back to the package list so a banking app
+     * still hides the bubble. Screen titles are not a trigger.
      */
     private fun evaluateForeground(
         packageName: String,
@@ -231,8 +262,8 @@ open class RapchaAccessibilityService : AccessibilityService() {
         } catch (_: Throwable) {
             null
         }
-        val sensitive = if (!FloatingBubbleManager.isSmartSafeModeEnabled.value) {
-            false
+        val verdict = if (!FloatingBubbleManager.isSmartSafeModeEnabled.value) {
+            SafeModeClassifier.Verdict.notSensitive()
         } else {
             try {
                 val focused = try {
@@ -245,27 +276,27 @@ open class RapchaAccessibilityService : AccessibilityService() {
                 } catch (_: Throwable) {
                     null
                 }
-                SafeModeClassifier.isSensitiveContext(
+                SafeModeClassifier.classifyFromNodes(
                     context = this,
                     packageName = packageName,
                     focusedNode = focused,
                     rootNode = root,
-                    className = className,
                     windowTitle = windowTitle,
                     resolvedAppName = resolved?.appName
                 )
             } catch (_: Throwable) {
-                SafeModeClassifier.isSensitiveApp(this, packageName, resolved?.appName) ||
-                    SafeModeClassifier.isSensitiveScreen(className, windowTitle)
+                SafeModeClassifier.classify(
+                    context = this,
+                    packageName = packageName,
+                    resolvedAppName = resolved?.appName
+                )
             }
         }
-        val categorySensitive = FloatingBubbleManager.isSmartSafeModeEnabled.value &&
-            (resolved?.category.equals("Banking", ignoreCase = true) ||
-                resolved?.category.equals("Finance", ignoreCase = true))
         return ForegroundContextScheduler.Evaluation(
-            sensitive = sensitive || categorySensitive,
+            sensitive = verdict.sensitive,
             appName = resolved?.appName ?: packageName,
-            category = resolved?.category ?: "Other"
+            category = resolved?.category ?: "Other",
+            verdict = verdict
         )
     }
 
@@ -286,15 +317,19 @@ open class RapchaAccessibilityService : AccessibilityService() {
                 finalCategory = evaluation.category
             )
         )
-        FloatingBubbleManager.updateSensitivity(
-            evaluation.sensitive,
-            "context_check: pkg=$packageName, sensitive=${evaluation.sensitive}"
-        )
+        FloatingBubbleManager.submitSafeMode(evaluation.verdict)
+    }
+
+    private fun isScreenInteractive(): Boolean {
+        val power = getSystemService(POWER_SERVICE) as? PowerManager ?: return true
+        return power.isInteractive
     }
 
     private fun armStallProbe() {
-        stallProbePostedAt = SystemClock.elapsedRealtime()
-        mainHandler.postDelayed(stallProbe, STALL_PROBE_MS)
+        mainHandler.removeCallbacks(stallProbe)
+        if (!MainThreadStall.shouldSchedule(screenInteractive)) return
+        stallProbePostedAt = SystemClock.uptimeMillis()
+        mainHandler.postDelayed(stallProbe, MainThreadStall.INTERVAL_MS)
     }
 
     private fun scheduleKeyboardWatch() {
@@ -304,6 +339,15 @@ open class RapchaAccessibilityService : AccessibilityService() {
         if (bubbleMayBeShowing) {
             mainHandler.postDelayed(keyboardWatch, KEYBOARD_WATCH_MS)
         }
+    }
+
+    fun isImeVisibleNow(): Boolean {
+        val currentWindows = try {
+            getWindows() ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        return currentWindows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
     }
 
     fun hasFocusedEditableField(): Boolean {
@@ -398,6 +442,9 @@ open class RapchaAccessibilityService : AccessibilityService() {
         try {
             unregisterReceiver(packageReceiver)
         } catch (_: Exception) {}
+        try {
+            unregisterReceiver(screenReceiver)
+        } catch (_: Exception) {}
         lastFocusedEditableNode = null
         Log.d(TAG, "RapchaAccessibilityService destroyed")
     }
@@ -441,7 +488,7 @@ open class RapchaAccessibilityService : AccessibilityService() {
             )
         }
 
-        if (FloatingBubbleManager.isCurrentAppSensitive.value) {
+        if (FloatingBubbleManager.isCurrentAppSensitive.value && !FloatingBubbleManager.allowSafeModeInjection) {
             Log.w(TAG, "injectText blocked: Smart Safe Mode is active")
             val targetPkg = try { getActivePackageName() } catch (_: Throwable) { null } ?: "Unknown"
             val appName = try {

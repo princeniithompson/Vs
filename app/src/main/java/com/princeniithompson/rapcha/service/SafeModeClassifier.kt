@@ -2,10 +2,8 @@ package com.princeniithompson.rapcha.service
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
-import android.content.pm.PackageManager
 import android.os.Build
 import android.text.InputType
-import android.util.Log
 import android.util.LruCache
 import android.view.accessibility.AccessibilityNodeInfo
 
@@ -17,7 +15,6 @@ import android.view.accessibility.AccessibilityNodeInfo
  */
 object SafeModeClassifier {
 
-    private const val TAG = "SafeModeClassifier"
     private val decisionCache = object : LruCache<String, Boolean>(300) {}
 
     // 1. Explicit Normal Allowlist (Common apps that are not sensitive by default,
@@ -154,6 +151,19 @@ object SafeModeClassifier {
         "com.uba.mobile",
         "com.ubagroup.uba_mobile",
 
+        // Betting and mobile money that showed up as correct Safe Mode triggers
+        "com.sportybet.android",
+        "com.mtn.mymtn",
+        "com.mtngh.mymtn",
+        "com.mtn.mymtngh",
+        "gh.com.mtn.mymtnapp",
+        "com.gcb.mobile",
+        "com.gcb.gcbmobile",
+        "com.gcb.gcbmobilebanking",
+        "com.gcbbank.mobile",
+        "com.gcbbank.gcbmobile",
+        "gh.com.gcbbank.app",
+
         // Payment Platforms & Transfers
         "com.paypal.android.p2pmobile",
         "com.venmo",
@@ -218,6 +228,7 @@ object SafeModeClassifier {
         "bank", "banking", "creditunion", "fintech", "payment",
         "transferwise", "remitly", "westernunion", "moneygram",
         "cashapp", "zelle", "mobilebank",
+        "sportybet", "mymtn",
 
         // Crypto & Web3 tokens
         "metamask", "trustwallet", "crypto", "bitcoin", "ethereum",
@@ -230,6 +241,55 @@ object SafeModeClassifier {
         "dashlane", "keepass", "nordpass", "enpass", "2fas"
     )
 
+    private val SENSITIVE_NAME_TOKENS = listOf(
+        "bank", "banking", "credit union", "crypto", "wallet",
+        "authenticator", "password manager", "bitwarden", "1password",
+        "lastpass", "dashlane", "keepass", "authy", "binance", "coinbase",
+        "fintech", "mutual fund", "brokerage", "securities",
+        "sportybet", "mymtn", "my mtn", "gcb bank"
+    )
+
+    private val WHOLE_TOKEN = Regex("""(^|[^a-z0-9])gcb([^a-z0-9]|$)""")
+    private val PIN_TOKEN = Regex("""(^|[^a-z0-9])pin([^a-z0-9]|$)""")
+
+    enum class Reason {
+        PACKAGE_LIST,
+        PASSWORD_FIELD,
+        KEYWORD,
+        NONE
+    }
+
+    data class Verdict(
+        val sensitive: Boolean,
+        val reason: Reason,
+        val detail: String,
+        val path: String
+    ) {
+        fun describe(pkg: String?): String {
+            val reasonText = when (reason) {
+                Reason.PACKAGE_LIST -> "package_list"
+                Reason.PASSWORD_FIELD -> "password_field"
+                Reason.KEYWORD -> "keyword"
+                Reason.NONE -> "none"
+            }
+            val shown = pkg?.takeIf { it.isNotBlank() } ?: "unknown"
+            return "pkg=$shown reason=$reasonText detail=$detail path=$path"
+        }
+
+        companion object {
+            fun notSensitive() = Verdict(false, Reason.NONE, "clear", "clear")
+        }
+    }
+
+    data class FieldSignal(
+        val isPassword: Boolean = false,
+        val editable: Boolean = false,
+        val viewId: String = "",
+        val hint: String = "",
+        val contentDescription: String = "",
+        val packageName: String? = null
+    )
+
     /**
      * Determines whether the given package or app represents a sensitive application
      * (Banking, Finance, Crypto, Password Manager, Authenticator).
@@ -240,78 +300,171 @@ object SafeModeClassifier {
         resolvedAppName: String? = null
     ): Boolean {
         if (packageName.isNullOrBlank()) return false
-        val pkg = packageName.trim()
-        val pkgLower = pkg.lowercase()
-
-        // System UI, launchers, keyboard or self should never be considered sensitive
+        val pkgLower = packageName.trim().lowercase()
         if (AppContextResolver.isIgnoredPackage(context, pkgLower)) return false
-
-        // Fast path 1: Check Allowlist
-        if (NORMAL_ALLOWLIST.contains(pkgLower)) return false
-
-        // Fast path 2: Check LRU Cache
+        if (isFocusedPasswordOnly(pkgLower, resolvedAppName, null)) return false
         val cached = decisionCache.get(pkgLower)
         if (cached != null) return cached
-
-        // Check Known Sensitive Set
-        if (KNOWN_SENSITIVE_PACKAGES.contains(pkgLower)) {
-            decisionCache.put(pkgLower, true)
-            return true
-        }
-
-        // Check Package Substring Tokens
-        for (token in SENSITIVE_PACKAGE_SUBSTRINGS) {
-            if (pkgLower.contains(token)) {
-                decisionCache.put(pkgLower, true)
-                return true
-            }
-        }
-
-        // Check Resolved App Name Tokens
-        val nameLower = (resolvedAppName ?: "").lowercase()
-        if (nameLower.isNotBlank()) {
-            val sensitiveNameTokens = listOf(
-                "bank", "banking", "credit union", "crypto", "wallet",
-                "authenticator", "password manager", "bitwarden", "1password",
-                "lastpass", "dashlane", "keepass", "authy", "binance", "coinbase",
-                "fintech", "mutual fund", "brokerage", "securities"
-            )
-            for (token in sensitiveNameTokens) {
-                if (nameLower.contains(token)) {
-                    decisionCache.put(pkgLower, true)
-                    return true
-                }
-            }
-        }
-
-        // Inspect package label from PackageManager if resolvedAppName was not provided
-        if (context != null && nameLower.isBlank()) {
-            try {
-                val pm = context.packageManager
-                val appInfo = pm.getApplicationInfo(pkg, 0)
-                val label = pm.getApplicationLabel(appInfo).toString().lowercase()
-                val sensitiveTokens = listOf(
-                    "bank", "banking", "credit union", "crypto", "wallet",
-                    "authenticator", "password", "bitwarden", "1password",
-                    "lastpass", "dashlane", "keepass", "authy", "binance", "coinbase",
-                    "fintech", "mutual fund", "brokerage", "securities"
-                )
-                for (token in sensitiveTokens) {
-                    if (label.contains(token)) {
-                        decisionCache.put(pkgLower, true)
-                        return true
-                    }
-                }
-            } catch (_: Throwable) {}
-        }
-
-        decisionCache.put(pkgLower, false)
-        return false
+        val sensitive = matchPackage(pkgLower, resolvedAppName, context) != null
+        decisionCache.put(pkgLower, sensitive)
+        return sensitive
     }
 
     /**
-     * Determines whether the current activity, screen, or window title indicates
-     * an authentication, sign-up, sign-in, password, or security flow.
+     * The only Safe Mode decision. Screen and title words are not a trigger.
+     * Everyday apps hide only when a password or OTP field is focused.
+     * Other apps also hide when a password field is visible in their own window,
+     * or when the package or app name is banking, betting, or mobile money.
+     */
+    fun classify(
+        context: Context? = null,
+        packageName: String? = null,
+        resolvedAppName: String? = null,
+        windowTitle: String? = null,
+        focused: FieldSignal? = null,
+        visiblePassword: Boolean = false,
+        visiblePackage: String? = null
+    ): Verdict {
+        if (packageName.isNullOrBlank()) return Verdict.notSensitive()
+        val pkgLower = packageName.trim().lowercase()
+        val name = resolvedAppName?.lowercase().orEmpty()
+        val title = windowTitle?.lowercase().orEmpty()
+        if (AppContextResolver.isIgnoredPackage(context, pkgLower) && focusedPassword(focused, pkgLower) == null) {
+            return Verdict.notSensitive()
+        }
+
+        val focusedToken = focusedPassword(focused, pkgLower)
+        if (isFocusedPasswordOnly(pkgLower, name, title)) {
+            return if (focusedToken != null) {
+                Verdict(true, Reason.PASSWORD_FIELD, "focused $focusedToken", "focused_field")
+            } else {
+                Verdict.notSensitive()
+            }
+        }
+
+        matchPackage(pkgLower, resolvedAppName, context)?.let { return it }
+
+        if (focusedToken != null) {
+            return Verdict(true, Reason.PASSWORD_FIELD, "focused $focusedToken", "focused_field")
+        }
+
+        val sameWindow = visiblePassword &&
+            (visiblePackage.isNullOrBlank() || visiblePackage.equals(packageName, ignoreCase = true) ||
+                visiblePackage.equals(pkgLower, ignoreCase = true))
+        if (sameWindow) {
+            return Verdict(true, Reason.PASSWORD_FIELD, "visible password", "visible_field")
+        }
+        return Verdict.notSensitive()
+    }
+
+    fun classifyFromNodes(
+        context: Context?,
+        packageName: String?,
+        focusedNode: AccessibilityNodeInfo? = null,
+        rootNode: AccessibilityNodeInfo? = null,
+        windowTitle: String? = null,
+        resolvedAppName: String? = null
+    ): Verdict {
+        val pkgLower = packageName?.trim()?.lowercase().orEmpty()
+        val everyday = isFocusedPasswordOnly(pkgLower, resolvedAppName, windowTitle)
+        val rootPkg = try {
+            rootNode?.packageName?.toString()
+        } catch (_: Throwable) {
+            null
+        }
+        val sameWindow = rootPkg != null && rootPkg.equals(packageName, ignoreCase = true)
+        val visible = !everyday && sameWindow && hasPasswordOrSensitiveField(rootNode)
+        return classify(
+            context = context,
+            packageName = packageName,
+            resolvedAppName = resolvedAppName,
+            windowTitle = windowTitle,
+            focused = fieldSignal(focusedNode),
+            visiblePassword = visible,
+            visiblePackage = if (sameWindow) rootPkg else null
+        )
+    }
+
+    fun credentialToken(field: FieldSignal): String? {
+        if (field.isPassword) return "password"
+        if (!field.editable) return null
+        val viewId = field.viewId.lowercase()
+        val hint = field.hint.lowercase()
+        val desc = field.contentDescription.lowercase()
+        val parts = listOf(viewId, hint, desc)
+        for (token in listOf("password", "passcode", "pwd", "otp", "cvv", "security_code")) {
+            if (parts.any { it.contains(token) }) return token
+        }
+        val pinInText = PIN_TOKEN.containsMatchIn(hint) || PIN_TOKEN.containsMatchIn(desc)
+        val pinInId = PIN_TOKEN.containsMatchIn(viewId) && !viewId.contains("pinterest")
+        if (pinInText || pinInId) return "pin"
+        return null
+    }
+
+    private fun focusedPassword(field: FieldSignal?, foregroundPackage: String): String? {
+        if (field == null) return null
+        val token = credentialToken(field) ?: return null
+        val fieldPkg = field.packageName?.trim()?.lowercase()
+        if (!fieldPkg.isNullOrBlank() && fieldPkg != foregroundPackage) return null
+        return token
+    }
+
+    private fun isFocusedPasswordOnly(pkg: String, resolvedAppName: String?, windowTitle: String?): Boolean {
+        if (pkg.isBlank()) return false
+        if (NORMAL_ALLOWLIST.contains(pkg)) return true
+        if (pkg == "com.android.settings" || pkg.startsWith("com.android.settings.")) return true
+        if (pkg == "com.samsung.android.settings" || pkg.startsWith("com.samsung.android.settings.")) return true
+        if (pkg.contains("launcher") || pkg == "com.miui.home" || pkg == "com.teslacoilsw.launcher") return true
+        if (pkg == "com.omkar.voiceflow" || pkg.contains("voiceflow")) return true
+        if (pkg == "com.einnovation.temu" || pkg.startsWith("com.einnovation.temu.") || pkg.contains(".temu")) return true
+        if (AppClassifier.isFileManager(pkg, resolvedAppName)) return true
+        val blob = "${resolvedAppName.orEmpty()} ${windowTitle.orEmpty()}".lowercase()
+        if (blob.contains("ai studio") || blob.contains("aistudio.google") || blob.contains("google ai studio")) return true
+        return false
+    }
+
+    private fun matchPackage(pkgLower: String, resolvedAppName: String?, context: Context?): Verdict? {
+        if (KNOWN_SENSITIVE_PACKAGES.contains(pkgLower)) {
+            return Verdict(true, Reason.PACKAGE_LIST, "known_package", "package_list")
+        }
+        for (token in SENSITIVE_PACKAGE_SUBSTRINGS) {
+            if (pkgLower.contains(token)) {
+                return Verdict(true, Reason.KEYWORD, token, "package_keyword")
+            }
+        }
+        if (WHOLE_TOKEN.containsMatchIn(pkgLower)) {
+            return Verdict(true, Reason.KEYWORD, "gcb", "package_keyword")
+        }
+        val nameLower = resolvedName(pkgLower, resolvedAppName, context)
+        if (nameLower.isNotBlank()) {
+            for (token in SENSITIVE_NAME_TOKENS) {
+                if (nameLower.contains(token)) {
+                    return Verdict(true, Reason.KEYWORD, token, "name_keyword")
+                }
+            }
+            if (WHOLE_TOKEN.containsMatchIn(nameLower)) {
+                return Verdict(true, Reason.KEYWORD, "gcb", "name_keyword")
+            }
+        }
+        return null
+    }
+
+    private fun resolvedName(pkgLower: String, resolvedAppName: String?, context: Context?): String {
+        val given = resolvedAppName?.trim()?.lowercase().orEmpty()
+        if (given.isNotBlank()) return given
+        if (context == null) return ""
+        return try {
+            val pm = context.packageManager
+            val appInfo: ApplicationInfo = pm.getApplicationInfo(pkgLower, 0)
+            pm.getApplicationLabel(appInfo).toString().lowercase()
+        } catch (_: Throwable) {
+            ""
+        }
+    }
+
+    /**
+     * Screen and title words are not a Safe Mode trigger. Kept so older call sites compile.
+     * [classify] ignores this result.
      */
     fun isSensitiveScreen(className: String?, windowTitle: String?): Boolean {
         val cls = (className ?: "").lowercase()
@@ -348,37 +501,61 @@ object SafeModeClassifier {
     /**
      * Inspects whether a specific accessibility node is a password or credential input.
      */
-    fun isPasswordOrSensitiveNode(node: AccessibilityNodeInfo?): Boolean {
-        if (node == null) return false
-        if (node.isPassword) return true
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val inputType = node.inputType
-            val variation = inputType and InputType.TYPE_MASK_VARIATION
-            val isPassVariation = variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
-                    variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
-                    variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
-                    variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD
-            if (isPassVariation) return true
+    fun fieldSignal(node: AccessibilityNodeInfo?): FieldSignal? {
+        if (node == null) return null
+        val viewId = try {
+            node.viewIdResourceName?.lowercase().orEmpty()
+        } catch (_: Throwable) {
+            ""
         }
-
-        val viewId = node.viewIdResourceName?.lowercase() ?: ""
         val hint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            node.hintText?.toString()?.lowercase() ?: ""
-        } else ""
-        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
-
-        val sensitiveIdTokens = listOf(
-            "password", "passcode", "pwd", "pin", "cvv",
-            "security_code", "secret", "otp"
-        )
-        for (token in sensitiveIdTokens) {
-            if (viewId.contains(token) || hint.contains(token) || desc.contains(token)) {
-                return true
+            try {
+                node.hintText?.toString()?.lowercase().orEmpty()
+            } catch (_: Throwable) {
+                ""
             }
+        } else {
+            ""
         }
+        val desc = try {
+            node.contentDescription?.toString()?.lowercase().orEmpty()
+        } catch (_: Throwable) {
+            ""
+        }
+        val pkg = try {
+            node.packageName?.toString()
+        } catch (_: Throwable) {
+            null
+        }
+        return FieldSignal(
+            isPassword = nodeLooksLikePassword(node),
+            editable = try { node.isEditable } catch (_: Throwable) { false },
+            viewId = viewId,
+            hint = hint,
+            contentDescription = desc,
+            packageName = pkg
+        )
+    }
 
+    private fun nodeLooksLikePassword(node: AccessibilityNodeInfo): Boolean {
+        if (node.isPassword) return true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val variation = try {
+                node.inputType and InputType.TYPE_MASK_VARIATION
+            } catch (_: Throwable) {
+                return false
+            }
+            return variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+                variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
+                variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        }
         return false
+    }
+
+    fun isPasswordOrSensitiveNode(node: AccessibilityNodeInfo?): Boolean {
+        val signal = fieldSignal(node) ?: return false
+        return credentialToken(signal) != null
     }
 
     /**
@@ -403,9 +580,10 @@ object SafeModeClassifier {
     }
 
     /**
-     * Unified Safe Mode evaluation: combines app category, activity screen name,
-     * focused field inspection, and window hierarchy to determine privacy safety.
+     * Safe Mode comes from [classifyFromNodes] only. [className] is accepted so existing
+     * callers still compile, and it is not used as a trigger.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun isSensitiveContext(
         context: Context?,
         packageName: String?,
@@ -415,26 +593,13 @@ object SafeModeClassifier {
         windowTitle: String? = null,
         resolvedAppName: String? = null
     ): Boolean {
-        // 1. Is the application itself a banking/crypto/sensitive app?
-        if (isSensitiveApp(context, packageName, resolvedAppName)) {
-            return true
-        }
-
-        // 2. Is the current screen a sign-up, sign-in, or credential form?
-        if (isSensitiveScreen(className, windowTitle)) {
-            return true
-        }
-
-        // 3. Is the currently focused input a password or credential field?
-        if (focusedNode != null && isPasswordOrSensitiveNode(focusedNode)) {
-            return true
-        }
-
-        // 4. Does the active window tree contain any password fields?
-        if (rootNode != null && hasPasswordOrSensitiveField(rootNode)) {
-            return true
-        }
-
-        return false
+        return classifyFromNodes(
+            context = context,
+            packageName = packageName,
+            focusedNode = focusedNode,
+            rootNode = rootNode,
+            windowTitle = windowTitle,
+            resolvedAppName = resolvedAppName
+        ).sensitive
     }
 }
