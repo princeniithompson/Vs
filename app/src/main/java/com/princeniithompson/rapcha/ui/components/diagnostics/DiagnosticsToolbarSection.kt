@@ -13,12 +13,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -39,15 +37,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Top toolbar, export actions, and weekly smart vocabulary simulation trigger for diagnostics sheet.
+ * Top toolbar and export actions for the diagnostics sheet.
  * Styled with clean white cards and spacious buttons that never squish or wrap vertically.
  */
 @Composable
 fun DiagnosticsToolbarSection(
     eventCount: Int,
     noteCount: Int,
-    isAnalyzingSmartVocab: Boolean,
-    onSimulateWeeklySmartVocab: () -> Unit,
     onExportTxt: () -> Unit,
     onRequestClear: () -> Unit,
     onDismiss: () -> Unit,
@@ -158,64 +154,6 @@ fun DiagnosticsToolbarSection(
                         Icon(Icons.Filled.Download, contentDescription = "Export txt", tint = Color(0xFF6B4EA2), modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Export .txt", fontSize = 12.sp, color = Color(0xFF6B4EA2), fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Weekly Smart Vocabulary Simulation Card
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("simulate_weekly_vocab_card"),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFF0FDFA)),
-            border = BorderStroke(1.dp, Color(0xFFCCFBF1))
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Filled.AutoAwesome,
-                            contentDescription = null,
-                            tint = Color(0xFF0F766E),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Weekly Smart Vocabulary",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF134E4A)
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "Analyze last 7 days of real transcripts with context-aware Gemini AI",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF115E59)
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Button(
-                    onClick = onSimulateWeeklySmartVocab,
-                    enabled = !isAnalyzingSmartVocab,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006874)),
-                    modifier = Modifier.testTag("simulate_7_days_button")
-                ) {
-                    if (isAnalyzingSmartVocab) {
-                        Text("Analyzing...", fontSize = 12.sp)
-                    } else {
-                        Text("Simulate 7 days", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }

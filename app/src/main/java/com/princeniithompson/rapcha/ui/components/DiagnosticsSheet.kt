@@ -120,8 +120,6 @@ fun DiagnosticsBottomSheet(
     onClearAllDiagnostics: () -> Unit,
     onDeleteRecording: (AudioRecording) -> Unit = {},
     onClearAllRecordings: () -> Unit = {},
-    isAnalyzingSmartVocab: Boolean = false,
-    onSimulateWeeklySmartVocab: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -218,8 +216,6 @@ fun DiagnosticsBottomSheet(
                             recordingCount = recordings.size,
                             appDetectionCount = appDetectionEvents.size,
                             connectionState = connectionState,
-                            isAnalyzingSmartVocab = isAnalyzingSmartVocab,
-                            onSimulateWeeklySmartVocab = onSimulateWeeklySmartVocab,
                             onExportTxt = {
                                 saveDocumentLauncher.launch(DiagnosticsExportUtils.generateExportFileName())
                             },
@@ -312,8 +308,6 @@ private fun DiagnosticsHubView(
     recordingCount: Int,
     appDetectionCount: Int,
     connectionState: ConnectionState,
-    isAnalyzingSmartVocab: Boolean,
-    onSimulateWeeklySmartVocab: () -> Unit,
     onExportTxt: () -> Unit,
     onRequestClear: () -> Unit,
     onDismiss: () -> Unit,
@@ -328,8 +322,6 @@ private fun DiagnosticsHubView(
             DiagnosticsToolbarSection(
                 eventCount = eventCount,
                 noteCount = noteCount,
-                isAnalyzingSmartVocab = isAnalyzingSmartVocab,
-                onSimulateWeeklySmartVocab = onSimulateWeeklySmartVocab,
                 onExportTxt = onExportTxt,
                 onRequestClear = onRequestClear,
                 onDismiss = onDismiss

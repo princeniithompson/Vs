@@ -147,7 +147,7 @@ class ManualEndpointingTest {
         var finalized = ""
         val harness = Harness(onFinal = { finalized = it })
         harness.open()
-        harness.client.sendAudioChunk(ByteArray(320))
+        harness.client.sendAudioChunk(InterimPreviewMonitor.speechPcm(sample = 4000, sampleCount = 160))
         var result = ""
         CoroutineScope(Dispatchers.Main).launch {
             result = harness.client.endActivityAndAwaitFinal()
@@ -226,10 +226,17 @@ class ManualEndpointingTest {
         val pieces = mutableListOf<String>()
         val harness = Harness(onPiece = { pieces.add(it) })
         harness.open()
-        val silence = ByteArray(32_000)
-        repeat(151) {
-            harness.client.sendAudioChunk(silence)
+        val speech = InterimPreviewMonitor.speechPcm(sample = 4000, sampleCount = 16_000)
+        repeat(150) { index ->
+            harness.client.sendAudioChunk(speech)
+            if (index % 5 == 4) {
+                harness.listener.onMessage(
+                    harness.socket,
+                    """{"serverContent":{"interimInputTranscription":{"text":"first piece stays"}}}"""
+                )
+            }
         }
+        harness.client.sendAudioChunk(ByteArray(32_000))
         harness.listener.onMessage(
             harness.socket,
             """{"serverContent":{"inputTranscription":{"text":"first piece stays"}}}"""
@@ -318,6 +325,47 @@ class ManualEndpointingTest {
         )
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals("alpha beta stays gamma delta", harness.client.fullTranscript())
+        harness.client.disconnect()
+    }
+
+    @Test
+    fun `a near silent piece drops a vocabulary hallucination`() {
+        val pieces = mutableListOf<String>()
+        val harness = Harness(onPiece = { pieces.add(it) })
+        harness.open()
+        val silence = ByteArray(32_000)
+        repeat(151) {
+            harness.client.sendAudioChunk(silence)
+        }
+        harness.listener.onMessage(
+            harness.socket,
+            """{"serverContent":{"inputTranscription":{"text":"Please send the invoice to prince niithompson at example"}}}"""
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(pieces.isEmpty())
+        assertEquals("", harness.client.fullTranscript())
+        harness.client.disconnect()
+    }
+
+    @Test
+    fun `a silent final finishes without waiting for the transcript timeout`() {
+        val harness = Harness()
+        harness.open()
+        repeat(4) {
+            harness.client.sendAudioChunk(ByteArray(3_200))
+        }
+        var result = "unset"
+        CoroutineScope(Dispatchers.Main).launch {
+            result = harness.client.endActivityAndAwaitFinal()
+        }
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals("", result)
+        harness.listener.onMessage(
+            harness.socket,
+            """{"serverContent":{"inputTranscription":{"text":"Please send the invoice to prince niithompson"}}}"""
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals("", harness.client.fullTranscript())
         harness.client.disconnect()
     }
 }

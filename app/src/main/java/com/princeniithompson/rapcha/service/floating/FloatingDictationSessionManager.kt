@@ -2,6 +2,7 @@ package com.princeniithompson.rapcha.service.floating
 
 import android.content.Context
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import com.princeniithompson.rapcha.audio.AudioRecorder
 import com.princeniithompson.rapcha.data.AppLogRepository
@@ -44,7 +45,14 @@ class FloatingDictationSessionManager(
     companion object {
         private const val TAG = "FloatingDictationMgr"
         private const val MAX_AUDIO_QUEUE_CHUNKS = 50 // ~5s buffer at 100ms chunks to bridge reconnects
+
+        internal fun elapsedSeconds(startedAtElapsed: Long, nowElapsed: Long): Int {
+            if (startedAtElapsed <= 0L) return 0
+            return ((nowElapsed - startedAtElapsed).coerceAtLeast(0L) / 1000L).toInt()
+        }
     }
+
+    private var sessionStartedAtElapsed = 0L
 
     private val audioQueue = ConcurrentLinkedQueue<ByteArray>()
     private var webSocketClient: GeminiLiveWebSocketClient? = null
@@ -204,6 +212,7 @@ class FloatingDictationSessionManager(
         interimTranscript = ""
         sessionClock = DictationSessionClock()
         finishAtNextPause = false
+        sessionStartedAtElapsed = SystemClock.elapsedRealtime()
         durationSeconds = 0
         sessionChunksSent = 0
         sessionBytesSent = 0L
@@ -288,6 +297,7 @@ class FloatingDictationSessionManager(
                 onTranscriptUpdated(getFullTranscriptText())
             },
             onGoAway = {
+                refreshDurationFromClock()
                 if (sessionClock.shouldSplitOnGoAway(durationSeconds * 1000L)) {
                     webSocketClient?.requestFreshConnectionSplit()
                 } else if (isRecording) {
@@ -354,12 +364,16 @@ class FloatingDictationSessionManager(
         durationJob = currentSessionScope.launch {
             while (isActive && isRecording) {
                 delay(1000)
-                durationSeconds++
+                refreshDurationFromClock()
                 webSocketClient?.pollInterimPreview()
                 onSessionClockTick()
                 onDurationTicked(durationSeconds)
             }
         }
+    }
+
+    private fun refreshDurationFromClock() {
+        durationSeconds = elapsedSeconds(sessionStartedAtElapsed, SystemClock.elapsedRealtime())
     }
 
     fun stopSession(scope: CoroutineScope, endedReason: String = "completed") {
@@ -372,6 +386,7 @@ class FloatingDictationSessionManager(
         drainJob?.cancel()
         drainJob = null
 
+        refreshDurationFromClock()
         val durationAtEnd = durationSeconds
         val chunksAtEnd = sessionChunksSent
         val bytesAtEnd = sessionBytesSent
@@ -420,6 +435,7 @@ class FloatingDictationSessionManager(
         audioRecorder.stopAndJoin()
         isRecording = false
 
+        refreshDurationFromClock()
         val durationAtEnd = durationSeconds
         val chunksAtEnd = sessionChunksSent
         val bytesAtEnd = sessionBytesSent

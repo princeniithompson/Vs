@@ -6,6 +6,7 @@ import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -15,6 +16,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import com.princeniithompson.rapcha.data.AppLogRepository
+import com.princeniithompson.rapcha.data.DiagnosticSource
+import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.data.ScreenContextRepository
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
 import com.princeniithompson.rapcha.service.RapchaAccessibilityService
@@ -34,6 +38,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
     companion object {
         private const val TAG = "FloatingOverlayWinMgr"
         private const val SHRINK_TIMEOUT_MS = 3000L
+        const val BUBBLE_ANIM_MS = 140L
 
         /**
          * The bubble, expanded panel, and scan preview share one window.
@@ -356,9 +361,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
                 root.visibility = View.GONE
                 return
             }
-            root.animate().cancel()
-            root.alpha = 1f
-            root.visibility = View.VISIBLE
+            revealBubble(root)
         }
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
             apply()
@@ -375,28 +378,17 @@ class FloatingOverlayWindowManager(private val context: Context) {
                 return
             }
             if (isVisible) {
-                root.animate().cancel()
-                root.alpha = 1f
                 if (!overlayRecording.value && !overlayExpanded.value) {
                     collapsePanel()
                 }
                 expandToFullSize()
-                root.visibility = View.VISIBLE
+                revealBubble(root)
                 resetInactivityTimer(keepShrunk = false)
+            } else if (!isSessionActive) {
+                collapsePanel()
+                concealBubble(root)
             } else {
-                if (!isSessionActive) {
-                    collapsePanel()
-                    root.animate()
-                        .alpha(0f)
-                        .setDuration(150L)
-                        .withEndAction {
-                            root.visibility = View.GONE
-                            root.alpha = 1f
-                        }
-                        .start()
-                } else {
-                    root.visibility = View.VISIBLE
-                }
+                root.visibility = View.VISIBLE
             }
         }
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
@@ -404,6 +396,54 @@ class FloatingOverlayWindowManager(private val context: Context) {
         } else {
             mainHandler.post { apply() }
         }
+    }
+
+    private fun revealBubble(root: View) {
+        if (root.visibility == View.VISIBLE && root.alpha >= 0.99f && root.scaleX >= 0.99f) {
+            return
+        }
+        root.animate().cancel()
+        root.alpha = 0f
+        root.scaleX = 0.92f
+        root.scaleY = 0.92f
+        root.visibility = View.VISIBLE
+        logBubble(shown = true)
+        root.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(BUBBLE_ANIM_MS)
+            .setStartDelay(0L)
+            .start()
+    }
+
+    private fun concealBubble(root: View) {
+        if (root.visibility != View.VISIBLE) return
+        root.animate().cancel()
+        logBubble(shown = false)
+        root.animate()
+            .alpha(0f)
+            .scaleX(0.92f)
+            .scaleY(0.92f)
+            .setDuration(BUBBLE_ANIM_MS)
+            .setStartDelay(0L)
+            .withEndAction {
+                root.visibility = View.GONE
+                root.alpha = 1f
+                root.scaleX = 1f
+                root.scaleY = 1f
+            }
+            .start()
+    }
+
+    private fun logBubble(shown: Boolean) {
+        val signal = FloatingBubbleManager.bubbleSignalAtElapsed
+        val latency = if (signal > 0L) (SystemClock.elapsedRealtime() - signal).coerceAtLeast(0L) else 0L
+        AppLogRepository.logEvent(
+            DiagnosticSource.BUBBLE,
+            if (shown) DiagnosticType.BUBBLE_SHOWN else DiagnosticType.BUBBLE_HIDDEN,
+            "latency_ms=$latency"
+        )
     }
 
     fun hideOverlayImmediately() {
@@ -420,11 +460,9 @@ class FloatingOverlayWindowManager(private val context: Context) {
             }
             val root = overlayView ?: return@post
             if (isKeyboardOpen || overlayRecording.value || overlayExpanded.value) {
-                root.animate().cancel()
-                root.alpha = 1f
-                root.visibility = View.VISIBLE
+                revealBubble(root)
             } else {
-                root.visibility = View.GONE
+                concealBubble(root)
             }
         }
     }

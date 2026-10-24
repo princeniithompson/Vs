@@ -201,6 +201,14 @@ fun DiagnosticEntryRow(entry: DiagnosticLogEntry, timeFormat: SimpleDateFormat) 
         DiagnosticType.SOCKET_OPEN -> Triple(Color(0xFFCCFBF1), Color(0xFF0F766E), "OPEN")
         DiagnosticType.SOCKET_CLOSE -> Triple(Color(0xFFF1F5F9), Color(0xFF475569), "CLOSE")
         DiagnosticType.CONNECTION_AGE -> Triple(Color(0xFFFEF3C7), Color(0xFFB45309), "AGE")
+        DiagnosticType.KEYBOARD_SHOWN -> Triple(Color(0xFFDBEAFE), Color(0xFF1D4ED8), "KEY")
+        DiagnosticType.KEYBOARD_HIDDEN -> Triple(Color(0xFFF1F5F9), Color(0xFF475569), "KEY_OFF")
+        DiagnosticType.BUBBLE_SHOWN -> Triple(Color(0xFFD1FAE5), Color(0xFF047857), "BUBBLE")
+        DiagnosticType.BUBBLE_HIDDEN -> Triple(Color(0xFFF1F5F9), Color(0xFF475569), "BUBBLE_OFF")
+        DiagnosticType.BUBBLE_TAP -> Triple(Color(0xFFE0E7FF), Color(0xFF4338CA), "TAP")
+        DiagnosticType.MAIN_THREAD_STALL -> Triple(Color(0xFFFEE2E2), Color(0xFFB91C1C), "STALL_UI")
+        DiagnosticType.A11Y_EVENT -> Triple(Color(0xFFFEF3C7), Color(0xFFB45309), "A11Y")
+        DiagnosticType.TEXT_INSERTED -> Triple(Color(0xFFDCFCE7), Color(0xFF15803D), "INSERT")
     }
 
     Card(

@@ -731,6 +731,11 @@ class GeminiLiveWebSocketClient(
             cont.invokeOnCancellation {
                 endpointContinuation.compareAndSet(cont, null)
             }
+            val audio = planner.pieceAudio()
+            if (TranscriptAcceptance.isNearSilent(audio.rmsMean, audio.rmsMax, audio.samples)) {
+                settleEndpoint("", timedOut = false)
+                return@suspendCancellableCoroutine
+            }
             val sent = signalActivityEnd(recordMonitor = true)
             if (!sent) {
                 settleEndpoint(lastInterimText, timedOut = true)
@@ -763,7 +768,14 @@ class GeminiLiveWebSocketClient(
         pieceTimeout = null
         cancelCompanionWait()
         if (splitting.get()) {
-            val orphan = lastInterimText.trim()
+            val audio = planner.pieceAudio()
+            val orphan = TranscriptAcceptance.accept(
+                lastInterimText.trim(),
+                audio.rmsMean,
+                audio.rmsMax,
+                com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
+                audio.samples
+            )
             if (orphan.isNotEmpty() && endpointSettled.compareAndSet(false, true)) {
                 commitPiece(orphan, dedup = false)
             }
@@ -847,6 +859,10 @@ class GeminiLiveWebSocketClient(
     }
 
     private fun noteLiveTranscription(text: String) {
+        val audio = planner.pieceAudio()
+        if (TranscriptAcceptance.isNearSilent(audio.rmsMean, audio.rmsMax, audio.samples)) {
+            return
+        }
         val now = clock()
         planner.onInterim(now)
         logAge(planner.ageMarker(now))
@@ -941,7 +957,15 @@ class GeminiLiveWebSocketClient(
         interimPreviewMonitor.onFinalTranscript(clock())
         endpointTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         endpointTimeoutRunnable = null
-        val piece = text.trim().ifBlank { lastInterimText.trim() }
+        val audio = planner.pieceAudio()
+        val raw = text.trim().ifBlank { lastInterimText.trim() }
+        val piece = TranscriptAcceptance.accept(
+            raw,
+            audio.rmsMean,
+            audio.rmsMax,
+            com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
+            audio.samples
+        )
         if (piece.isNotEmpty()) {
             committedText = TranscriptSeam.append(committedText, piece)
             committedPieces += 1
@@ -1025,12 +1049,7 @@ class GeminiLiveWebSocketClient(
         }
         val systemPromptText = buildString {
             append("You are an ultra-accurate real-time voice dictation engine. Transcribe ONLY the words spoken by the primary user closest to the microphone. Completely ignore background ambient sounds, restaurant noise, kitchen clatter, passing vehicles, and background conversations. Never transcribe non-speech sounds. Output only the transcribed text with proper capitalization and punctuation. Do not reply conversationally, do not answer questions, and do not add commentary—only output the verbatim transcription of what was said.")
-            if (customVocabularyList.isNotEmpty()) {
-                val termsStr = customVocabularyList.filter { it.isNotBlank() }.joinToString(", ")
-                if (termsStr.isNotBlank()) {
-                    append(" Prioritize and accurately transcribe the following custom vocabulary terms, names, and email addresses with exact casing and spelling: $termsStr.")
-                }
-            }
+            append(TranscriptAcceptance.vocabularyClause(customVocabularyList))
         }
         val setupJson = JSONObject().apply {
             put("setup", JSONObject().apply {
@@ -1119,9 +1138,14 @@ class GeminiLiveWebSocketClient(
             "piece=${split.pieceNumber} reason=${split.reason.name.lowercase()} piece_s=${split.pieceAudioMs / 1000} connection_age_s=${split.connectionAgeMs / 1000} pause_ms=${split.pauseLengthMs} rms_min=${fmt(split.rmsMin)} rms_max=${fmt(split.rmsMax)} rms_mean=${fmt(split.rmsMean)}"
         )
         pieceEndAtMs = clock()
+        val nearSilent = TranscriptAcceptance.isNearSilent(split.rmsMean, split.rmsMax)
+        if (nearSilent) {
+            completePieceSplit("", timedOut = false)
+            return
+        }
         val sent = signalActivityEnd(recordMonitor = false)
         if (!sent) {
-            mainHandler.post { completePieceSplit(lastInterimText, timedOut = true) }
+            completePieceSplit(lastInterimText, timedOut = true)
             return
         }
         val timeout = Runnable { completePieceSplit(lastInterimText, timedOut = true) }
@@ -1135,11 +1159,20 @@ class GeminiLiveWebSocketClient(
         pieceTimeout?.let { mainHandler.removeCallbacks(it) }
         pieceTimeout = null
         val split = pendingSplit
+        val audioMean = split?.rmsMean ?: planner.pieceAudio().rmsMean
+        val audioMax = split?.rmsMax ?: planner.pieceAudio().rmsMax
         val raw = text.trim().ifBlank { lastInterimText.trim() }
+        val accepted = TranscriptAcceptance.accept(
+            raw,
+            audioMean,
+            audioMax,
+            com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
+            samples = if (split == null) planner.pieceAudio().samples else 1
+        )
         val overlap = if (split?.replay == true) {
-            TranscriptSeam.dropOverlap(committedText, raw)
+            TranscriptSeam.dropOverlap(committedText, accepted)
         } else {
-            TranscriptSeam.Overlap(raw, 0)
+            TranscriptSeam.Overlap(accepted, 0)
         }
         if (overlap.wordsRemoved > 0) {
             logDiag(DiagnosticType.DEDUP, "words_removed=${overlap.wordsRemoved}")
@@ -1154,13 +1187,16 @@ class GeminiLiveWebSocketClient(
             "piece=${split?.pieceNumber ?: committedPieces} latency_ms=$latency words=${TranscriptPrivacy.wordCount(piece)} timed_out=${if (timedOut) "yes" else "no"}"
         )
         lastInterimText = ""
-        resetPieceFlags()
+        val nearSilentPiece = TranscriptAcceptance.isNearSilent(audioMean, audioMax)
+        resetPieceFlags(keepActivity = nearSilentPiece)
         planner.advancePieceNumber()
         planner.onPieceStarted(clock())
         if (split?.freshConnection == true) {
             handoffToFreshSocket(split.replay)
         } else {
-            signalActivityStart()
+            if (!nearSilentPiece) {
+                signalActivityStart()
+            }
             flushHeld(split?.replay == true)
             finishSplitHold()
         }
@@ -1179,7 +1215,14 @@ class GeminiLiveWebSocketClient(
     }
 
     private fun preserveOpenPiece() {
-        val orphan = lastInterimText.trim()
+        val audio = planner.pieceAudio()
+        val orphan = TranscriptAcceptance.accept(
+            lastInterimText.trim(),
+            audio.rmsMean,
+            audio.rmsMax,
+            com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
+            audio.samples
+        )
         if (orphan.isEmpty() || endpointSettled.get()) return
         commitPiece(orphan, dedup = false)
         lastInterimText = ""
@@ -1383,9 +1426,11 @@ class GeminiLiveWebSocketClient(
         after?.invoke()
     }
 
-    private fun resetPieceFlags() {
-        activityStarted.set(false)
-        activityEnded.set(false)
+    private fun resetPieceFlags(keepActivity: Boolean = false) {
+        if (!keepActivity) {
+            activityStarted.set(false)
+            activityEnded.set(false)
+        }
         endpointSettled.set(false)
         lastInterimText = ""
         resolvedEndpointText = ""

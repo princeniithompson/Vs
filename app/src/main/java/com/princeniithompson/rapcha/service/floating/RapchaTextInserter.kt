@@ -6,6 +6,9 @@ import android.content.Context
 import android.util.Log
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethod
+import com.princeniithompson.rapcha.data.AppLogRepository
+import com.princeniithompson.rapcha.data.DiagnosticSource
+import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.data.InjectionEvent
 import com.princeniithompson.rapcha.data.InjectionLogRepository
 import com.princeniithompson.rapcha.service.AppContextResolver
@@ -26,6 +29,7 @@ class RapchaTextInserter(private val context: Context) {
 
     // 1. Mutex to prevent race conditions during rapid typing/dictation
     private val insertionMutex = Mutex()
+    private var lastDirectMethod: String = "failed"
 
     sealed interface DirectInjectionResult {
         object Success : DirectInjectionResult
@@ -53,17 +57,20 @@ class RapchaTextInserter(private val context: Context) {
         when (directResult) {
             is DirectInjectionResult.Success -> {
                 Log.d(TAG, "Direct injection succeeded")
+                logDiagnosticInsertion(lastDirectMethod, success = true)
                 return@withLock InsertionResult.SuccessDirect
             }
             is DirectInjectionResult.FocusedFieldFailed -> {
                 // Requirement 3: Never use clipboard if a focused editable field exists (even if the write fails)
                 Log.w(TAG, "Focused editable field exists but write failed: ${directResult.reason}. Clipboard fallback strictly suppressed.")
+                logDiagnosticInsertion(lastDirectMethod, success = false)
                 return@withLock InsertionResult.Failed
             }
             is DirectInjectionResult.NoFocusedField -> {
                 // Requirement 2: Only fall back to clipboard when there is NO focused editable text field at all
                 Log.d(TAG, "No focused editable text field detected on screen. Falling back to clipboard.")
                 val fallbackSuccess = fallbackToClipboard(transcript)
+                logDiagnosticInsertion(if (fallbackSuccess) "clipboard" else "failed", success = fallbackSuccess)
                 return@withLock if (fallbackSuccess) {
                     InsertionResult.SuccessClipboardFallback
                 } else {
@@ -103,6 +110,7 @@ class RapchaTextInserter(private val context: Context) {
         if (a11y != null) {
             val trace = a11y.injectTextDetailed(text)
             InjectionLogRepository.logInjection(trace)
+            lastDirectMethod = diagnosticMethod(trace.injectionMethod, trace.finalOutcome == "SUCCESS")
 
             if (trace.finalOutcome == "SUCCESS") {
                 Log.d(TAG, "Direct injection succeeded via Accessibility Service (${trace.injectionMethod})")
@@ -118,7 +126,27 @@ class RapchaTextInserter(private val context: Context) {
             return DirectInjectionResult.FocusedFieldFailed(trace.resultDetails)
         }
 
+        lastDirectMethod = "failed"
         return DirectInjectionResult.NoFocusedField
+    }
+
+    private fun diagnosticMethod(injectionMethod: String, success: Boolean): String {
+        if (!success) return "failed"
+        return when (injectionMethod) {
+            "ACCESSIBILITY_INPUT_CONNECTION" -> "commitText"
+            "COMPANION_IME" -> "IME"
+            "DIRECT_ACTION_SET_TEXT" -> "node"
+            else -> "failed"
+        }
+    }
+
+    private fun logDiagnosticInsertion(method: String, success: Boolean) {
+        val label = if (success) method else "failed"
+        AppLogRepository.logEvent(
+            DiagnosticSource.BUBBLE,
+            DiagnosticType.TEXT_INSERTED,
+            "method=$label"
+        )
     }
 
     /**
