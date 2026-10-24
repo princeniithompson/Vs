@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
@@ -291,15 +292,34 @@ object FloatingBubbleManager {
         _isAccessibilityConnected.value = connected
     }
 
+    @Volatile
+    var bubbleSignalAtElapsed: Long = 0L
+        private set
+
     fun notifyFieldFocus(isFocused: Boolean) {
+        if (isFocused && !_isFieldActive.value) {
+            bubbleSignalAtElapsed = SystemClock.elapsedRealtime()
+        }
         _isFieldActive.value = isFocused
         FloatingBubbleService.instance?.onFieldFocusChanged(isFocused)
     }
 
     fun notifyKeyboardVisibility(visible: Boolean) {
+        if (visible && !_isKeyboardVisible.value) {
+            bubbleSignalAtElapsed = SystemClock.elapsedRealtime()
+        }
         _isKeyboardVisible.value = visible
         Log.d(TAG, "notifyKeyboardVisibility: $visible")
         FloatingBubbleService.instance?.onKeyboardVisibilityChanged(visible)
+    }
+
+    /**
+     * Records the foreground package without walking the window tree.
+     * The accessibility hot path must not call [updateCurrentForegroundPackage].
+     */
+    fun noteForegroundPackage(pkg: String?) {
+        if (pkg.isNullOrBlank() || AppContextResolver.isIgnoredPackage(null, pkg)) return
+        _currentForegroundPackage.value = pkg
     }
 
     fun setRecordingState(recording: Boolean) {

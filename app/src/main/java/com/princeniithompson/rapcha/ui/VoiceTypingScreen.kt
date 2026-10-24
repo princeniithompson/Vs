@@ -49,8 +49,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Error
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -102,7 +100,6 @@ import com.princeniithompson.rapcha.ui.components.DiagnosticsBottomSheet
 import com.princeniithompson.rapcha.ui.components.GlowAnimationCatalogue
 import com.princeniithompson.rapcha.ui.components.GlowStylesBottomSheet
 import com.princeniithompson.rapcha.ui.components.PulsatingRecordButton
-import com.princeniithompson.rapcha.ui.components.SmartVocabularyBottomSheet
 import com.princeniithompson.rapcha.ui.screens.DictionaryScreen
 import com.princeniithompson.rapcha.ui.screens.HomeScreen
 import com.princeniithompson.rapcha.ui.screens.onboarding.AccessibilityDisclosureSheet
@@ -147,12 +144,6 @@ fun VoiceTypingScreen(
     val diagnosticsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showGlowStylesSheet by remember { mutableStateOf(false) }
     val glowStylesSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-    val isAnalyzingSmartVocab by viewModel.isAnalyzingSmartVocab.collectAsState()
-    val smartVocabMessage by viewModel.smartVocabMessage.collectAsState()
-    val showSmartVocabSheet by viewModel.showSmartVocabSheet.collectAsState()
-    val smartVocabSuggestions by viewModel.smartVocabSuggestions.collectAsState()
-    val smartVocabSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     androidx.activity.compose.BackHandler(enabled = selectedTab != MainScreenTab.HOME) {
         selectedTab = MainScreenTab.HOME
@@ -825,8 +816,6 @@ fun VoiceTypingScreen(
             onClearAllDiagnostics = { viewModel.clearAllDiagnostics() },
             onDeleteRecording = { viewModel.deleteRecording(it) },
             onClearAllRecordings = { viewModel.clearAllRecordings() },
-            isAnalyzingSmartVocab = isAnalyzingSmartVocab,
-            onSimulateWeeklySmartVocab = { viewModel.simulateWeeklySmartVocabulary() },
             onDismiss = { showDiagnostics = false }
         )
     }
@@ -860,50 +849,6 @@ fun VoiceTypingScreen(
                 viewModel.setFinishingStyle(styleId)
             },
             onDismiss = { showGlowStylesSheet = false }
-        )
-    }
-
-    // Weekly Smart Vocabulary Bottom Sheet
-    if (showSmartVocabSheet) {
-        SmartVocabularyBottomSheet(
-            sheetState = smartVocabSheetState,
-            suggestions = smartVocabSuggestions,
-            onAccept = { viewModel.acceptSmartVocabSuggestion(it) },
-            onEdit = { suggestion, newTerm -> viewModel.editAndAcceptSmartVocabSuggestion(suggestion, newTerm) },
-            onDismissItem = { viewModel.dismissSmartVocabSuggestion(it) },
-            onAcceptAll = { viewModel.acceptAllSmartVocabSuggestions() },
-            onDismissSheet = { viewModel.dismissSmartVocabSheet() }
-        )
-    }
-
-    // Smart Vocabulary Informational Alert (Empty state or errors)
-    if (smartVocabMessage != null) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { viewModel.clearSmartVocabMessage() },
-            title = {
-                Text(
-                    text = "Weekly Smart Vocabulary",
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            },
-            text = {
-                Text(
-                    text = smartVocabMessage ?: "",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = { viewModel.clearSmartVocabMessage() },
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("OK")
-                }
-            },
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(20.dp)
         )
     }
 }

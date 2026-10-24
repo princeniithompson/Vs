@@ -26,6 +26,8 @@ object CustomVocabularyRepository {
     private const val PREFS_NAME = "custom_vocabulary_prefs"
     private const val KEY_TERMS = "vocabulary_terms"
     private const val KEY_METADATA = "vocabulary_metadata_v2"
+    private const val KEY_SEEDED_IDENTITY_REMOVED = "seeded_identity_removed_v1"
+    private val SEEDED_IDENTITY = setOf("prince niithompson", "princeniithompson@gmail.com")
     
     const val UNUSED_THRESHOLD_DAYS = 60
 
@@ -50,16 +52,20 @@ object CustomVocabularyRepository {
         }
     }
 
+    internal fun clearForTest() {
+        prefs = null
+        _vocabulary.value = emptyList()
+        _vocabularyItems.value = emptyList()
+        _cleanupSuggestions.value = emptyList()
+    }
+
     private fun loadTerms() {
         val sp = prefs ?: return
         val rawJson = sp.getString(KEY_TERMS, null)
         val metaJson = sp.getString(KEY_METADATA, null)
 
         val termsList = mutableListOf<String>()
-        if (rawJson.isNullOrBlank()) {
-            val initial = listOf("prince niithompson", "princeniithompson@gmail.com")
-            termsList.addAll(initial)
-        } else {
+        if (!rawJson.isNullOrBlank()) {
             try {
                 val jsonArray = JSONArray(rawJson)
                 for (i in 0 until jsonArray.length()) {
@@ -71,6 +77,11 @@ object CustomVocabularyRepository {
             } catch (e: Exception) {
                 Log.e(TAG, "Error parsing custom vocabulary json", e)
             }
+        }
+
+        val alreadyRemoved = sp.getBoolean(KEY_SEEDED_IDENTITY_REMOVED, false)
+        if (!alreadyRemoved) {
+            termsList.removeAll { isSeededIdentity(it) }
         }
 
         // Parse metadata map
@@ -117,10 +128,19 @@ object CustomVocabularyRepository {
             }
         }
 
+        if (!alreadyRemoved) {
+            itemsList.removeAll { isSeededIdentity(it.term) }
+            sp.edit().putBoolean(KEY_SEEDED_IDENTITY_REMOVED, true).apply()
+        }
+
         _vocabulary.value = termsList
         _vocabularyItems.value = itemsList
         recomputeCleanupSuggestions(itemsList)
         saveAll(termsList, itemsList)
+    }
+
+    private fun isSeededIdentity(term: String): Boolean {
+        return term.trim().lowercase() in SEEDED_IDENTITY
     }
 
     private fun recomputeCleanupSuggestions(items: List<VocabularyItem>) {

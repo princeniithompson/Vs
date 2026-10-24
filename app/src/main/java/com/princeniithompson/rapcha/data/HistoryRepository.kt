@@ -64,6 +64,11 @@ object HistoryRepository {
         }
     }
 
+    internal fun clearForTest() {
+        prefs = null
+        _historyItems.value = emptyList()
+    }
+
     private fun isMockSampleText(text: String): Boolean {
         val trimmed = text.trim()
         return trimmed.startsWith("In Wispr Flow there is this that says") ||
@@ -148,6 +153,7 @@ object HistoryRepository {
         current.add(0, newItem) // Add to top
         _historyItems.value = current
         saveHistory(current)
+        // Discarded silence never reaches here: callers pass the accepted transcript only.
         CustomVocabularyRepository.recordUsageFromTranscript(trimmed)
         return newItem
     }

@@ -51,7 +51,15 @@ enum class DiagnosticType {
     DEDUP,
     SOCKET_OPEN,
     SOCKET_CLOSE,
-    CONNECTION_AGE
+    CONNECTION_AGE,
+    KEYBOARD_SHOWN,
+    KEYBOARD_HIDDEN,
+    BUBBLE_SHOWN,
+    BUBBLE_HIDDEN,
+    BUBBLE_TAP,
+    MAIN_THREAD_STALL,
+    A11Y_EVENT,
+    TEXT_INSERTED
 }
 
 data class DiagnosticLogEntry(

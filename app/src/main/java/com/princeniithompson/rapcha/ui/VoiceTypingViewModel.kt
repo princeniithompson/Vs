@@ -20,7 +20,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -34,6 +33,8 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         private const val PREFS_NAME = "voxstream_settings"
         private const val KEY_SMART_MODE = "smart_mode"
         private const val KEY_CUSTOM_API_KEY = "custom_api_key"
+        private const val KEY_LAST_WEEKLY_CHECK_TIME = "last_weekly_smart_vocab_check_time"
+        private const val KEY_WEEKLY_VOCAB_REMOVED = "removed_weekly_smart_vocab_v1"
     }
 
     private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -87,7 +88,12 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         }
         com.princeniithompson.rapcha.data.AppLogRepository.init(application)
         com.princeniithompson.rapcha.service.FloatingBubbleManager.init(application)
-        checkWeeklySmartVocabularySchedule()
+        if (!prefs.getBoolean(KEY_WEEKLY_VOCAB_REMOVED, false)) {
+            prefs.edit()
+                .remove(KEY_LAST_WEEKLY_CHECK_TIME)
+                .putBoolean(KEY_WEEKLY_VOCAB_REMOVED, true)
+                .apply()
+        }
     }
 
     val diagnosticEntries: StateFlow<List<com.princeniithompson.rapcha.data.DiagnosticLogEntry>> = com.princeniithompson.rapcha.data.AppLogRepository.diagnosticEntries
@@ -422,7 +428,11 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
         // 1. Stop mic capture and signal WS completion
         viewModelScope.launch(Dispatchers.IO) {
-            val durationAtEnd = stats.value.durationSeconds
+            val durationAtEnd = if (sessionStartedAtMs > 0L) {
+                ((System.currentTimeMillis() - sessionStartedAtMs).coerceAtLeast(0L) / 1000L).toInt()
+            } else {
+                stats.value.durationSeconds
+            }
             val chunksAtEnd = stats.value.chunksSent
             val bytesAtEnd = stats.value.bytesSent
 
@@ -583,121 +593,6 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
     fun clearLogs() {
         com.princeniithompson.rapcha.data.AppLogRepository.clearLiveFrames()
-    }
-
-    // Weekly Smart Vocabulary
-    private val KEY_LAST_WEEKLY_CHECK_TIME = "last_weekly_smart_vocab_check_time"
-    private val _smartVocabSuggestions = MutableStateFlow<List<com.princeniithompson.rapcha.service.SmartVocabularySuggestion>>(emptyList())
-    val smartVocabSuggestions: StateFlow<List<com.princeniithompson.rapcha.service.SmartVocabularySuggestion>> = _smartVocabSuggestions.asStateFlow()
-
-    private val _isAnalyzingSmartVocab = MutableStateFlow(false)
-    val isAnalyzingSmartVocab: StateFlow<Boolean> = _isAnalyzingSmartVocab.asStateFlow()
-
-    private val _smartVocabMessage = MutableStateFlow<String?>(null)
-    val smartVocabMessage: StateFlow<String?> = _smartVocabMessage.asStateFlow()
-
-    private val _showSmartVocabSheet = MutableStateFlow(false)
-    val showSmartVocabSheet: StateFlow<Boolean> = _showSmartVocabSheet.asStateFlow()
-
-    fun dismissSmartVocabSheet() {
-        _showSmartVocabSheet.value = false
-    }
-
-    fun clearSmartVocabMessage() {
-        _smartVocabMessage.value = null
-    }
-
-    fun acceptSmartVocabSuggestion(suggestion: com.princeniithompson.rapcha.service.SmartVocabularySuggestion) {
-        com.princeniithompson.rapcha.data.CustomVocabularyRepository.addTerm(suggestion.term)
-        _smartVocabSuggestions.update { list -> list.filter { it.id != suggestion.id } }
-        addLog(LogLevel.INFO, TAG, "Accepted smart vocabulary suggestion: '${suggestion.term}'")
-    }
-
-    fun editAndAcceptSmartVocabSuggestion(suggestion: com.princeniithompson.rapcha.service.SmartVocabularySuggestion, newTerm: String) {
-        val trimmed = newTerm.trim()
-        if (trimmed.isNotBlank()) {
-            com.princeniithompson.rapcha.data.CustomVocabularyRepository.addTerm(trimmed)
-            _smartVocabSuggestions.update { list -> list.filter { it.id != suggestion.id } }
-            addLog(LogLevel.INFO, TAG, "Edited & accepted smart vocabulary suggestion: '$trimmed'")
-        }
-    }
-
-    fun dismissSmartVocabSuggestion(suggestion: com.princeniithompson.rapcha.service.SmartVocabularySuggestion) {
-        _smartVocabSuggestions.update { list -> list.filter { it.id != suggestion.id } }
-        addLog(LogLevel.INFO, TAG, "Dismissed smart vocabulary suggestion: '${suggestion.term}'")
-    }
-
-    fun acceptAllSmartVocabSuggestions() {
-        val currentList = _smartVocabSuggestions.value
-        currentList.forEach { suggestion ->
-            com.princeniithompson.rapcha.data.CustomVocabularyRepository.addTerm(suggestion.term)
-        }
-        _smartVocabSuggestions.value = emptyList()
-        addLog(LogLevel.INFO, TAG, "Accepted all (${currentList.size}) smart vocabulary suggestions")
-    }
-
-    fun simulateWeeklySmartVocabulary() {
-        if (_isAnalyzingSmartVocab.value) return
-        val sevenDaysAgo = System.currentTimeMillis() - (7 * 24 * 60 * 60 * 1000L)
-        val recentTranscripts = com.princeniithompson.rapcha.data.HistoryRepository.historyItems.value.filter {
-            it.timestamp >= sevenDaysAgo && it.text.isNotBlank()
-        }
-
-        if (recentTranscripts.isEmpty()) {
-            _smartVocabMessage.value = "Not enough dictation history yet. Complete real voice typing in your apps over the week to generate smart suggestions!"
-            return
-        }
-
-        val apiKey = effectiveApiKey
-        if (apiKey.isBlank()) {
-            _smartVocabMessage.value = "Gemini API key is not configured. Please set your API key in Settings or Secrets."
-            return
-        }
-
-        _isAnalyzingSmartVocab.value = true
-        _smartVocabMessage.value = null
-
-        viewModelScope.launch {
-            try {
-                val existingVocab = com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary()
-                val result = com.princeniithompson.rapcha.service.SmartVocabularyService.analyzeWeeklyTranscripts(
-                    apiKey = apiKey,
-                    transcripts = recentTranscripts,
-                    existingVocabulary = existingVocab
-                )
-                result.onSuccess { suggestions ->
-                    _isAnalyzingSmartVocab.value = false
-                    if (suggestions.isNotEmpty()) {
-                        _smartVocabSuggestions.value = suggestions
-                        _showSmartVocabSheet.value = true
-                    } else {
-                        _smartVocabMessage.value = "No new candidate terms found in the last 7 days of dictations."
-                    }
-                }.onFailure { err ->
-                    _isAnalyzingSmartVocab.value = false
-                    _smartVocabMessage.value = "Smart Vocabulary analysis failed: ${err.message}"
-                }
-            } catch (e: Exception) {
-                _isAnalyzingSmartVocab.value = false
-                _smartVocabMessage.value = "Error during analysis: ${e.message}"
-            }
-        }
-    }
-
-    fun checkWeeklySmartVocabularySchedule() {
-        val lastCheck = prefs.getLong(KEY_LAST_WEEKLY_CHECK_TIME, 0L)
-        val now = System.currentTimeMillis()
-        val oneWeekMs = 7 * 24 * 60 * 60 * 1000L
-        if (now - lastCheck >= oneWeekMs) {
-            val sevenDaysAgo = now - oneWeekMs
-            val recentTranscripts = com.princeniithompson.rapcha.data.HistoryRepository.historyItems.value.filter {
-                it.timestamp >= sevenDaysAgo && it.text.isNotBlank()
-            }
-            if (recentTranscripts.size >= 3) {
-                prefs.edit().putLong(KEY_LAST_WEEKLY_CHECK_TIME, now).apply()
-                simulateWeeklySmartVocabulary()
-            }
-        }
     }
 
     override fun onCleared() {

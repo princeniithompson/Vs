@@ -48,11 +48,21 @@ import kotlinx.coroutines.launch
  */
 class FloatingBubbleService : Service() {
 
+    enum class RingTap { HIDE, CONTINUE }
+
     companion object {
         private const val TAG = "FloatingBubbleService"
 
         var instance: FloatingBubbleService? = null
             private set
+
+        internal fun decideRingTap(
+            recording: Boolean,
+            keyboardVisible: Boolean,
+            fieldFocused: Boolean
+        ): RingTap {
+            return if (!recording && !keyboardVisible && !fieldFocused) RingTap.HIDE else RingTap.CONTINUE
+        }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -284,7 +294,20 @@ class FloatingBubbleService : Service() {
     }
 
     private fun onRingClicked() {
+        val keyboard = FloatingBubbleManager.isKeyboardVisible.value
+        val field = RapchaAccessibilityService.instance?.hasFocusedEditableField() == true ||
+            FloatingBubbleManager.isFieldActive.value
+        val recording = ::sessionManager.isInitialized && sessionManager.isRecording
+        AppLogRepository.logEvent(
+            DiagnosticSource.BUBBLE,
+            DiagnosticType.BUBBLE_TAP,
+            "keyboard=$keyboard field=$field recording=$recording"
+        )
         if (FloatingBubbleManager.isCurrentAppSensitive.value) {
+            return
+        }
+        if (decideRingTap(recording, keyboard, field) == RingTap.HIDE) {
+            overlayWindowManager.onKeyboardVisibilityChanged(isVisible = false, isSessionActive = false)
             return
         }
         if (overlayWindowManager.overlayShrunk.value) {
@@ -584,8 +607,17 @@ class FloatingBubbleService : Service() {
     }
 
     fun onFieldFocusChanged(isFocused: Boolean) {
-        if (!componentsReady() || !isFocused) return
-        overlayWindowManager.showImmediately()
+        if (!componentsReady()) return
+        if (isFocused) {
+            overlayWindowManager.showImmediately()
+            return
+        }
+        val sessionActive = sessionManager.isRecording ||
+            overlayWindowManager.overlayPendingFinalizing.value ||
+            polishCoordinator.isPolishingInProgress.get()
+        if (!FloatingBubbleManager.isKeyboardVisible.value && !sessionActive) {
+            overlayWindowManager.onKeyboardVisibilityChanged(isVisible = false, isSessionActive = false)
+        }
     }
 
     fun attachToAccessibilityService(accessService: RapchaAccessibilityService) {

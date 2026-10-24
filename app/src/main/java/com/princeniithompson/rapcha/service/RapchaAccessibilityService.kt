@@ -6,14 +6,21 @@ import android.content.Context
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import com.princeniithompson.rapcha.data.AppLogRepository
+import com.princeniithompson.rapcha.data.DiagnosticSource
+import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.service.floating.FloatingTextInjector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.util.concurrent.Executors
 
 open class RapchaAccessibilityService : AccessibilityService() {
 
@@ -23,6 +30,8 @@ open class RapchaAccessibilityService : AccessibilityService() {
         const val VERIFY_WAIT_MS = 150L
         /** Verification may poll, but a slow read must not be treated as a failed insert. */
         const val VERIFY_POLL_BUDGET_MS = 600L
+        const val KEYBOARD_WATCH_MS = 300L
+        const val STALL_PROBE_MS = 500L
         var instance: RapchaAccessibilityService? = null
             internal set
     }
@@ -32,8 +41,37 @@ open class RapchaAccessibilityService : AccessibilityService() {
     @Volatile
     var lastSeenClassName: String? = null
 
-    private val delayedCheckRunnable = Runnable {
-        checkAndNotifyKeyboard()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val contextExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "rapcha-foreground").apply { isDaemon = true }
+    }
+    private val contextScheduler = ForegroundContextScheduler(
+        postDelayed = { runnable, delayMs -> mainHandler.postDelayed(runnable, delayMs) },
+        cancel = { runnable -> mainHandler.removeCallbacks(runnable) },
+        execute = { runnable -> contextExecutor.execute(runnable) },
+        publishOnMain = { runnable -> mainHandler.post(runnable) },
+        evaluate = { packageName, className, windowTitle ->
+            evaluateForeground(packageName, className, windowTitle)
+        }
+    ).also { scheduler ->
+        scheduler.onResult = { packageName, evaluation -> publishForeground(packageName, evaluation) }
+    }
+
+    private val keyboardWatch = Runnable {
+        checkAndNotifyKeyboard(fromWatch = true)
+    }
+
+    private var stallProbePostedAt = 0L
+    private val stallProbe = Runnable {
+        val lateBy = SystemClock.elapsedRealtime() - stallProbePostedAt - STALL_PROBE_MS
+        if (lateBy > 500L) {
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.MAIN_THREAD_STALL,
+                "late_ms=$lateBy"
+            )
+        }
+        armStallProbe()
     }
 
     private val packageReceiver = object : android.content.BroadcastReceiver() {
@@ -96,8 +134,9 @@ open class RapchaAccessibilityService : AccessibilityService() {
         info.notificationTimeout = 0
         serviceInfo = info
 
-        // Check initial keyboard state
+        // Check initial keyboard state, then watch for a stuck bubble and a frozen main thread.
         checkAndNotifyKeyboard()
+        armStallProbe()
 
         // Ensure floating bubble is using accessibility overlay layer for highest z-order
         FloatingBubbleService.instance?.attachToAccessibilityService(this)
@@ -108,45 +147,19 @@ open class RapchaAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            lastSeenClassName = event.className?.toString()
-            val eventPkg = event.packageName?.toString()
-            if (!eventPkg.isNullOrBlank() && !AppContextResolver.isIgnoredPackage(this, eventPkg)) {
-                val winTitle = getActiveApplicationWindow()?.title?.toString()
-                    ?: event.text.firstOrNull()?.toString()
-                val resolvedApp = AppDetector.resolve(
-                    context = this,
-                    packageName = eventPkg,
-                    className = lastSeenClassName,
-                    windowTitle = winTitle
-                )
-                FloatingBubbleManager.updateLearnedAppContext(resolvedApp.appName, resolvedApp.category)
-                com.princeniithompson.rapcha.data.AppDetectionLogRepository.logEvent(
-                    com.princeniithompson.rapcha.data.AppDetectionEvent(
-                        rawPackageName = eventPkg,
-                        rawWindowTitle = winTitle,
-                        packageManagerLabel = try {
-                            packageManager.getApplicationLabel(packageManager.getApplicationInfo(eventPkg, 0)).toString()
-                        } catch (_: Throwable) { null },
-                        resolvedAppName = resolvedApp.appName,
-                        classificationSource = if (resolvedApp.isLocallyResolved) "4_SIGNAL_CASCADE" else "AI_MODEL",
-                        finalCategory = resolvedApp.category
-                    )
-                )
-            }
+        val started = SystemClock.elapsedRealtime()
+        val type = event.eventType
+        val keyboardFirst = type == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
+            type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            type == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
+            type == AccessibilityEvent.TYPE_VIEW_CLICKED ||
+            type == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED ||
+            type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED ||
+            type == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
+        if (keyboardFirst) {
+            checkAndNotifyKeyboard()
         }
-
-        val detectedPkg = getActivePackageName() ?: run {
-            val eventPkg = event.packageName?.toString()
-            if (!AppContextResolver.isIgnoredPackage(this, eventPkg)) eventPkg else null
-        }
-
-        if (detectedPkg != null) {
-            FloatingBubbleManager.updateCurrentForegroundPackage(detectedPkg, this)
-        }
-
-        when (event.eventType) {
+        when (type) {
             AccessibilityEvent.TYPE_VIEW_FOCUSED,
             AccessibilityEvent.TYPE_VIEW_CLICKED,
             AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED,
@@ -154,68 +167,155 @@ open class RapchaAccessibilityService : AccessibilityService() {
                 val source = event.source
                 if (source != null && isEditableNode(source)) {
                     lastFocusedEditableNode = source
-                }
-                checkAndNotifyKeyboard()
-                checkSensitivityState(event)
-            }
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-            AccessibilityEvent.TYPE_WINDOWS_CHANGED,
-            AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED -> {
-                val inputFocused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                if (inputFocused != null && isEditableNode(inputFocused)) {
-                    lastFocusedEditableNode = inputFocused
-                } else {
-                    val eventPkg = event.packageName?.toString()
-                    // Never clear lastFocusedEditableNode due to our own overlay or system popups
-                    if (eventPkg != null && eventPkg != packageName && !AppContextResolver.isIgnoredPackage(this, eventPkg)) {
-                        try {
-                            if (lastFocusedEditableNode?.refresh() == false) {
-                                lastFocusedEditableNode = null
-                            }
-                        } catch (_: Exception) {
-                            lastFocusedEditableNode = null
-                        }
+                    if (type == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+                        FloatingBubbleManager.notifyFieldFocus(true)
                     }
                 }
-                checkAndNotifyKeyboard()
-                checkSensitivityState(event)
+            }
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
+                if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                    lastSeenClassName = event.className?.toString()
+                }
+                val eventPkg = event.packageName?.toString()
+                if (eventPkg != null && eventPkg != packageName && !AppContextResolver.isIgnoredPackage(this, eventPkg)) {
+                    try {
+                        if (lastFocusedEditableNode?.refresh() == false) {
+                            lastFocusedEditableNode = null
+                        }
+                    } catch (_: Exception) {
+                        lastFocusedEditableNode = null
+                    }
+                }
+                scheduleForegroundContext(event)
             }
         }
+        val elapsed = SystemClock.elapsedRealtime() - started
+        if (elapsed >= 50L) {
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.A11Y_EVENT,
+                "type=$type processing_ms=$elapsed"
+            )
+        }
     }
 
-    private fun checkSensitivityState(event: AccessibilityEvent? = null) {
-        if (!FloatingBubbleManager.isSmartSafeModeEnabled.value) {
-            FloatingBubbleManager.updateSensitivity(false, "smart_safe_mode_disabled")
-            return
+    private fun scheduleForegroundContext(event: AccessibilityEvent) {
+        val eventPkg = event.packageName?.toString()
+        val pkg = when {
+            !eventPkg.isNullOrBlank() && !AppContextResolver.isIgnoredPackage(this, eventPkg) -> eventPkg
+            else -> lastFocusedEditableNode?.packageName?.toString()
+                ?.takeUnless { AppContextResolver.isIgnoredPackage(this, it) }
         }
+        val title = event.text?.firstOrNull()?.toString()
+        contextScheduler.submit(pkg, lastSeenClassName, title)
+    }
 
-        val pkg = getActivePackageName() ?: event?.packageName?.toString()
-        if (AppContextResolver.isIgnoredPackage(this, pkg)) {
-            return
+    /**
+     * App detection and the Safe Mode tree walk run off the main thread.
+     * A thrown node query falls back to the package and screen name so a
+     * banking app still hides the bubble.
+     */
+    private fun evaluateForeground(
+        packageName: String,
+        className: String?,
+        windowTitle: String?
+    ): ForegroundContextScheduler.Evaluation {
+        val resolved = try {
+            AppDetector.resolve(
+                context = this,
+                packageName = packageName,
+                className = className,
+                windowTitle = windowTitle
+            )
+        } catch (_: Throwable) {
+            null
         }
-
-        val focusedNode = try { findFocus(AccessibilityNodeInfo.FOCUS_INPUT) } catch (_: Throwable) { null }
-            ?: lastFocusedEditableNode
-            ?: event?.source
-        val activeRoot = try { rootInActiveWindow ?: getActiveApplicationWindow()?.root } catch (_: Throwable) { null }
-        val winTitle = try { getActiveApplicationWindow()?.title?.toString() } catch (_: Throwable) { null }
-            ?: event?.text?.firstOrNull()?.toString()
-        val resolvedAppName = FloatingBubbleManager.currentResolvedAppContext.value?.name
-
-        val isSensitive = SafeModeClassifier.isSensitiveContext(
-            context = this,
-            packageName = pkg,
-            focusedNode = focusedNode,
-            rootNode = activeRoot,
-            className = lastSeenClassName,
-            windowTitle = winTitle,
-            resolvedAppName = resolvedAppName
+        val sensitive = if (!FloatingBubbleManager.isSmartSafeModeEnabled.value) {
+            false
+        } else {
+            try {
+                val focused = try {
+                    findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                } catch (_: Throwable) {
+                    null
+                } ?: lastFocusedEditableNode
+                val root = try {
+                    rootInActiveWindow
+                } catch (_: Throwable) {
+                    null
+                }
+                SafeModeClassifier.isSensitiveContext(
+                    context = this,
+                    packageName = packageName,
+                    focusedNode = focused,
+                    rootNode = root,
+                    className = className,
+                    windowTitle = windowTitle,
+                    resolvedAppName = resolved?.appName
+                )
+            } catch (_: Throwable) {
+                SafeModeClassifier.isSensitiveApp(this, packageName, resolved?.appName) ||
+                    SafeModeClassifier.isSensitiveScreen(className, windowTitle)
+            }
+        }
+        val categorySensitive = FloatingBubbleManager.isSmartSafeModeEnabled.value &&
+            (resolved?.category.equals("Banking", ignoreCase = true) ||
+                resolved?.category.equals("Finance", ignoreCase = true))
+        return ForegroundContextScheduler.Evaluation(
+            sensitive = sensitive || categorySensitive,
+            appName = resolved?.appName ?: packageName,
+            category = resolved?.category ?: "Other"
         )
-
-        FloatingBubbleManager.updateSensitivity(isSensitive, "context_check: pkg=$pkg, sensitive=$isSensitive")
     }
 
-    private fun checkAndNotifyKeyboard() {
+    private fun publishForeground(packageName: String, evaluation: ForegroundContextScheduler.Evaluation) {
+        FloatingBubbleManager.noteForegroundPackage(packageName)
+        FloatingBubbleManager.updateLearnedAppContext(evaluation.appName, evaluation.category)
+        com.princeniithompson.rapcha.data.AppDetectionLogRepository.logEvent(
+            com.princeniithompson.rapcha.data.AppDetectionEvent(
+                rawPackageName = packageName,
+                rawWindowTitle = null,
+                packageManagerLabel = try {
+                    packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString()
+                } catch (_: Throwable) {
+                    null
+                },
+                resolvedAppName = evaluation.appName,
+                classificationSource = "CACHED_FOREGROUND",
+                finalCategory = evaluation.category
+            )
+        )
+        FloatingBubbleManager.updateSensitivity(
+            evaluation.sensitive,
+            "context_check: pkg=$packageName, sensitive=${evaluation.sensitive}"
+        )
+    }
+
+    private fun armStallProbe() {
+        stallProbePostedAt = SystemClock.elapsedRealtime()
+        mainHandler.postDelayed(stallProbe, STALL_PROBE_MS)
+    }
+
+    private fun scheduleKeyboardWatch() {
+        mainHandler.removeCallbacks(keyboardWatch)
+        val bubbleMayBeShowing = FloatingBubbleManager.isKeyboardVisible.value ||
+            FloatingBubbleManager.isFieldActive.value
+        if (bubbleMayBeShowing) {
+            mainHandler.postDelayed(keyboardWatch, KEYBOARD_WATCH_MS)
+        }
+    }
+
+    fun hasFocusedEditableField(): Boolean {
+        val node = lastFocusedEditableNode ?: return false
+        return try {
+            node.refresh() && node.isFocused && isEditableNode(node)
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun checkAndNotifyKeyboard(fromWatch: Boolean = false) {
         val currentWindows = try {
             getWindows() ?: emptyList()
         } catch (e: Exception) {
@@ -245,8 +345,19 @@ open class RapchaAccessibilityService : AccessibilityService() {
         if (lastReportedKeyboardVisible != isImePresent) {
             Log.d(TAG, "Keyboard visibility changed -> $isImePresent | Seen windows: [$windowTypesSeen]")
             lastReportedKeyboardVisible = isImePresent
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                if (isImePresent) DiagnosticType.KEYBOARD_SHOWN else DiagnosticType.KEYBOARD_HIDDEN,
+                "ime=$isImePresent"
+            )
             FloatingBubbleManager.notifyKeyboardVisibility(isImePresent)
+            if (!isImePresent && !hasFocusedEditableField()) {
+                FloatingBubbleManager.notifyFieldFocus(false)
+            }
+        } else if (fromWatch && !isImePresent && FloatingBubbleManager.isFieldActive.value && !hasFocusedEditableField()) {
+            FloatingBubbleManager.notifyFieldFocus(false)
         }
+        scheduleKeyboardWatch()
     }
 
     private fun isEditableNode(node: AccessibilityNodeInfo): Boolean {
@@ -278,6 +389,8 @@ open class RapchaAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        mainHandler.removeCallbacksAndMessages(null)
+        contextExecutor.shutdownNow()
         if (instance == this) {
             instance = null
             FloatingBubbleManager.setAccessibilityConnected(false)

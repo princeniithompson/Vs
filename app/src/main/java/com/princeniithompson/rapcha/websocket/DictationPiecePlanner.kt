@@ -62,6 +62,14 @@ class DictationPiecePlanner(
     val quietMs: Long
         get() = quietRunMs
 
+    data class PieceAudio(val rmsMean: Double, val rmsMax: Double, val samples: Int)
+
+    fun pieceAudio(): PieceAudio {
+        val mean = if (rmsCount == 0) 0.0 else rmsSum / rmsCount
+        val max = if (rmsCount == 0) 0.0 else rmsMax
+        return PieceAudio(mean, max, rmsCount)
+    }
+
     fun resetSession() {
         freshConnectionMode = false
         pieceNumber = 1
