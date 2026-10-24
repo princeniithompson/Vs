@@ -42,7 +42,10 @@ enum class DiagnosticType {
     AUDIO_STYLE_CHANGED,
     VOICE_ID_EVENT,
     CRASH,
-    PROCESS_EXIT
+    PROCESS_EXIT,
+    INTERIM_STALL,
+    INTERIM_RESUMED,
+    SESSION_HEARTBEAT
 }
 
 data class DiagnosticLogEntry(

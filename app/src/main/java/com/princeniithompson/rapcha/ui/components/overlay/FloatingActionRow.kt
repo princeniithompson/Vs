@@ -231,7 +231,7 @@ fun FloatingActionRow(
                 ) {
                     if (isFinalizing) {
                         Text(
-                            text = "Completing...",
+                            text = "Polishing...",
                             color = onAccentColor,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold

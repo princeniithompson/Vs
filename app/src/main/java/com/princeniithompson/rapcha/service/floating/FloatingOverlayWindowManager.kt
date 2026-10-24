@@ -59,6 +59,8 @@ class FloatingOverlayWindowManager(private val context: Context) {
         private set
 
     val overlayTranscript = MutableStateFlow("")
+    val overlayPreviewPhase = MutableStateFlow(com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase.LISTENING)
+    val overlayPolishingMessage = MutableStateFlow<String?>(null)
     val overlayRecording = MutableStateFlow(false)
     val overlayPendingFinalizing = MutableStateFlow(false)
     val overlayPolishing = MutableStateFlow(false)
@@ -135,6 +137,8 @@ class FloatingOverlayWindowManager(private val context: Context) {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool)
             setContent {
                 val transcript by overlayTranscript.collectAsState()
+                val previewPhase by overlayPreviewPhase.collectAsState()
+                val polishingMessage by overlayPolishingMessage.collectAsState()
                 val recording by overlayRecording.collectAsState()
                 val pendingFinalizing by overlayPendingFinalizing.collectAsState()
                 val polishing by overlayPolishing.collectAsState()
@@ -153,6 +157,8 @@ class FloatingOverlayWindowManager(private val context: Context) {
 
                 FloatingOverlayContent(
                     transcript = transcript,
+                    previewPhase = previewPhase,
+                    polishingMessage = polishingMessage,
                     recording = recording,
                     pendingFinalizing = pendingFinalizing,
                     polishing = polishing,

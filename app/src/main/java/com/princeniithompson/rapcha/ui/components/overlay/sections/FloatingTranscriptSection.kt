@@ -21,6 +21,17 @@ object FloatingTranscriptFormatter {
     }
 
     /**
+     * The compact bubble is only a few lines tall. Showing the tail keeps the
+     * words just spoken on screen. The full string stays in session state for
+     * injection.
+     */
+    fun livePreviewText(rawText: String, maxChars: Int = 180): String {
+        val normalized = formatTranscriptForDisplay(rawText)
+        if (normalized.length <= maxChars) return normalized
+        return "…" + normalized.takeLast(maxChars).trimStart()
+    }
+
+    /**
      * Computes the word count for user statistics or UI metrics.
      */
     fun countWords(text: String): Int {
@@ -48,7 +59,7 @@ fun FloatingTranscriptSection(
     scrollState: ScrollState,
     modifier: Modifier = Modifier
 ) {
-    val formattedText = FloatingTranscriptFormatter.formatTranscriptForDisplay(transcriptText)
+    val formattedText = FloatingTranscriptFormatter.livePreviewText(transcriptText)
 
     FloatingTranscriptBox(
         transcriptText = formattedText,

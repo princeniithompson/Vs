@@ -22,8 +22,10 @@ import com.princeniithompson.rapcha.ui.components.overlay.rememberDynamicAuroraP
 import com.princeniithompson.rapcha.ui.components.overlay.sections.FloatingAuroraGlowSection
 import com.princeniithompson.rapcha.ui.components.overlay.sections.FloatingButtonRowSection
 import com.princeniithompson.rapcha.ui.components.overlay.sections.FloatingNotchedCutoutSection
+import com.princeniithompson.rapcha.ui.components.overlay.LivePreviewNotice
 import com.princeniithompson.rapcha.ui.components.overlay.sections.FloatingTranscriptSection
 import com.princeniithompson.rapcha.ui.components.overlay.sections.rememberFloatingDictationPopupState
+import com.princeniithompson.rapcha.websocket.InterimPreviewMonitor
 import com.princeniithompson.rapcha.ui.components.overlay.sections.rememberNotchedContainerShape
 
 // Re-exports for backward compatibility across the app
@@ -73,6 +75,8 @@ fun FloatingCollapsedBubble(
 @Composable
 fun FloatingDictationPopup(
     transcriptText: String,
+    previewPhase: InterimPreviewMonitor.Phase = InterimPreviewMonitor.Phase.LISTENING,
+    polishingMessage: String? = null,
     isRecording: Boolean,
     isPendingFinalizing: Boolean,
     isPolishing: Boolean,
@@ -124,6 +128,10 @@ fun FloatingDictationPopup(
                     cursorAlpha = state.cursorAlpha,
                     palette = palette,
                     scrollState = state.scrollState
+                )
+                LivePreviewNotice(
+                    phase = previewPhase,
+                    polishingMessage = polishingMessage
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
