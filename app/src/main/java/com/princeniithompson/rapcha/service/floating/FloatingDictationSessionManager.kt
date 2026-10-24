@@ -13,8 +13,11 @@ import com.princeniithompson.rapcha.data.LiveStats
 import com.princeniithompson.rapcha.data.LogLevel
 import com.princeniithompson.rapcha.data.TranscriptPrivacy
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
+import com.princeniithompson.rapcha.websocket.DictationPiecePlanner
+import com.princeniithompson.rapcha.websocket.DictationSessionClock
 import com.princeniithompson.rapcha.websocket.GeminiLiveWebSocketClient
 import com.princeniithompson.rapcha.websocket.InterimPreviewMonitor
+import com.princeniithompson.rapcha.websocket.TranscriptSeam
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +69,8 @@ class FloatingDictationSessionManager(
 
     private val finalizedTranscript = StringBuilder()
     private var interimTranscript = ""
+    private var sessionClock = DictationSessionClock()
+    private var finishAtNextPause = false
 
     private var smoothedAmp = 0f
     private var lastSustainedSpeechTimestamp = 0L
@@ -131,6 +136,7 @@ class FloatingDictationSessionManager(
                 DiagnosticType.ERROR,
                 "AudioRecorder: $err"
             )
+            DictationAlerts.microphoneFailed(context)
         }
     )
 
@@ -196,6 +202,8 @@ class FloatingDictationSessionManager(
 
         finalizedTranscript.clear()
         interimTranscript = ""
+        sessionClock = DictationSessionClock()
+        finishAtNextPause = false
         durationSeconds = 0
         sessionChunksSent = 0
         sessionBytesSent = 0L
@@ -274,6 +282,23 @@ class FloatingDictationSessionManager(
                     )
                 }
             },
+            onPieceCommitted = { piece ->
+                appendPiece(piece)
+                interimTranscript = ""
+                onTranscriptUpdated(getFullTranscriptText())
+            },
+            onGoAway = {
+                if (sessionClock.shouldSplitOnGoAway(durationSeconds * 1000L)) {
+                    webSocketClient?.requestFreshConnectionSplit()
+                } else if (isRecording) {
+                    onSessionLimit("Session ended at 10 minutes.", true)
+                }
+            },
+            onAudiblePause = {
+                if (finishAtNextPause && isRecording) {
+                    onSessionLimit("Session ended at 10 minutes.", true)
+                }
+            },
             onFinalizedTranscription = { text ->
                 val trimmed = text.trim()
                 if (trimmed.isNotEmpty()) {
@@ -283,12 +308,7 @@ class FloatingDictationSessionManager(
                         TranscriptPrivacy.summary(trimmed)
                     )
                 }
-                // One activity is one utterance. Replace rather than append so a pause
-                // cannot leave a split segment behind.
-                finalizedTranscript.clear()
-                if (trimmed.isNotEmpty()) {
-                    finalizedTranscript.append(trimmed)
-                }
+                appendPiece(trimmed)
                 interimTranscript = ""
                 onFinalSegmentReceived(trimmed)
                 onTranscriptUpdated(getFullTranscriptText())
@@ -316,7 +336,6 @@ class FloatingDictationSessionManager(
                 onError(err)
             },
             isSessionActive = { isRecording },
-            onSessionLimit = onSessionLimit,
             diagnosticSource = DiagnosticSource.BUBBLE,
             onPreviewPhase = onPreviewPhase
         ).apply {
@@ -337,6 +356,7 @@ class FloatingDictationSessionManager(
                 delay(1000)
                 durationSeconds++
                 webSocketClient?.pollInterimPreview()
+                onSessionClockTick()
                 onDurationTicked(durationSeconds)
             }
         }
@@ -373,7 +393,7 @@ class FloatingDictationSessionManager(
                 Log.e(TAG, "Error stopping audio/websocket", e)
             } finally {
                 logSessionEndOnce(
-                    "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${ws?.interimPreviewMonitor?.summary().orEmpty()}"
+                    "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${ws?.sessionSummary().orEmpty()}"
                 )
                 AppLogRepository.updateConnectionState(ConnectionState.Idle, DiagnosticSource.BUBBLE)
                 try {
@@ -416,13 +436,12 @@ class FloatingDictationSessionManager(
                 }
             }
             val finalText = ws?.endActivityAndAwaitFinal().orEmpty().trim()
-            if (finalText.isNotEmpty()) {
-                finalizedTranscript.clear()
+            if (finalizedTranscript.isEmpty() && finalText.isNotEmpty()) {
                 finalizedTranscript.append(finalText)
-                interimTranscript = ""
-                onTranscriptUpdated(finalText)
             }
-            val text = finalText.ifBlank { getFullTranscriptText() }
+            interimTranscript = ""
+            val text = getFullTranscriptText().ifBlank { finalText }
+            onTranscriptUpdated(text)
             text
         } catch (e: Exception) {
             Log.e(TAG, "Error finishing manual activity", e)
@@ -435,7 +454,7 @@ class FloatingDictationSessionManager(
             }
             webSocketClient = null
             logSessionEndOnce(
-                "ended_reason: completed | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${ws?.interimPreviewMonitor?.summary().orEmpty()}"
+                "ended_reason: completed | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${ws?.sessionSummary().orEmpty()}"
             )
             AppLogRepository.updateConnectionState(ConnectionState.Idle, DiagnosticSource.BUBBLE)
             try {
@@ -453,6 +472,35 @@ class FloatingDictationSessionManager(
             DiagnosticType.SESSION_END,
             message
         )
+    }
+
+    private fun onSessionClockTick() {
+        val client = webSocketClient
+        val tick = sessionClock.onTick(
+            sessionMs = durationSeconds * 1000L,
+            singleConnection = client?.isSingleConnection() != false
+        )
+        if (tick.warn) {
+            onSessionLimit("1 minute left in this session", false)
+        }
+        if (tick.armFinishAtPause) {
+            finishAtNextPause = true
+            if ((client?.currentPauseMs() ?: 0L) >= DictationPiecePlanner.PAUSE_MS) {
+                onSessionLimit("Session ended at 10 minutes.", true)
+            }
+        }
+        if (tick.hardStop) {
+            onSessionLimit("Session ended at 10 minutes.", true)
+        }
+    }
+
+    private fun appendPiece(piece: String) {
+        val trimmed = piece.trim()
+        if (trimmed.isEmpty()) return
+        val current = finalizedTranscript.toString().trim()
+        if (current == trimmed || current.endsWith(" $trimmed")) return
+        finalizedTranscript.clear()
+        finalizedTranscript.append(TranscriptSeam.append(current, trimmed))
     }
 
     fun getFullTranscriptText(): String {

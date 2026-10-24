@@ -16,6 +16,10 @@ object TranscriptPrivacy {
         return PHONE.replace(EMAIL.replace(text, "[email]"), "[phone]")
     }
 
+    fun wordCount(text: String): Int {
+        return text.trim().split(Regex("\\s+")).count { it.isNotBlank() }
+    }
+
     fun summary(text: String): String {
         val trimmed = text.trim()
         val words = trimmed.split(Regex("\\s+")).count { it.isNotBlank() }

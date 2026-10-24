@@ -45,7 +45,13 @@ enum class DiagnosticType {
     PROCESS_EXIT,
     INTERIM_STALL,
     INTERIM_RESUMED,
-    SESSION_HEARTBEAT
+    SESSION_HEARTBEAT,
+    SPLIT,
+    PIECE_FINAL,
+    DEDUP,
+    SOCKET_OPEN,
+    SOCKET_CLOSE,
+    CONNECTION_AGE
 }
 
 data class DiagnosticLogEntry(

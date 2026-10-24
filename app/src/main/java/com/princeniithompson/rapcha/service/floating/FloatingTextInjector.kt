@@ -253,12 +253,16 @@ object FloatingTextInjector {
      * Falls back to clipboard ONLY if no active text field is present on screen.
      */
     suspend fun injectOrFallbackToClipboard(context: Context, text: String): Boolean {
-        if (text.isBlank()) return false
-        val inserter = RapchaTextInserter.getInstance(context)
-        val result = withContext(Dispatchers.Default) {
-            inserter.insertTranscript(text, RapchaInputMethodService.instance)
-        }
+        val result = injectReporting(context, text)
         return result is RapchaTextInserter.InsertionResult.SuccessDirect ||
                result is RapchaTextInserter.InsertionResult.SuccessClipboardFallback
+    }
+
+    suspend fun injectReporting(context: Context, text: String): RapchaTextInserter.InsertionResult {
+        if (text.isBlank()) return RapchaTextInserter.InsertionResult.Failed
+        val inserter = RapchaTextInserter.getInstance(context)
+        return withContext(Dispatchers.Default) {
+            inserter.insertTranscript(text, RapchaInputMethodService.instance)
+        }
     }
 }
