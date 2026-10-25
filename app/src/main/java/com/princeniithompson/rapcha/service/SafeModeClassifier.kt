@@ -163,6 +163,7 @@ object SafeModeClassifier {
         "com.gcbbank.mobile",
         "com.gcbbank.gcbmobile",
         "gh.com.gcbbank.app",
+        "com.modefin.gcbui",
 
         // Payment Platforms & Transfers
         "com.paypal.android.p2pmobile",

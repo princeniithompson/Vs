@@ -298,8 +298,8 @@ class FloatingBubbleService : Service() {
     }
 
     /**
-     * Safe Mode hid the bubble while the user was still talking. Finish the turn and
-     * place the words. A successful insert or clipboard copy is not an alert.
+     * Safe Mode cut the session before Complete. Release the mic, keep the words,
+     * and copy them. Do not type into the field that is now on screen.
      */
     private suspend fun preserveSessionForSafeMode() {
         FloatingHapticManager.trigger(this, FloatingHapticType.TRANSCRIPTION_STOP)
@@ -307,8 +307,9 @@ class FloatingBubbleService : Service() {
         overlayWindowManager.overlayRecording.value = false
         overlayWindowManager.overlayPendingFinalizing.value = true
         try {
+            sessionManager.releaseMicrophoneNow()
+            dropMicrophoneForegroundNow()
             val text = sessionManager.finishActivityAndAwaitTranscript().trim()
-            downgradeMicrophoneForeground()
             if (text.isBlank()) {
                 if (sessionManager.sessionBytesSent > 32_000L) {
                     DictationAlerts.finalTextLost(this)
@@ -322,14 +323,16 @@ class FloatingBubbleService : Service() {
                 appContext = lockedCtx,
                 durationSeconds = durationSec
             )
-            FloatingBubbleManager.allowSafeModeInjection = true
-            val placed = try {
-                FloatingTextInjector.injectReporting(this, text)
-            } finally {
-                FloatingBubbleManager.allowSafeModeInjection = false
-            }
-            if (placed is RapchaTextInserter.InsertionResult.Failed) {
-                DictationAlerts.placementFailed(this)
+            when (SessionPlacement.forFinishedSession(fieldFocused = true, cutOffBeforeComplete = true)) {
+                SessionPlacement.Path.CLIPBOARD -> {
+                    val copied = RapchaTextInserter.getInstance(this).copyCutOffTranscript(text)
+                    if (copied) {
+                        DictationAlerts.textCopied(this)
+                    } else {
+                        DictationAlerts.placementFailed(this)
+                    }
+                }
+                SessionPlacement.Path.INJECT -> Unit
             }
         } catch (e: Exception) {
             Log.e(TAG, "Safe Mode handoff failed", e)
@@ -504,21 +507,38 @@ class FloatingBubbleService : Service() {
             fgsDowngradeJob?.cancel()
             fgsDowngradeJob = serviceScope.launch {
                 delay(450L)
-                try {
-                    startForeground(
-                        FloatingNotificationManager.NOTIFICATION_ID,
-                        FloatingNotificationManager.buildNotification(this@FloatingBubbleService, "Floating voice bubble is active"),
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                    )
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not revert FGS to specialUse: ${e.message}")
-                    AppLogRepository.logEvent(
-                        DiagnosticSource.BUBBLE,
-                        DiagnosticType.WARNING,
-                        "Could not revert foreground service to specialUse: ${e.message?.take(180)}"
-                    )
-                }
+                dropMicrophoneForegroundType()
             }
+        }
+    }
+
+    /** Safe Mode must drop the microphone type before waiting on the network. */
+    private fun dropMicrophoneForegroundNow() {
+        fgsDowngradeJob?.cancel()
+        fgsDowngradeJob = null
+        dropMicrophoneForegroundType()
+        AppLogRepository.logEvent(
+            DiagnosticSource.BUBBLE,
+            DiagnosticType.MIC_RELEASED,
+            "reason=safe_mode"
+        )
+    }
+
+    private fun dropMicrophoneForegroundType() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+        try {
+            startForeground(
+                FloatingNotificationManager.NOTIFICATION_ID,
+                FloatingNotificationManager.buildNotification(this, "Floating voice bubble is active"),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not revert FGS to specialUse: ${e.message}")
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.WARNING,
+                "Could not revert foreground service to specialUse: ${e.message?.take(180)}"
+            )
         }
     }
 

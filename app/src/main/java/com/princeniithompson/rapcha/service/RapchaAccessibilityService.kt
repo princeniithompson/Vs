@@ -175,11 +175,19 @@ open class RapchaAccessibilityService : AccessibilityService() {
     }
 
     private var lastReportedKeyboardVisible: Boolean? = null
+    private var enabledImePackages: Set<String> = emptySet()
+    private var enabledImePackagesAt = 0L
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val started = SystemClock.elapsedRealtime()
         val type = event.eventType
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            type == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        ) {
+            // Decide the real app before the keyboard path can reveal the bubble.
+            onForegroundWindowEvent(event)
+        }
         val keyboardFirst = type == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
             type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             type == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
@@ -206,23 +214,6 @@ open class RapchaAccessibilityService : AccessibilityService() {
                     }
                 }
             }
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
-                if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-                    lastSeenClassName = event.className?.toString()
-                }
-                val eventPkg = event.packageName?.toString()
-                if (eventPkg != null && eventPkg != packageName && !AppContextResolver.isIgnoredPackage(this, eventPkg)) {
-                    try {
-                        if (lastFocusedEditableNode?.refresh() == false) {
-                            lastFocusedEditableNode = null
-                        }
-                    } catch (_: Exception) {
-                        lastFocusedEditableNode = null
-                    }
-                }
-                scheduleForegroundContext(event)
-            }
         }
         val elapsed = SystemClock.elapsedRealtime() - started
         if (elapsed >= 50L) {
@@ -234,15 +225,85 @@ open class RapchaAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun scheduleForegroundContext(event: AccessibilityEvent) {
-        val eventPkg = event.packageName?.toString()
-        val pkg = when {
-            !eventPkg.isNullOrBlank() && !AppContextResolver.isIgnoredPackage(this, eventPkg) -> eventPkg
-            else -> lastFocusedEditableNode?.packageName?.toString()
-                ?.takeUnless { AppContextResolver.isIgnoredPackage(this, it) }
+    private fun onForegroundWindowEvent(event: AccessibilityEvent) {
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            lastSeenClassName = event.className?.toString()
         }
+        val eventPkg = event.packageName?.toString()
+        if (eventPkg != null && eventPkg != packageName && !isForegroundNoise(eventPkg)) {
+            try {
+                if (lastFocusedEditableNode?.refresh() == false) {
+                    lastFocusedEditableNode = null
+                }
+            } catch (_: Exception) {
+                lastFocusedEditableNode = null
+            }
+        }
+        val pkg = ForegroundAppPicker.resolve(
+            windows = readAppWindows(),
+            eventPackage = eventPkg,
+            heldPackage = FloatingBubbleManager.currentForegroundPackage.value,
+            ignored = ::isForegroundNoise,
+            packageSensitive = ::isPackageSensitive
+        ) ?: return
+        holdPackageSafeModeIfNeeded(pkg)
         val title = event.text?.firstOrNull()?.toString()
         contextScheduler.submit(pkg, lastSeenClassName, title)
+    }
+
+    private fun holdPackageSafeModeIfNeeded(pkg: String) {
+        if (!FloatingBubbleManager.isSmartSafeModeEnabled.value) return
+        val verdict = SafeModeClassifier.classify(context = this, packageName = pkg)
+        if (!SessionPlacement.holdsImmediately(verdict)) return
+        FloatingBubbleManager.engagePackageImmediately(verdict, pkg)
+    }
+
+    private fun isPackageSensitive(pkg: String): Boolean {
+        return SafeModeClassifier.isSensitiveApp(this, pkg)
+    }
+
+    /** System UI, Rapcha, name-heuristic IMEs, and the device's enabled IME list. */
+    private fun isForegroundNoise(pkg: String): Boolean {
+        if (AppContextResolver.isIgnoredPackage(this, pkg)) return true
+        return enabledImePackages().contains(pkg.lowercase())
+    }
+
+    private fun enabledImePackages(): Set<String> {
+        val now = SystemClock.uptimeMillis()
+        if (enabledImePackagesAt != 0L && now - enabledImePackagesAt < 2_000L) return enabledImePackages
+        enabledImePackages = try {
+            EnabledImePackages.load(this)
+        } catch (_: Throwable) {
+            emptySet()
+        }
+        enabledImePackagesAt = now
+        return enabledImePackages
+    }
+
+    private fun readAppWindows(): List<ForegroundAppPicker.AppWindow> {
+        val current = try {
+            getWindows()
+        } catch (_: Throwable) {
+            null
+        } ?: return emptyList()
+        val windows = ArrayList<ForegroundAppPicker.AppWindow>(current.size)
+        for (window in current) {
+            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+            val pkg = try {
+                window.root?.packageName?.toString()
+            } catch (_: Throwable) {
+                null
+            } ?: continue
+            windows.add(
+                ForegroundAppPicker.AppWindow(
+                    packageName = pkg,
+                    active = window.isActive,
+                    focused = window.isFocused,
+                    typeApplication = true
+                )
+            )
+        }
+        return windows
     }
 
     /**
@@ -304,6 +365,17 @@ open class RapchaAccessibilityService : AccessibilityService() {
     }
 
     private fun publishForeground(packageName: String, evaluation: ForegroundContextScheduler.Evaluation) {
+        if (!evaluation.sensitive) {
+            val live = try {
+                ForegroundAppPicker.pick(readAppWindows(), ::isForegroundNoise, ::isPackageSensitive)
+            } catch (_: Throwable) {
+                null
+            }
+            if (live != null && !live.equals(packageName, ignoreCase = true) && isPackageSensitive(live)) {
+                holdPackageSafeModeIfNeeded(live)
+                return
+            }
+        }
         FloatingBubbleManager.noteForegroundPackage(packageName)
         FloatingBubbleManager.updateLearnedAppContext(evaluation.appName, evaluation.category)
         com.princeniithompson.rapcha.data.AppDetectionLogRepository.logEvent(
@@ -1072,11 +1144,25 @@ open class RapchaAccessibilityService : AccessibilityService() {
     }
 
     fun getActivePackageName(): String? {
+        // The window list beats a focused IME or a mislabeled event package.
+        try {
+            val picked = ForegroundAppPicker.pick(
+                readAppWindows(),
+                ::isForegroundNoise,
+                ::isPackageSensitive
+            )
+            if (!picked.isNullOrBlank()) return picked
+        } catch (e: Exception) {
+            Log.w(TAG, "Error picking foreground window: ${e.message}")
+        }
+
         // 1. Check direct input focus first
         try {
             val focusedNode = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
             val focusedPkg = focusedNode?.packageName?.toString()
-            if (!focusedPkg.isNullOrEmpty() && !AppContextResolver.isIgnoredPackage(this, focusedPkg)) {
+            if (!focusedPkg.isNullOrEmpty() && !isForegroundNoise(focusedPkg) &&
+                !ForegroundAppPicker.isLauncherPackage(focusedPkg)
+            ) {
                 return focusedPkg
             }
         } catch (e: Exception) {

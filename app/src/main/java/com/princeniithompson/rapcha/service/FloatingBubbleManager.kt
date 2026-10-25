@@ -416,6 +416,31 @@ object FloatingBubbleManager {
         }
     }
 
+    /**
+     * Package-level Safe Mode hides the bubble before the stability gate.
+     * A password field on an everyday app still waits, so it cannot flicker.
+     */
+    fun engagePackageImmediately(verdict: SafeModeClassifier.Verdict, pkg: String) {
+        if (!_isSmartSafeModeEnabled.value) return
+        if (!SessionPlacement.holdsImmediately(verdict)) return
+        val previous = _currentForegroundPackage.value
+        noteForegroundPackage(pkg)
+        pendingSafeMode = verdict
+        safeModeHandler.removeCallbacks(safeModeConfirm)
+        if (_isCurrentAppSensitive.value && safeModeGate.published == true) {
+            if (previous != pkg) {
+                AppLogRepository.logEvent(
+                    DiagnosticSource.BUBBLE,
+                    DiagnosticType.SAFE_MODE_ENGAGED,
+                    verdict.describe(pkg)
+                )
+            }
+            return
+        }
+        safeModeGate.notePublished(true)
+        updateSensitivity(true, verdict.describe(pkg))
+    }
+
     private fun publishPendingSafeMode() {
         if (!_isSmartSafeModeEnabled.value) return
         val verdict = pendingSafeMode ?: return

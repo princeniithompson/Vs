@@ -212,6 +212,7 @@ fun DiagnosticEntryRow(entry: DiagnosticLogEntry, timeFormat: SimpleDateFormat) 
         DiagnosticType.SAFE_MODE_ENGAGED -> Triple(Color(0xFFFEF3C7), Color(0xFFB45309), "SAFE_ON")
         DiagnosticType.SAFE_MODE_EXITED -> Triple(Color(0xFFF1F5F9), Color(0xFF475569), "SAFE_OFF")
         DiagnosticType.SILENCE_DROPPED -> Triple(Color(0xFFFEF3C7), Color(0xFFB45309), "SILENCE")
+        DiagnosticType.MIC_RELEASED -> Triple(Color(0xFFF1F5F9), Color(0xFF475569), "MIC")
     }
 
     Card(

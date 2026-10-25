@@ -87,8 +87,11 @@ class SafeModeAccuracyTest {
     fun `banking betting and mobile money still engage`() {
         val apps = listOf(
             "com.sportybet.android",
+            "com.sportybet.android.gp.gh",
             "com.mtn.mymtn",
+            "com.mtngh.mymtn",
             "com.gcb.mobile",
+            "com.modefin.gcbui",
             "com.chase.sig.android"
         )
         for (pkg in apps) {
