@@ -373,9 +373,14 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         )
 
         // 2. Open Gemini Live WebSocket connection
-        val customVocab = com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary()
+        val smartMode = _isSmartMode.value
+        val customVocab = com.princeniithompson.rapcha.data.CustomVocabularyRepository.liveTerms(smartMode)
+        com.princeniithompson.rapcha.data.CustomVocabularyRepository.logLiveSelection(
+            smartMode,
+            com.princeniithompson.rapcha.data.DiagnosticSource.APP
+        )
         try {
-            webSocketClient.connect(apiKey, _selectedModel.value, _isSmartMode.value, customVocabulary = customVocab)
+            webSocketClient.connect(apiKey, _selectedModel.value, smartMode, customVocabulary = customVocab)
         } catch (e: Exception) {
             Log.e(TAG, "Failed connecting WebSocket: ${e.message}")
             addLog(LogLevel.ERROR, TAG, "Connection failed: ${e.message}")
@@ -580,10 +585,16 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
         if (fullText.isEmpty()) return false
 
+        val restored = com.princeniithompson.rapcha.data.CustomVocabularyRepository.prepareOutgoingTranscript(
+            fullText,
+            com.princeniithompson.rapcha.data.DiagnosticSource.APP
+        )
+        if (restored.isEmpty()) return false
+
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = ClipData.newPlainText("Rapcha Transcript", fullText)
+        val clip = ClipData.newPlainText("Rapcha Transcript", restored)
         clipboard.setPrimaryClip(clip)
-        addLog(LogLevel.INFO, TAG, "Copied transcript to clipboard (${fullText.length} chars)")
+        addLog(LogLevel.INFO, TAG, "Copied transcript to clipboard (${restored.length} chars)")
         return true
     }
 

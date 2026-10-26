@@ -66,6 +66,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.princeniithompson.rapcha.data.CustomVocabularyRepository
+import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.HistoryRepository
 import com.princeniithompson.rapcha.ui.VoiceTypingViewModel
 import kotlinx.coroutines.launch
@@ -450,7 +452,10 @@ fun InAppVoiceTypingBubble(
                     // 3. Complete Button
                     InAppPillButton(
                         onClick = {
-                            val textToSave = transcriptText
+                            val textToSave = CustomVocabularyRepository.prepareOutgoingTranscript(
+                                transcriptText,
+                                DiagnosticSource.APP
+                            )
                             if (textToSave.isNotBlank()) {
                                 viewModel.stopRecording()
                                 HistoryRepository.addHistoryItem(

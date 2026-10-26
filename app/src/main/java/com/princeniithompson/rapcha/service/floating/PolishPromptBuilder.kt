@@ -48,4 +48,17 @@ CRITICAL RULES:
         val spice = getSpiceCard(category, appName)
         return "$CHEF_GOLDEN_RULES\n\n$spice"
     }
+
+    /**
+     * Lists only Tricky spellings that are already in this transcript.
+     * The full dictionary is not included, so Polish cannot learn a magnet.
+     */
+    fun spellingGuard(protectedSpellings: List<String>): String {
+        val listed = protectedSpellings.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        val tail = "Do not introduce emails, usernames, or mixed letter-and-digit nicknames that are not already in the transcript."
+        if (listed.isEmpty()) {
+            return "\n\nSPELLINGS: $tail"
+        }
+        return "\n\nPROTECTED SPELLINGS: Keep these exact spellings character-for-character where they already appear, and do not add them anywhere else: ${listed.joinToString(", ")}. $tail"
+    }
 }

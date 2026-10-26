@@ -13,11 +13,23 @@ data class VocabularyItem(
     val term: String,
     val addedTimestamp: Long = System.currentTimeMillis(),
     val lastUsedTimestamp: Long = System.currentTimeMillis(),
-    val isKeepDismissed: Boolean = false
+    val isKeepDismissed: Boolean = false,
+    val vocabClass: VocabClass = VocabClass.EASY,
+    val classOverridden: Boolean = false,
+    val spokenAlias: String = "",
+    /**
+     * Easy terms the user saved are trusted for Live. Tricky terms are not.
+     * Live still requires both: Easy and trusted. A Tricky term is never trusted.
+     */
+    val trusted: Boolean = vocabClass == VocabClass.EASY
 ) {
     fun getDaysUnused(): Long {
         val diffMs = System.currentTimeMillis() - lastUsedTimestamp
         return (diffMs / (1000 * 60 * 60 * 24)).coerceAtLeast(0)
+    }
+
+    fun isLiveEligible(): Boolean {
+        return vocabClass == VocabClass.EASY && trusted && term.isNotBlank()
     }
 }
 
@@ -25,15 +37,18 @@ object CustomVocabularyRepository {
     private const val TAG = "CustomVocabRepo"
     private const val PREFS_NAME = "custom_vocabulary_prefs"
     private const val KEY_TERMS = "vocabulary_terms"
-    private const val KEY_METADATA = "vocabulary_metadata_v2"
+    private const val KEY_METADATA_V2 = "vocabulary_metadata_v2"
+    private const val KEY_METADATA_V3 = "vocabulary_metadata_v3"
     private const val KEY_SEEDED_IDENTITY_REMOVED = "seeded_identity_removed_v1"
     private val SEEDED_IDENTITY = setOf("prince niithompson", "princeniithompson@gmail.com")
-    
+
     const val UNUSED_THRESHOLD_DAYS = 60
+    const val SMART_LIVE_CAP = 25
+    const val VERBATIM_LIVE_CAP = 60
 
     private var prefs: SharedPreferences? = null
-    
-    // Ordered list of active string terms (sent to Gemini Live)
+
+    // Ordered list of active string terms (newest first). This is the dictionary, not the Live payload.
     private val _vocabulary = MutableStateFlow<List<String>>(emptyList())
     val vocabulary: StateFlow<List<String>> = _vocabulary.asStateFlow()
 
@@ -62,7 +77,9 @@ object CustomVocabularyRepository {
     private fun loadTerms() {
         val sp = prefs ?: return
         val rawJson = sp.getString(KEY_TERMS, null)
-        val metaJson = sp.getString(KEY_METADATA, null)
+        val v3Json = sp.getString(KEY_METADATA_V3, null)
+        val v2Json = sp.getString(KEY_METADATA_V2, null)
+        val metaJson = if (!v3Json.isNullOrBlank()) v3Json else v2Json
 
         val termsList = mutableListOf<String>()
         if (!rawJson.isNullOrBlank()) {
@@ -84,7 +101,6 @@ object CustomVocabularyRepository {
             termsList.removeAll { isSeededIdentity(it) }
         }
 
-        // Parse metadata map
         val metaMap = mutableMapOf<String, VocabularyItem>()
         if (!metaJson.isNullOrBlank()) {
             try {
@@ -92,17 +108,9 @@ object CustomVocabularyRepository {
                 val keys = metaObj.keys()
                 while (keys.hasNext()) {
                     val key = keys.next()
-                    val obj = metaObj.getJSONObject(key)
+                    val obj = metaObj.optJSONObject(key) ?: continue
                     val termName = obj.optString("term", key)
-                    val added = obj.optLong("addedTimestamp", System.currentTimeMillis())
-                    val lastUsed = obj.optLong("lastUsedTimestamp", System.currentTimeMillis())
-                    val dismissed = obj.optBoolean("isKeepDismissed", false)
-                    metaMap[key.lowercase()] = VocabularyItem(
-                        term = termName,
-                        addedTimestamp = added,
-                        lastUsedTimestamp = lastUsed,
-                        isKeepDismissed = dismissed
-                    )
+                    metaMap[key.lowercase()] = itemFromMetadata(termName, obj)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error parsing vocabulary metadata", e)
@@ -115,16 +123,9 @@ object CustomVocabularyRepository {
             val key = term.lowercase()
             val existing = metaMap[key]
             if (existing != null) {
-                itemsList.add(existing)
+                itemsList.add(existing.copy(term = existing.term.ifBlank { term }))
             } else {
-                itemsList.add(
-                    VocabularyItem(
-                        term = term,
-                        addedTimestamp = now,
-                        lastUsedTimestamp = now,
-                        isKeepDismissed = false
-                    )
-                )
+                itemsList.add(newItem(term, now))
             }
         }
 
@@ -137,6 +138,54 @@ object CustomVocabularyRepository {
         _vocabularyItems.value = itemsList
         recomputeCleanupSuggestions(itemsList)
         saveAll(termsList, itemsList)
+    }
+
+    private fun itemFromMetadata(termName: String, obj: JSONObject): VocabularyItem {
+        val added = obj.optLong("addedTimestamp", System.currentTimeMillis())
+        val lastUsed = obj.optLong("lastUsedTimestamp", added)
+        val dismissed = obj.optBoolean("isKeepDismissed", false)
+        val alias = VocabClassifier.normalizeAlias(obj.optString("spokenAlias", ""))
+        val storedAlias = if (alias.isEmpty() || VocabClassifier.isUsableAlias(alias)) alias else ""
+        val overridden = obj.optBoolean("classOverridden", false)
+        val parsed = parseStoredClass(obj.optString("vocabClass", ""))
+        val vocabClass = if (overridden && parsed != null) parsed else VocabClassifier.classify(termName)
+        return VocabularyItem(
+            term = termName,
+            addedTimestamp = added,
+            lastUsedTimestamp = lastUsed,
+            isKeepDismissed = dismissed,
+            vocabClass = vocabClass,
+            classOverridden = overridden && parsed != null,
+            spokenAlias = storedAlias,
+            trusted = vocabClass == VocabClass.EASY
+        )
+    }
+
+    private fun parseStoredClass(raw: String): VocabClass? {
+        return when (raw.trim().uppercase()) {
+            "EASY", "P" -> VocabClass.EASY
+            "TRICKY", "N" -> VocabClass.TRICKY
+            else -> null
+        }
+    }
+
+    private fun newItem(
+        term: String,
+        now: Long,
+        spokenAlias: String = "",
+        classOverride: VocabClass? = null
+    ): VocabularyItem {
+        val vocabClass = classOverride ?: VocabClassifier.classify(term)
+        return VocabularyItem(
+            term = term,
+            addedTimestamp = now,
+            lastUsedTimestamp = now,
+            isKeepDismissed = false,
+            vocabClass = vocabClass,
+            classOverridden = classOverride != null,
+            spokenAlias = spokenAlias,
+            trusted = vocabClass == VocabClass.EASY
+        )
     }
 
     private fun isSeededIdentity(term: String): Boolean {
@@ -166,13 +215,17 @@ object CustomVocabularyRepository {
                     put("addedTimestamp", item.addedTimestamp)
                     put("lastUsedTimestamp", item.lastUsedTimestamp)
                     put("isKeepDismissed", item.isKeepDismissed)
+                    put("vocabClass", item.vocabClass.name)
+                    put("classOverridden", item.classOverridden)
+                    put("spokenAlias", item.spokenAlias)
+                    put("trusted", item.trusted)
                 }
                 metaObj.put(item.term.lowercase(), obj)
             }
 
             sp.edit()
                 .putString(KEY_TERMS, termsArray.toString())
-                .putString(KEY_METADATA, metaObj.toString())
+                .putString(KEY_METADATA_V3, metaObj.toString())
                 .apply()
         } catch (e: Exception) {
             Log.e(TAG, "Error saving custom vocabulary data", e)
@@ -183,6 +236,71 @@ object CustomVocabularyRepository {
         return _vocabulary.value
     }
 
+    /**
+     * Terms actually given to Gemini Live for this mode.
+     * Tricky spellings are excluded. Easy trusted terms are capped:
+     * SMART ~25, VERBATIM ~60, newest first. The snapshot is taken at connect.
+     */
+    fun liveTerms(smartMode: Boolean): List<String> {
+        val cap = if (smartMode) SMART_LIVE_CAP else VERBATIM_LIVE_CAP
+        return _vocabularyItems.value.asSequence()
+            .filter { it.isLiveEligible() }
+            .map { it.term.trim() }
+            .filter { it.isNotEmpty() }
+            .distinctBy { it.lowercase() }
+            .take(cap)
+            .toList()
+    }
+
+    fun logLiveSelection(smartMode: Boolean, source: DiagnosticSource) {
+        val items = _vocabularyItems.value
+        val easy = items.count { it.vocabClass == VocabClass.EASY }
+        val tricky = items.count { it.vocabClass == VocabClass.TRICKY }
+        val sent = liveTerms(smartMode).size
+        val cap = if (smartMode) SMART_LIVE_CAP else VERBATIM_LIVE_CAP
+        val mode = if (smartMode) "SMART" else "VERBATIM"
+        val clause = if (smartMode) "dropped" else "kept"
+        AppLogRepository.logEvent(
+            source,
+            DiagnosticType.VOCAB_POLICY,
+            "terms_sent_to_live=$sent cap=$cap mode=$mode class_easy=$easy class_tricky=$tricky clause=$clause"
+        )
+    }
+
+    /**
+     * Exact alias restore before history and inject. Logs a count only.
+     * A confirmed restore is the strong usage signal for a Tricky term.
+     */
+    fun prepareOutgoingTranscript(text: String, source: DiagnosticSource): String {
+        val result = AliasRestore.restore(text, _vocabularyItems.value)
+        AppLogRepository.logEvent(
+            source,
+            DiagnosticType.VOCAB_POLICY,
+            "would_restore=${result.replacementCount}"
+        )
+        if (result.restoredTerms.isNotEmpty()) {
+            recordConfirmedAliasUse(result.restoredTerms)
+        }
+        return result.text
+    }
+
+    /**
+     * Hides Tricky spellings and emails before a payload is written to diagnostics.
+     * The WebSocket and Polish requests still send the real text.
+     */
+    fun redactForDiagnostics(text: String): String {
+        var out = TranscriptPrivacy.maskSensitive(text)
+        val needles = _vocabularyItems.value
+            .map { it.term.trim() }
+            .filter { it.length >= 2 && VocabClassifier.classify(it) == VocabClass.TRICKY }
+            .distinctBy { it.lowercase() }
+            .sortedByDescending { it.length }
+        for (needle in needles) {
+            out = out.replace(needle, "[vocab]", ignoreCase = true)
+        }
+        return out
+    }
+
     fun syncUsageFromHistory(historyItems: List<HistoryItem>) {
         if (historyItems.isEmpty()) return
         val currentItems = _vocabularyItems.value.toMutableList()
@@ -190,9 +308,9 @@ object CustomVocabularyRepository {
 
         currentItems.indices.forEach { idx ->
             val item = currentItems[idx]
-            // Find newest history item containing this term
+            if (item.vocabClass == VocabClass.TRICKY) return@forEach
             val newestMatch = historyItems
-                .filter { containsWordOrPhrase(it.text, item.term) }
+                .filter { containsExactTerm(it.text, item.term) }
                 .maxByOrNull { it.timestamp }
 
             if (newestMatch != null && newestMatch.timestamp > item.lastUsedTimestamp) {
@@ -211,6 +329,11 @@ object CustomVocabularyRepository {
         }
     }
 
+    /**
+     * Live output of a Tricky term is not usage. A snap must not refresh
+     * lastUsed and block the 60-day cleanup. Easy terms still match on a
+     * whole word or phrase, with no loose substring fallback.
+     */
     fun recordUsageFromTranscript(transcriptText: String) {
         if (transcriptText.isBlank()) return
         val currentItems = _vocabularyItems.value.toMutableList()
@@ -219,13 +342,13 @@ object CustomVocabularyRepository {
 
         currentItems.indices.forEach { idx ->
             val item = currentItems[idx]
-            if (containsWordOrPhrase(transcriptText, item.term)) {
-                currentItems[idx] = item.copy(
-                    lastUsedTimestamp = now,
-                    isKeepDismissed = false
-                )
-                updated = true
-            }
+            if (item.vocabClass == VocabClass.TRICKY) return@forEach
+            if (!containsExactTerm(transcriptText, item.term)) return@forEach
+            currentItems[idx] = item.copy(
+                lastUsedTimestamp = now,
+                isKeepDismissed = false
+            )
+            updated = true
         }
 
         if (updated) {
@@ -235,32 +358,58 @@ object CustomVocabularyRepository {
         }
     }
 
-    private fun containsWordOrPhrase(text: String, term: String): Boolean {
-        if (text.isBlank() || term.isBlank()) return false
-        val trimmedTerm = term.trim()
-        val regex = ("\\b" + Regex.escape(trimmedTerm) + "\\b").toRegex(RegexOption.IGNORE_CASE)
-        return regex.containsMatchIn(text) || text.contains(trimmedTerm, ignoreCase = true)
+    fun recordConfirmedAliasUse(terms: Collection<String>) {
+        if (terms.isEmpty()) return
+        val wanted = terms.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+        if (wanted.isEmpty()) return
+        val currentItems = _vocabularyItems.value.toMutableList()
+        val now = System.currentTimeMillis()
+        var updated = false
+        currentItems.indices.forEach { idx ->
+            val item = currentItems[idx]
+            if (item.term.trim().lowercase() !in wanted) return@forEach
+            currentItems[idx] = item.copy(
+                lastUsedTimestamp = now,
+                isKeepDismissed = false
+            )
+            updated = true
+        }
+        if (updated) {
+            _vocabularyItems.value = currentItems
+            recomputeCleanupSuggestions(currentItems)
+            saveAll(_vocabulary.value, currentItems)
+        }
     }
 
-    fun addTerm(term: String): Boolean {
+    private fun containsExactTerm(text: String, term: String): Boolean {
+        return AliasRestore.matchesExact(text, term)
+    }
+
+    fun addTerm(
+        term: String,
+        spokenAlias: String = "",
+        classOverride: VocabClass? = null
+    ): Boolean {
         val trimmed = term.trim()
         if (trimmed.isBlank()) return false
+        val normalizedAlias = VocabClassifier.normalizeAlias(spokenAlias)
+        if (normalizedAlias.isNotEmpty() && !VocabClassifier.isUsableAlias(normalizedAlias)) return false
         val currentTerms = _vocabulary.value.toMutableList()
         if (currentTerms.any { it.equals(trimmed, ignoreCase = true) }) {
-            return false // Duplicate
+            return false
         }
 
         val now = System.currentTimeMillis()
-        val newItem = VocabularyItem(
+        val newVocabItem = newItem(
             term = trimmed,
-            addedTimestamp = now,
-            lastUsedTimestamp = now,
-            isKeepDismissed = false
+            now = now,
+            spokenAlias = normalizedAlias,
+            classOverride = classOverride
         )
 
         currentTerms.add(0, trimmed)
         val currentItems = _vocabularyItems.value.toMutableList()
-        currentItems.add(0, newItem)
+        currentItems.add(0, newVocabItem)
 
         _vocabulary.value = currentTerms
         _vocabularyItems.value = currentItems
@@ -269,19 +418,51 @@ object CustomVocabularyRepository {
         return true
     }
 
-    fun editTerm(oldTerm: String, newTerm: String): Boolean {
+    fun editTerm(
+        oldTerm: String,
+        newTerm: String,
+        spokenAlias: String? = null,
+        classOverride: VocabClass? = null,
+        useAutoClass: Boolean = false
+    ): Boolean {
         val trimmedNew = newTerm.trim()
         if (trimmedNew.isBlank()) return false
         val currentTerms = _vocabulary.value.toMutableList()
         val index = currentTerms.indexOfFirst { it.equals(oldTerm, ignoreCase = true) }
         if (index == -1) return false
+        if (currentTerms.any { it.equals(trimmedNew, ignoreCase = true) && !it.equals(oldTerm, ignoreCase = true) }) {
+            return false
+        }
 
         currentTerms[index] = trimmedNew
         val currentItems = _vocabularyItems.value.toMutableList()
         val itemIndex = currentItems.indexOfFirst { it.term.equals(oldTerm, ignoreCase = true) }
         if (itemIndex != -1) {
             val oldItem = currentItems[itemIndex]
-            currentItems[itemIndex] = oldItem.copy(term = trimmedNew)
+            val alias = when (spokenAlias) {
+                null -> oldItem.spokenAlias
+                else -> {
+                    val normalized = VocabClassifier.normalizeAlias(spokenAlias)
+                    when {
+                        normalized.isEmpty() -> ""
+                        VocabClassifier.isUsableAlias(normalized) -> normalized
+                        else -> return false
+                    }
+                }
+            }
+            val (vocabClass, overridden) = when {
+                useAutoClass -> VocabClassifier.classify(trimmedNew) to false
+                classOverride != null -> classOverride to true
+                oldItem.classOverridden -> oldItem.vocabClass to true
+                else -> VocabClassifier.classify(trimmedNew) to false
+            }
+            currentItems[itemIndex] = oldItem.copy(
+                term = trimmedNew,
+                spokenAlias = alias,
+                vocabClass = vocabClass,
+                classOverridden = overridden,
+                trusted = vocabClass == VocabClass.EASY
+            )
         }
 
         _vocabulary.value = currentTerms

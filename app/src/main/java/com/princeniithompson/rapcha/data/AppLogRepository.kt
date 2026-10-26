@@ -74,7 +74,7 @@ object AppLogRepository {
         transcriptText: String,
         source: DiagnosticSource
     ) {
-        val summary = TranscriptPrivacy.summary(transcriptText)
+        val summary = TranscriptPrivacy.summary(CustomVocabularyRepository.redactForDiagnostics(transcriptText))
         _liveStats.update {
             it.copy(
                 source = source,

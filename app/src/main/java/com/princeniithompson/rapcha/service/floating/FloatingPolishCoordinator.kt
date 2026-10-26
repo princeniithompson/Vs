@@ -6,6 +6,7 @@ import android.util.Log
 import android.widget.Toast
 import com.princeniithompson.rapcha.core.ApiConfig
 import com.princeniithompson.rapcha.data.AppLogRepository
+import com.princeniithompson.rapcha.data.CustomVocabularyRepository
 import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.data.HistoryRepository
@@ -74,6 +75,7 @@ class FloatingPolishCoordinator {
 
         onStartPolish()
         val polishStartTime = SystemClock.elapsedRealtime()
+        val prepared = CustomVocabularyRepository.prepareOutgoingTranscript(rawTranscript, DiagnosticSource.BUBBLE)
 
         polishDebounceJob?.cancel()
         polishDebounceJob = scope.launch {
@@ -83,8 +85,10 @@ class FloatingPolishCoordinator {
                 AppLogRepository.addLog(
                     LogLevel.INFO,
                     "PolishAPI",
-                    "User tapped Polish ✨ for transcript (${rawTranscript.length} chars)",
-                    com.princeniithompson.rapcha.data.TranscriptPrivacy.summary(rawTranscript)
+                    "User tapped Polish ✨ for transcript (${prepared.length} chars)",
+                    com.princeniithompson.rapcha.data.TranscriptPrivacy.summary(
+                        CustomVocabularyRepository.redactForDiagnostics(prepared)
+                    )
                 )
                 AppLogRepository.logEvent(
                     DiagnosticSource.BUBBLE,
@@ -121,10 +125,12 @@ class FloatingPolishCoordinator {
                     withContext(Dispatchers.IO) {
                         result = FloatingPolishClient.polishTranscript(
                             apiKey = apiKey,
-                            rawTranscript = rawTranscript,
+                            rawTranscript = prepared,
                             category = category,
                             appName = targetAppName,
-                            aiPolishMode = aiMode
+                            aiPolishMode = aiMode,
+                            diagnosticSource = DiagnosticSource.BUBBLE,
+                            alreadyPrepared = true
                         )
                     }
                 }
@@ -140,12 +146,16 @@ class FloatingPolishCoordinator {
                         LogLevel.INFO,
                         "PolishAPI",
                         "Polish completed successfully!",
-                        com.princeniithompson.rapcha.data.TranscriptPrivacy.summary(polishedText)
+                        com.princeniithompson.rapcha.data.TranscriptPrivacy.summary(
+                            CustomVocabularyRepository.redactForDiagnostics(polishedText)
+                        )
                     )
                     AppLogRepository.logEvent(
                         DiagnosticSource.BUBBLE,
                         DiagnosticType.POLISH_SUCCESS,
-                        "Result: ${com.princeniithompson.rapcha.data.TranscriptPrivacy.summary(polishedText)}"
+                        "Result: ${com.princeniithompson.rapcha.data.TranscriptPrivacy.summary(
+                            CustomVocabularyRepository.redactForDiagnostics(polishedText)
+                        )}"
                     )
                     HistoryRepository.saveEntry(
                         text = polishedText,
@@ -155,13 +165,13 @@ class FloatingPolishCoordinator {
                     FloatingTextInjector.injectOrFallbackToClipboard(context, polishedText)
                     Toast.makeText(context, "Polished ✨", Toast.LENGTH_SHORT).show()
                 } else {
-                    if (rawTranscript.isNotBlank()) {
+                    if (prepared.isNotBlank()) {
                         HistoryRepository.saveEntry(
-                            text = rawTranscript,
+                            text = prepared,
                             mode = "VERBATIM",
                             appName = targetAppName
                         )
-                        FloatingTextInjector.injectOrFallbackToClipboard(context, rawTranscript)
+                        FloatingTextInjector.injectOrFallbackToClipboard(context, prepared)
                     }
                     val errorMsg = result?.errorDetail ?: "Unknown error"
                     Log.e(TAG, "Polish failed: $errorMsg")

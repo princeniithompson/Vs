@@ -309,7 +309,8 @@ class FloatingBubbleService : Service() {
         try {
             sessionManager.releaseMicrophoneNow()
             dropMicrophoneForegroundNow()
-            val text = sessionManager.finishActivityAndAwaitTranscript().trim()
+            val raw = sessionManager.finishActivityAndAwaitTranscript().trim()
+            val text = CustomVocabularyRepository.prepareOutgoingTranscript(raw, DiagnosticSource.BUBBLE)
             if (text.isBlank()) {
                 if (sessionManager.sessionBytesSent > 32_000L) {
                     DictationAlerts.finalTextLost(this)
@@ -559,11 +560,17 @@ class FloatingBubbleService : Service() {
 
     private fun performInjectionAndClose(textOverride: String? = null) {
         val startInjectTime = android.os.SystemClock.elapsedRealtime()
-        val textToInject = textOverride?.trim().takeUnless { it.isNullOrEmpty() }
+        val rawText = textOverride?.trim().takeUnless { it.isNullOrEmpty() }
             ?: sessionManager.getFullTranscriptText()
         val durationSec = sessionManager.durationSeconds
         if (sessionManager.isRecording) {
             stopVoiceTyping()
+        }
+
+        val textToInject = if (rawText.isBlank()) {
+            rawText
+        } else {
+            CustomVocabularyRepository.prepareOutgoingTranscript(rawText, DiagnosticSource.BUBBLE)
         }
 
         if (textToInject.isBlank()) {

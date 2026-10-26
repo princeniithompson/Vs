@@ -2,7 +2,10 @@ package com.princeniithompson.rapcha.service.floating
 
 import android.util.Log
 import com.princeniithompson.rapcha.config.RapchaConfig
+import com.princeniithompson.rapcha.data.AliasRestore
 import com.princeniithompson.rapcha.data.AppLogRepository
+import com.princeniithompson.rapcha.data.CustomVocabularyRepository
+import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.LogLevel
 import com.princeniithompson.rapcha.service.AppCategory
 import org.json.JSONArray
@@ -12,7 +15,8 @@ import java.net.URL
 
 data class PolishResult(
     val text: String?,
-    val errorDetail: String?
+    val errorDetail: String?,
+    val sourceText: String = ""
 )
 
 object FloatingPolishClient {
@@ -26,8 +30,15 @@ object FloatingPolishClient {
         rawTranscript: String,
         category: AppCategory = AppCategory.OTHER,
         appName: String = "App",
-        aiPolishMode: AiPolishMode? = null
+        aiPolishMode: AiPolishMode? = null,
+        diagnosticSource: DiagnosticSource = DiagnosticSource.BUBBLE,
+        alreadyPrepared: Boolean = false
     ): PolishResult {
+        val sourceText = if (alreadyPrepared) {
+            rawTranscript.trim()
+        } else {
+            CustomVocabularyRepository.prepareOutgoingTranscript(rawTranscript, diagnosticSource)
+        }
         if (RapchaConfig.isPlaceholderApiKey(apiKey)) {
             throw IllegalArgumentException("Gemini API Key is missing or placeholder. Please provide a valid key in Settings.")
         }
@@ -36,8 +47,13 @@ object FloatingPolishClient {
         val baseModels = RapchaConfig.GEMINI_MODEL_FALLBACKS
         val modelsToTry = listOf(lastSuccessfulPolishModel) + baseModels.filter { it != lastSuccessfulPolishModel }
 
-        val fullSystemInstruction = PolishPromptBuilder.buildSystemInstruction(category, appName)
-        val userContentText = rawTranscript
+        val protectedSpellings = AliasRestore.trickyTermsPresent(
+            sourceText,
+            CustomVocabularyRepository.vocabularyItems.value
+        )
+        val fullSystemInstruction = PolishPromptBuilder.buildSystemInstruction(category, appName) +
+            PolishPromptBuilder.spellingGuard(protectedSpellings)
+        val userContentText = sourceText
 
         fun buildJsonBody(modelName: String): String {
             return JSONObject().apply {
@@ -66,7 +82,7 @@ object FloatingPolishClient {
                     buildJsonBody(modelName)
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed creating Polish JSON request body for $modelName", e)
-                    return PolishResult(null, "JSON build error: ${e.message}")
+                    return PolishResult(null, "JSON build error: ${e.message}", sourceText)
                 }
 
                 val urlString = com.princeniithompson.rapcha.core.ApiConfig.geminiGenerateContentUrl(modelName)
@@ -76,7 +92,7 @@ object FloatingPolishClient {
                     LogLevel.SENT,
                     "PolishAPI",
                     "Sending POST request to model '$modelName' for $appName ($category)",
-                    jsonBody
+                    CustomVocabularyRepository.redactForDiagnostics(jsonBody)
                 )
 
                 connection = (url.openConnection() as HttpURLConnection).apply {
@@ -96,14 +112,15 @@ object FloatingPolishClient {
                 val responseCode = connection.responseCode
                 if (responseCode == 200) {
                     val responseString = connection.inputStream.bufferedReader().use { it.readText() }
+                    val redactedResponse = CustomVocabularyRepository.redactForDiagnostics(responseString)
                     if (com.princeniithompson.rapcha.BuildConfig.DEBUG) {
-                        Log.d(TAG, "Polish API success response from $modelName: $responseString")
+                        Log.d(TAG, "Polish API success response from $modelName: $redactedResponse")
                     }
                     AppLogRepository.addLog(
                         LogLevel.RECEIVED,
                         "PolishAPI",
                         "HTTP 200 OK from $modelName",
-                        responseString
+                        redactedResponse
                     )
 
                     val rootJson = JSONObject(responseString)
@@ -136,7 +153,12 @@ object FloatingPolishClient {
                             if (textResult.isNotBlank()) {
                                 Log.d(TAG, "Polish call succeeded using model $modelName for app $appName ($category)")
                                 lastSuccessfulPolishModel = modelName
-                                return PolishResult(textResult, null)
+                                val guarded = AliasRestore.guardPolishedText(
+                                    before = sourceText,
+                                    polished = textResult,
+                                    items = CustomVocabularyRepository.vocabularyItems.value
+                                )
+                                return PolishResult(guarded, null, sourceText)
                             }
                         }
                     }
@@ -145,13 +167,13 @@ object FloatingPolishClient {
                     val errorStreamText = connection.errorStream?.bufferedReader()?.use { it.readText() }
                         ?: connection.inputStream?.bufferedReader()?.use { it.readText() }
                         ?: "No error body"
-                    val errLogMsg = "HTTP $responseCode ($modelName): $errorStreamText"
+                    val errLogMsg = "HTTP $responseCode ($modelName)"
                     Log.e(TAG, "Polish API Error: $errLogMsg")
                     AppLogRepository.addLog(
                         LogLevel.ERROR,
                         "PolishAPI",
                         "HTTP $responseCode Error ($modelName)",
-                        errorStreamText
+                        CustomVocabularyRepository.redactForDiagnostics(errorStreamText)
                     )
                     errorsLog.add(errLogMsg)
                 }
@@ -169,6 +191,6 @@ object FloatingPolishClient {
                 connection?.disconnect()
             }
         }
-        return PolishResult(null, errorsLog.joinToString(" | "))
+        return PolishResult(null, errorsLog.joinToString(" | "), sourceText)
     }
 }

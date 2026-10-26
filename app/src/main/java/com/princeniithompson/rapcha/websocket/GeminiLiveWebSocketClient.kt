@@ -1052,7 +1052,7 @@ class GeminiLiveWebSocketClient(
         }
         val systemPromptText = buildString {
             append("You are an ultra-accurate real-time voice dictation engine. Transcribe ONLY the words spoken by the primary user closest to the microphone. Completely ignore background ambient sounds, restaurant noise, kitchen clatter, passing vehicles, and background conversations. Never transcribe non-speech sounds. Output only the transcribed text with proper capitalization and punctuation. Do not reply conversationally, do not answer questions, and do not add commentary—only output the verbatim transcription of what was said.")
-            append(TranscriptAcceptance.vocabularyClause(customVocabularyList))
+            append(TranscriptAcceptance.vocabularyClauseForSetup(customVocabularyList, isSmartMode))
         }
         val setupJson = JSONObject().apply {
             put("setup", JSONObject().apply {
@@ -1074,15 +1074,16 @@ class GeminiLiveWebSocketClient(
             })
         }
         val payload = setupJson.toString()
+        val loggedPayload = com.princeniithompson.rapcha.data.CustomVocabularyRepository.redactForDiagnostics(payload)
         val sent = socket.send(payload)
         if (sent) {
             val vadDiagnostics = "[Manual VAD] automaticActivityDetection.disabled=true; activityEnd closes one piece, not a pause"
             Log.i(TAG, vadDiagnostics)
-            onLog(LogLevel.SENT, TAG, "Setup message sent to server ($vadDiagnostics)", payload)
+            onLog(LogLevel.SENT, TAG, "Setup message sent to server ($vadDiagnostics)", loggedPayload)
         } else {
             val err = "Failed to send setup message over socket"
             Log.e(TAG, "[ConnectionState] FAILED: $err")
-            onLog(LogLevel.ERROR, TAG, err, payload)
+            onLog(LogLevel.ERROR, TAG, err, loggedPayload)
             notifyStateChanged(ConnectionState.Error(err))
             notifyError(err, GeminiLiveError.SetupFailed(err))
         }

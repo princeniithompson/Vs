@@ -50,6 +50,17 @@ object TranscriptAcceptance {
         return " Use this vocabulary only to correct the spelling of words the speaker clearly says: ${listed.joinToString(", ")}. Never insert a term that was not spoken. If there is no clear speech, output nothing."
     }
 
+    /**
+     * SMART drops this sentence. The customVocabulary array still carries the
+     * Easy terms, and repeating them in the prompt is what pulls unrelated
+     * speech onto a taught spelling. VERBATIM keeps the "never insert" sentence
+     * for the same already-filtered list. Tricky terms are not in [terms].
+     */
+    fun vocabularyClauseForSetup(terms: List<String>, smartMode: Boolean): String {
+        if (smartMode) return ""
+        return vocabularyClause(terms)
+    }
+
     fun isOnlyVocabulary(text: String, vocabulary: List<String>): Boolean {
         val tokens = tokenize(text)
         if (tokens.isEmpty()) return false

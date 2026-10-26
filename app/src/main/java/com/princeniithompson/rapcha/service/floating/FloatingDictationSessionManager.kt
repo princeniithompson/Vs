@@ -349,7 +349,8 @@ class FloatingDictationSessionManager(
             diagnosticSource = DiagnosticSource.BUBBLE,
             onPreviewPhase = onPreviewPhase
         ).apply {
-            val customVocab = CustomVocabularyRepository.getVocabulary()
+            val customVocab = CustomVocabularyRepository.liveTerms(smartMode)
+            CustomVocabularyRepository.logLiveSelection(smartMode, DiagnosticSource.BUBBLE)
             try {
                 connect(apiKey = apiKey, model = model, smartMode = smartMode, customVocabulary = customVocab)
             } catch (e: Exception) {

@@ -62,6 +62,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.princeniithompson.rapcha.data.CustomVocabularyRepository
+import com.princeniithompson.rapcha.data.VocabClass
+import com.princeniithompson.rapcha.data.VocabClassifier
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,14 +72,19 @@ fun DictionaryScreen(
     modifier: Modifier = Modifier
 ) {
     val vocabularyList by CustomVocabularyRepository.vocabulary.collectAsState()
+    val vocabularyItems by CustomVocabularyRepository.vocabularyItems.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
 
     var showAddDialog by remember { mutableStateOf(false) }
     var wordToAdd by remember { mutableStateOf("") }
+    var spokenAliasToAdd by remember { mutableStateOf("") }
+    var addClassChoice by remember { mutableStateOf(ClassChoice.AUTO) }
     var addError by remember { mutableStateOf<String?>(null) }
 
     var editingWord by remember { mutableStateOf<String?>(null) }
     var editedWordValue by remember { mutableStateOf("") }
+    var editAlias by remember { mutableStateOf("") }
+    var editClassChoice by remember { mutableStateOf(ClassChoice.AUTO) }
     var editError by remember { mutableStateOf<String?>(null) }
 
     val filteredList = remember(vocabularyList, searchQuery) {
@@ -396,21 +403,41 @@ fun DictionaryScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
+                                        val existing = vocabularyItems.firstOrNull {
+                                            it.term.equals(term, ignoreCase = true)
+                                        }
                                         editingWord = term
                                         editedWordValue = term
+                                        editAlias = existing?.spokenAlias.orEmpty()
+                                        editClassChoice = classChoiceFor(existing)
                                         editError = null
                                     }
                                     .padding(horizontal = 20.dp, vertical = 18.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = term,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = term,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    val item = vocabularyItems.firstOrNull {
+                                        it.term.equals(term, ignoreCase = true)
+                                    }
+                                    if (item?.vocabClass == VocabClass.TRICKY) {
+                                        Text(
+                                            text = if (item.spokenAlias.isBlank()) {
+                                                "Tricky · not sent to Live"
+                                            } else {
+                                                "Tricky · restored from how you say it"
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                             }
 
                             if (index < filteredList.size - 1) {
@@ -432,6 +459,8 @@ fun DictionaryScreen(
         FloatingActionButton(
             onClick = {
                 wordToAdd = ""
+                spokenAliasToAdd = ""
+                addClassChoice = ClassChoice.AUTO
                 addError = null
                 showAddDialog = true
             },
@@ -484,6 +513,44 @@ fun DictionaryScreen(
                             unfocusedIndicatorColor = MaterialTheme.colorScheme.outlineVariant
                         )
                     )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "How do you say it?",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    TextField(
+                        value = spokenAliasToAdd,
+                        onValueChange = {
+                            spokenAliasToAdd = it
+                            addError = null
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("add_word_alias_field"),
+                        placeholder = { Text("Optional. Example: thirty first") },
+                        singleLine = true,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = MaterialTheme.colorScheme.primary,
+                            unfocusedIndicatorColor = MaterialTheme.colorScheme.outlineVariant
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    ClassChoiceRow(
+                        choice = addClassChoice,
+                        onChoice = {
+                            addClassChoice = it
+                            addError = null
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = classHint(wordToAdd, addClassChoice),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     if (addError != null) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -502,7 +569,16 @@ fun DictionaryScreen(
                             addError = "Please enter a word or phrase"
                             return@TextButton
                         }
-                        val success = CustomVocabularyRepository.addTerm(trimmed)
+                        val aliasError = VocabClassifier.aliasError(spokenAliasToAdd)
+                        if (aliasError != null) {
+                            addError = aliasError
+                            return@TextButton
+                        }
+                        val success = CustomVocabularyRepository.addTerm(
+                            term = trimmed,
+                            spokenAlias = spokenAliasToAdd,
+                            classOverride = overrideFor(addClassChoice)
+                        )
                         if (success) {
                             showAddDialog = false
                         } else {
@@ -562,6 +638,44 @@ fun DictionaryScreen(
                             unfocusedIndicatorColor = MaterialTheme.colorScheme.outlineVariant
                         )
                     )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "How do you say it?",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    TextField(
+                        value = editAlias,
+                        onValueChange = {
+                            editAlias = it
+                            editError = null
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("edit_word_alias_field"),
+                        placeholder = { Text("Optional. Example: thirty first") },
+                        singleLine = true,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = MaterialTheme.colorScheme.primary,
+                            unfocusedIndicatorColor = MaterialTheme.colorScheme.outlineVariant
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    ClassChoiceRow(
+                        choice = editClassChoice,
+                        onChoice = {
+                            editClassChoice = it
+                            editError = null
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = classHint(editedWordValue, editClassChoice),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     if (editError != null) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -596,7 +710,18 @@ fun DictionaryScreen(
                                 editError = "Word cannot be blank"
                                 return@TextButton
                             }
-                            val success = CustomVocabularyRepository.editTerm(targetWord, trimmed)
+                            val aliasError = VocabClassifier.aliasError(editAlias)
+                            if (aliasError != null) {
+                                editError = aliasError
+                                return@TextButton
+                            }
+                            val success = CustomVocabularyRepository.editTerm(
+                                oldTerm = targetWord,
+                                newTerm = trimmed,
+                                spokenAlias = editAlias,
+                                classOverride = overrideFor(editClassChoice),
+                                useAutoClass = editClassChoice == ClassChoice.AUTO
+                            )
                             if (success) {
                                 editingWord = null
                             } else {
@@ -623,5 +748,74 @@ fun DictionaryScreen(
             shape = RoundedCornerShape(24.dp),
             containerColor = MaterialTheme.colorScheme.surface
         )
+    }
+}
+
+private enum class ClassChoice {
+    AUTO,
+    EASY,
+    TRICKY
+}
+
+private fun overrideFor(choice: ClassChoice): VocabClass? {
+    return when (choice) {
+        ClassChoice.AUTO -> null
+        ClassChoice.EASY -> VocabClass.EASY
+        ClassChoice.TRICKY -> VocabClass.TRICKY
+    }
+}
+
+private fun classChoiceFor(item: com.princeniithompson.rapcha.data.VocabularyItem?): ClassChoice {
+    if (item == null || !item.classOverridden) return ClassChoice.AUTO
+    return if (item.vocabClass == VocabClass.TRICKY) ClassChoice.TRICKY else ClassChoice.EASY
+}
+
+private fun effectiveClass(term: String, choice: ClassChoice): VocabClass {
+    return overrideFor(choice) ?: VocabClassifier.classify(term)
+}
+
+private fun classHint(term: String, choice: ClassChoice): String {
+    return if (effectiveClass(term, choice) == VocabClass.TRICKY) {
+        "Tricky spelling. It stays in the dictionary and is not sent to Live. Add how you say it to restore this exact spelling."
+    } else {
+        "Easy word. It can be sent to Live to help with spelling."
+    }
+}
+
+@Composable
+private fun ClassChoiceRow(
+    choice: ClassChoice,
+    onChoice: (ClassChoice) -> Unit
+) {
+    Column {
+        Text(
+            text = "Spelling",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ClassChoice.entries.forEach { option ->
+                val selected = option == choice
+                TextButton(
+                    onClick = { onChoice(option) },
+                    modifier = Modifier.testTag("class_choice_${option.name.lowercase()}")
+                ) {
+                    Text(
+                        text = when (option) {
+                            ClassChoice.AUTO -> "Auto"
+                            ClassChoice.EASY -> "Easy"
+                            ClassChoice.TRICKY -> "Tricky"
+                        },
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                }
+            }
+        }
     }
 }
