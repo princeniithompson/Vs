@@ -59,7 +59,7 @@ class StopTheSnapRepositoryTest {
     fun `live terms are easy trusted only and capped by mode`() {
         val app = freshRepo()
         repeat(70) { index ->
-            assertTrue(CustomVocabularyRepository.addTerm("easy$index"))
+            assertTrue(CustomVocabularyRepository.addTerm(easyName(index)))
         }
         assertTrue(CustomVocabularyRepository.addTerm("30frst", spokenAlias = "thirty first"))
         assertTrue(CustomVocabularyRepository.addTerm("me@mail.com"))
@@ -68,10 +68,10 @@ class StopTheSnapRepositoryTest {
         val verbatim = CustomVocabularyRepository.liveTerms(smartMode = false)
         assertEquals(CustomVocabularyRepository.SMART_LIVE_CAP, smart.size)
         assertEquals(CustomVocabularyRepository.VERBATIM_LIVE_CAP, verbatim.size)
-        assertEquals("easy69", smart.first())
-        assertFalse(smart.contains("easy0"))
-        assertTrue(verbatim.contains("easy10"))
-        assertFalse(verbatim.contains("easy0"))
+        assertEquals(easyName(69), smart.first())
+        assertFalse(smart.contains(easyName(0)))
+        assertTrue(verbatim.contains(easyName(10)))
+        assertFalse(verbatim.contains(easyName(0)))
         assertFalse(smart.any { it == "30frst" || it.contains("@") })
         assertFalse(verbatim.any { it == "30frst" || it.contains("@") })
         assertTrue(CustomVocabularyRepository.getVocabulary().contains("30frst"))
@@ -96,13 +96,12 @@ class StopTheSnapRepositoryTest {
 
     @Test
     fun `live output of a tricky term is not strong usage`() {
-        freshRepo()
         val meta = JSONObject()
         meta.put("30frst", termMeta("30frst", added = 1_000L, used = 5_000L))
         meta.put("invoice", termMeta("invoice", added = 1_000L, used = 5_000L))
         val prefs = RuntimeEnvironment.getApplication()
             .getSharedPreferences("custom_vocabulary_prefs", Context.MODE_PRIVATE)
-        prefs.edit()
+        prefs.edit().clear()
             .putString("vocabulary_terms", JSONArray(listOf("30frst", "invoice")).toString())
             .putString("vocabulary_metadata_v2", meta.toString())
             .putBoolean("seeded_identity_removed_v1", true)
@@ -140,6 +139,16 @@ class StopTheSnapRepositoryTest {
         assertTrue(logged.contains("would_restore=1"))
         assertFalse(logged.contains("30frst"))
         assertFalse(logged.contains("thirty first"))
+    }
+
+    private fun easyName(index: Int): String {
+        var n = index
+        val chars = CharArray(4)
+        for (place in 3 downTo 0) {
+            chars[place] = 'a' + (n % 26)
+            n /= 26
+        }
+        return "word" + String(chars)
     }
 
     private fun freshRepo(): android.app.Application {
