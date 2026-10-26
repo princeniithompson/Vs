@@ -44,6 +44,14 @@ object DictationAlerts {
         alert(context, "Final transcript was lost.", FloatingHapticType.PROBLEM)
     }
 
+    fun placementFailed(context: Context) {
+        alert(context, "Rapcha couldn't place your text.", FloatingHapticType.PROBLEM)
+    }
+
+    fun textCopied(context: Context) {
+        alert(context, "Your text was copied.", FloatingHapticType.ENDED)
+    }
+
     private fun alert(context: Context, text: String, haptic: FloatingHapticType) {
         FloatingHapticManager.trigger(context, haptic)
         if (!canPost(context)) return

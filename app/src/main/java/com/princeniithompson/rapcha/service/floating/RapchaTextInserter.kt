@@ -142,11 +142,26 @@ class RapchaTextInserter(private val context: Context) {
 
     private fun logDiagnosticInsertion(method: String, success: Boolean) {
         val label = if (success) method else "failed"
+        val pkg = FloatingBubbleManager.currentForegroundPackage.value?.takeIf { it.isNotBlank() } ?: "unknown"
         AppLogRepository.logEvent(
             DiagnosticSource.BUBBLE,
             DiagnosticType.TEXT_INSERTED,
-            "method=$label"
+            "method=$label package=$pkg"
         )
+    }
+
+    /**
+     * A session that was cut off before Complete. The words go to the clipboard
+     * even when a field is focused, and they are not typed into that field.
+     */
+    fun copyCutOffTranscript(text: String): Boolean {
+        if (text.isBlank()) return false
+        val ok = writeClipboard(
+            text = text,
+            details = "Copied to clipboard because the session was cut off before Complete"
+        )
+        logDiagnosticInsertion(if (ok) "clipboard" else "failed", success = ok)
+        return ok
     }
 
     /**
@@ -154,30 +169,36 @@ class RapchaTextInserter(private val context: Context) {
      * Silent copy with subtle floating ring indicator (no intrusive toasts).
      */
     private fun fallbackToClipboard(text: String): Boolean {
+        val ok = writeClipboard(
+            text = text,
+            details = "Copied to clipboard (no active editable node detected on screen)"
+        )
+        if (!ok) return false
+        Log.d(TAG, "Strict Fallback: Copied transcript to clipboard (${text.length} chars)")
+        FloatingBubbleManager.triggerClipboardFallbackIndicator()
+        FloatingHapticManager.trigger(context, FloatingHapticType.CLIPBOARD_FALLBACK)
+        return true
+    }
+
+    private fun writeClipboard(text: String, details: String): Boolean {
         return try {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             if (clipboard == null) {
                 Log.e(TAG, "ClipboardManager unavailable for fallback")
                 return false
             }
-
             val clip = ClipData.newPlainText("Rapcha Transcription", text)
             clipboard.setPrimaryClip(clip)
-            Log.d(TAG, "Strict Fallback: Copied transcript to clipboard (${text.length} chars)")
-
-            // Silent visual feedback on the floating ring + subtle haptic tick
-            FloatingBubbleManager.triggerClipboardFallbackIndicator()
-            FloatingHapticManager.trigger(context, FloatingHapticType.CLIPBOARD_FALLBACK)
-
+            Log.d(TAG, "Copied transcript to clipboard (${text.length} chars)")
             logInjectionTrace(
                 text = text,
                 method = "FALLBACK_CLIPBOARD",
-                details = "Copied to clipboard (no active editable node detected on screen)",
+                details = details,
                 outcome = "SUCCESS"
             )
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Error in fallbackToClipboard: ${e.message}", e)
+            Log.e(TAG, "Error copying to clipboard: ${e.message}", e)
             false
         }
     }

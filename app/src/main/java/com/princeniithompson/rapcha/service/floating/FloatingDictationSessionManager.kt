@@ -423,17 +423,25 @@ class FloatingDictationSessionManager(
     }
 
     /**
-     * User pressed Complete. Stop the mic, send activityEnd, and wait for the
-     * authoritative transcript. Pauses never reach this path.
+     * Drop the microphone before any network wait. Safe Mode calls this first
+     * so the privacy indicator does not stay up while the final transcript arrives.
      */
-    suspend fun finishActivityAndAwaitTranscript(): String {
-        if (!isRecording && webSocketClient == null) return getFullTranscriptText()
+    suspend fun releaseMicrophoneNow() {
         durationJob?.cancel()
         durationJob = null
         drainJob?.cancel()
         drainJob = null
         audioRecorder.stopAndJoin()
         isRecording = false
+    }
+
+    /**
+     * User pressed Complete. Stop the mic, send activityEnd, and wait for the
+     * authoritative transcript. Pauses never reach this path.
+     */
+    suspend fun finishActivityAndAwaitTranscript(): String {
+        if (!isRecording && webSocketClient == null) return getFullTranscriptText()
+        releaseMicrophoneNow()
 
         refreshDurationFromClock()
         val durationAtEnd = durationSeconds

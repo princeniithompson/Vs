@@ -19,13 +19,20 @@ enum class AppCategory(val groupName: String) {
             if (str.isNullOrBlank()) return OTHER
             val upper = str.trim().uppercase()
             return when {
-                upper.contains("AI") -> AI_CHAT
-                upper.contains("MESSAG") || upper.contains("CHAT") -> MESSAGING
                 upper.contains("EMAIL") || upper.contains("MAIL") -> EMAIL
                 upper.contains("NOTE") || upper.contains("DOC") || upper.contains("WORK") -> NOTES_DOCS
                 upper.contains("SOCIAL") -> SOCIAL
+                isAiLabel(upper) -> AI_CHAT
+                upper.contains("MESSAG") || upper.contains("CHAT") -> MESSAGING
                 else -> OTHER
             }
+        }
+
+        private val AI_TOKEN = Regex("""(^|[^A-Z])AI([^A-Z]|$)""")
+
+        fun isAiLabel(upper: String): Boolean {
+            if (upper.contains("AI CHAT") || upper.contains("ASSISTANT")) return true
+            return AI_TOKEN.containsMatchIn(upper)
         }
     }
 }
@@ -42,7 +49,7 @@ object AppClassifier {
     private val AI_CHAT_NAMES = setOf(
         "gemini", "chatgpt", "claude", "grok", "copilot", "perplexity",
         "ai studio", "google ai studio", "deepseek", "kimi", "qwen",
-        "poe", "character.ai", "v0", "notebooklm", "flow", "google flow"
+        "poe", "character.ai", "v0", "notebooklm", "google flow"
     )
 
     private val MESSAGING_NAMES = setOf(
@@ -108,6 +115,34 @@ object AppClassifier {
         return classify(packageName, resolvedAppName) == AppCategory.AI_CHAT
     }
 
+    private val AI_PACKAGE_TOKEN = Regex("""(^|[^a-z])ai([^a-z]|$)""")
+
+    /**
+     * "ai" only counts when it is its own token, so gmail, detail, available, and daily do not match.
+     * ai.x.grok and character.ai still match.
+     */
+    fun containsAiToken(value: String?): Boolean {
+        if (value.isNullOrBlank()) return false
+        return AI_PACKAGE_TOKEN.containsMatchIn(value.lowercase())
+    }
+
+    /**
+     * File managers were landing in the AI polish mode because their package or label
+     * contained "ai" or "flow" as a substring. They are ordinary apps.
+     */
+    fun isFileManager(packageName: String?, displayName: String?): Boolean {
+        val pkg = packageName?.lowercase().orEmpty()
+        val name = displayName?.lowercase()?.trim().orEmpty()
+        val pkgTokens = listOf(
+            "documentsui", "filemanager", "fileexplorer", "myfiles",
+            "nbu.files", "estrongs", "totalcommander", "solidexplorer"
+        )
+        if (pkgTokens.any { pkg.contains(it) }) return true
+        if (name == "files" || name == "my files") return true
+        val nameTokens = listOf("file manager", "file explorer", "my files", "files by google")
+        return nameTokens.any { name.contains(it) }
+    }
+
     /**
      * Classifies an app based on name and package:
      * 1. Check Instant Static Dictionary by name
@@ -117,6 +152,8 @@ object AppClassifier {
      */
     fun classify(packageName: String?, resolvedAppName: String? = null, context: Context? = null): AppCategory {
         val nameLower = (resolvedAppName ?: "").trim().lowercase()
+
+        if (isFileManager(packageName, resolvedAppName)) return AppCategory.OTHER
 
         // 1. Instant Static Dictionary (Zero Latency)
         if (nameLower.isNotEmpty()) {

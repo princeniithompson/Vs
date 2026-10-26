@@ -25,6 +25,17 @@ object TranscriptAcceptance {
         return rmsMean < QUIET_MEAN && rmsMax < QUIET_MAX
     }
 
+    /**
+     * Logged when [accept] drops non-blank text. The message has a word count and RMS, never the words.
+     */
+    fun silenceDroppedMessage(raw: String, accepted: String, rmsMean: Double, rmsMax: Double): String? {
+        if (raw.isBlank() || accepted.isNotBlank()) return null
+        val words = raw.trim().split(Regex("\\s+")).count { it.isNotBlank() }
+        val mean = String.format(Locale.US, "%.0f", rmsMean)
+        val max = String.format(Locale.US, "%.0f", rmsMax)
+        return "words=$words rms_mean=$mean rms_max=$max"
+    }
+
     fun accept(text: String, rmsMean: Double, rmsMax: Double, vocabulary: List<String>, samples: Int = 1): String {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return ""

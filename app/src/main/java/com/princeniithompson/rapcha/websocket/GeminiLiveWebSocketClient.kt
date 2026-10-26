@@ -769,13 +769,15 @@ class GeminiLiveWebSocketClient(
         cancelCompanionWait()
         if (splitting.get()) {
             val audio = planner.pieceAudio()
+            val rawOrphan = lastInterimText.trim()
             val orphan = TranscriptAcceptance.accept(
-                lastInterimText.trim(),
+                rawOrphan,
                 audio.rmsMean,
                 audio.rmsMax,
                 com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
                 audio.samples
             )
+            noteSilenceDrop(rawOrphan, orphan, audio.rmsMean, audio.rmsMax)
             if (orphan.isNotEmpty() && endpointSettled.compareAndSet(false, true)) {
                 commitPiece(orphan, dedup = false)
             }
@@ -966,6 +968,7 @@ class GeminiLiveWebSocketClient(
             com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
             audio.samples
         )
+        noteSilenceDrop(raw, piece, audio.rmsMean, audio.rmsMax)
         if (piece.isNotEmpty()) {
             committedText = TranscriptSeam.append(committedText, piece)
             committedPieces += 1
@@ -1169,6 +1172,7 @@ class GeminiLiveWebSocketClient(
             com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
             samples = if (split == null) planner.pieceAudio().samples else 1
         )
+        noteSilenceDrop(raw, accepted, audioMean, audioMax)
         val overlap = if (split?.replay == true) {
             TranscriptSeam.dropOverlap(committedText, accepted)
         } else {
@@ -1216,13 +1220,15 @@ class GeminiLiveWebSocketClient(
 
     private fun preserveOpenPiece() {
         val audio = planner.pieceAudio()
+        val rawOrphan = lastInterimText.trim()
         val orphan = TranscriptAcceptance.accept(
-            lastInterimText.trim(),
+            rawOrphan,
             audio.rmsMean,
             audio.rmsMax,
             com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
             audio.samples
         )
+        noteSilenceDrop(rawOrphan, orphan, audio.rmsMean, audio.rmsMax)
         if (orphan.isEmpty() || endpointSettled.get()) return
         commitPiece(orphan, dedup = false)
         lastInterimText = ""
@@ -1461,6 +1467,11 @@ class GeminiLiveWebSocketClient(
             DiagnosticType.CONNECTION_AGE,
             "interim_past_223s=$flag connection_age_ms=${marker.connectionAgeMs}"
         )
+    }
+
+    private fun noteSilenceDrop(raw: String, accepted: String, rmsMean: Double, rmsMax: Double) {
+        val message = TranscriptAcceptance.silenceDroppedMessage(raw, accepted, rmsMean, rmsMax) ?: return
+        logDiag(DiagnosticType.SILENCE_DROPPED, message)
     }
 
     private fun logDiag(type: DiagnosticType, message: String) {

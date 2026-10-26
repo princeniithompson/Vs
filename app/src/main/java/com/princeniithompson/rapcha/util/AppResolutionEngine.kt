@@ -488,6 +488,20 @@ class AppResolutionEngine(cacheSize: Int = 150) {
         } else {
             evidence.learnedRegistryKey
         }
+        if (com.princeniithompson.rapcha.service.AppClassifier.isFileManager(
+                pkg,
+                evidence.localDisplayName.ifBlank { evidence.appLabel }
+            )
+        ) {
+            val result = AppContext(
+                name = evidence.localDisplayName.ifBlank { evidence.appLabel ?: "Files" },
+                category = "Other",
+                isAiApp = false,
+                isLocallyResolved = true
+            )
+            appCache.put(cacheKey, result)
+            return result
+        }
         val cached = appCache.get(cacheKey)
         if (cached != null) return cached
 
@@ -668,21 +682,34 @@ class AppResolutionEngine(cacheSize: Int = 150) {
     private fun evaluateHeuristics(evidence: AppEvidence): AppContext? {
         val pkgLower = evidence.packageName.lowercase()
         val nameLower = evidence.localDisplayName.lowercase()
+        if (com.princeniithompson.rapcha.service.AppClassifier.isFileManager(pkgLower, nameLower)) return null
         val allNodeText = (evidence.visibleNodeTexts + evidence.contentDescriptions).joinToString(" ").lowercase()
         val titleLower = (evidence.windowTitle ?: "").lowercase()
 
         val strongAiPhrases = listOf("new chat", "ask anything", "send a message", "regenerate response", "select model", "conversation history")
         val strongAiMatchCount = strongAiPhrases.count { allNodeText.contains(it) || titleLower.contains(it) }
 
-        val weakAiKeywords = listOf("ai", "chat", "assistant", "bot", "gpt", "api", "chatgpt", "claude", "grok", "kimi", "qwen", "deepseek", "perplexity", "copilot", "character.ai", "midjourney")
-        val weakAiMatchCount = weakAiKeywords.count { allNodeText.contains(it) || titleLower.contains(it) || pkgLower.contains(it) || nameLower.contains(it) }
+        val weakAiKeywords = listOf("chat", "assistant", "bot", "gpt", "chatgpt", "claude", "grok", "kimi", "qwen", "deepseek", "perplexity", "copilot", "character.ai", "midjourney")
+        fun hit(keyword: String, haystack: String): Boolean {
+            if (keyword == "ai") return com.princeniithompson.rapcha.service.AppClassifier.containsAiToken(haystack)
+            return haystack.contains(keyword)
+        }
+        val weakAiMatchCount = weakAiKeywords.count { keyword ->
+            hit(keyword, allNodeText) || hit(keyword, titleLower) || hit(keyword, pkgLower) || hit(keyword, nameLower)
+        } + listOf(allNodeText, titleLower, pkgLower, nameLower).count {
+            com.princeniithompson.rapcha.service.AppClassifier.containsAiToken(it)
+        }
 
-        if (strongAiMatchCount >= 2 || (strongAiMatchCount >= 1 && weakAiMatchCount >= 2) || (pkgLower.contains("ai") && strongAiMatchCount >= 1)) {
+        if (strongAiMatchCount >= 2 || (strongAiMatchCount >= 1 && weakAiMatchCount >= 2)) {
             val displayName = if (evidence.localDisplayName.isBlank() || evidence.localDisplayName == "App") "AI Assistant" else evidence.localDisplayName
             return AppContext(displayName, "AI", true, ResolvedIdentity.UNKNOWN, ResolvedCategory.AI_ASSISTANT)
         }
 
-        if (weakAiKeywords.any { pkgLower.contains(it) || nameLower.contains(it) }) {
+        val explicit = listOf("chatgpt", "claude", "grok", "gemini", "openai", "perplexity", "deepseek", "copilot", "qwen", "kimi", "character.ai", "midjourney")
+        val namedAi = explicit.any { pkgLower.contains(it) || nameLower.contains(it) } ||
+            com.princeniithompson.rapcha.service.AppClassifier.containsAiToken(pkgLower) ||
+            com.princeniithompson.rapcha.service.AppClassifier.containsAiToken(nameLower)
+        if (namedAi) {
             return AppContext(evidence.localDisplayName, "AI", true, ResolvedIdentity.UNKNOWN, ResolvedCategory.AI_ASSISTANT)
         }
 
