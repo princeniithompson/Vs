@@ -426,13 +426,10 @@ fun DictionaryScreen(
                                     val item = vocabularyItems.firstOrNull {
                                         it.term.equals(term, ignoreCase = true)
                                     }
-                                    if (item?.vocabClass == VocabClass.TRICKY) {
+                                    val rowNote = dictionaryRowNote(item)
+                                    if (rowNote != null) {
                                         Text(
-                                            text = if (item.spokenAlias.isBlank()) {
-                                                "Tricky · not sent to Live"
-                                            } else {
-                                                "Tricky · restored from how you say it"
-                                            },
+                                            text = rowNote,
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -495,61 +492,24 @@ fun DictionaryScreen(
             },
             text = {
                 Column {
-                    TextField(
-                        value = wordToAdd,
-                        onValueChange = {
+                    WordAndAliasFields(
+                        spelling = wordToAdd,
+                        onSpelling = {
                             wordToAdd = it
                             addError = null
                         },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("add_word_text_field"),
-                        placeholder = { Text("e.g. GG api, Prince Nii, Kubernetes") },
-                        singleLine = true,
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            focusedIndicatorColor = MaterialTheme.colorScheme.primary,
-                            unfocusedIndicatorColor = MaterialTheme.colorScheme.outlineVariant
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "How do you say it?",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    TextField(
-                        value = spokenAliasToAdd,
-                        onValueChange = {
+                        alias = spokenAliasToAdd,
+                        onAlias = {
                             spokenAliasToAdd = it
                             addError = null
                         },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("add_word_alias_field"),
-                        placeholder = { Text("Optional. Example: thirty first") },
-                        singleLine = true,
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            focusedIndicatorColor = MaterialTheme.colorScheme.primary,
-                            unfocusedIndicatorColor = MaterialTheme.colorScheme.outlineVariant
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    ClassChoiceRow(
-                        choice = addClassChoice,
-                        onChoice = {
+                        spellingTag = "add_word_text_field",
+                        aliasTag = "add_word_alias_field",
+                        classChoice = addClassChoice,
+                        onClassChoice = {
                             addClassChoice = it
                             addError = null
                         }
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = classHint(wordToAdd, addClassChoice),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (addError != null) {
                         Spacer(modifier = Modifier.height(4.dp))
@@ -621,60 +581,24 @@ fun DictionaryScreen(
             },
             text = {
                 Column {
-                    TextField(
-                        value = editedWordValue,
-                        onValueChange = {
+                    WordAndAliasFields(
+                        spelling = editedWordValue,
+                        onSpelling = {
                             editedWordValue = it
                             editError = null
                         },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("edit_word_text_field"),
-                        singleLine = true,
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            focusedIndicatorColor = MaterialTheme.colorScheme.primary,
-                            unfocusedIndicatorColor = MaterialTheme.colorScheme.outlineVariant
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "How do you say it?",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    TextField(
-                        value = editAlias,
-                        onValueChange = {
+                        alias = editAlias,
+                        onAlias = {
                             editAlias = it
                             editError = null
                         },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("edit_word_alias_field"),
-                        placeholder = { Text("Optional. Example: thirty first") },
-                        singleLine = true,
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            focusedIndicatorColor = MaterialTheme.colorScheme.primary,
-                            unfocusedIndicatorColor = MaterialTheme.colorScheme.outlineVariant
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    ClassChoiceRow(
-                        choice = editClassChoice,
-                        onChoice = {
+                        spellingTag = "edit_word_text_field",
+                        aliasTag = "edit_word_alias_field",
+                        classChoice = editClassChoice,
+                        onClassChoice = {
                             editClassChoice = it
                             editError = null
                         }
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = classHint(editedWordValue, editClassChoice),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (editError != null) {
                         Spacer(modifier = Modifier.height(4.dp))
@@ -774,12 +698,96 @@ private fun effectiveClass(term: String, choice: ClassChoice): VocabClass {
     return overrideFor(choice) ?: VocabClassifier.classify(term)
 }
 
-private fun classHint(term: String, choice: ClassChoice): String {
-    return if (effectiveClass(term, choice) == VocabClass.TRICKY) {
-        "Tricky spelling. It stays in the dictionary and is not sent to Live. Add how you say it to restore this exact spelling."
-    } else {
-        "Easy word. It can be sent to Live to help with spelling."
+private fun dictionaryRowNote(item: com.princeniithompson.rapcha.data.VocabularyItem?): String? {
+    if (item == null) return null
+    val alias = item.spokenAlias.trim()
+    if (alias.isNotEmpty()) return "When I say: $alias"
+    if (item.vocabClass == VocabClass.TRICKY) {
+        return "Tricky · restore will not work until you fill When I say this"
     }
+    return null
+}
+
+private fun classHint(term: String, choice: ClassChoice, spokenAlias: String): String {
+    if (effectiveClass(term, choice) != VocabClass.TRICKY) {
+        return "Easy word. It can be sent to Live to help with spelling."
+    }
+    if (VocabClassifier.aliasParts(spokenAlias).isEmpty()) {
+        return "Tricky spelling. Restore will not work until you fill in When I say this."
+    }
+    return "Tricky spelling. It is not sent to Live. Rapcha writes it when you say the words above."
+}
+
+@Composable
+private fun WordAndAliasFields(
+    spelling: String,
+    onSpelling: (String) -> Unit,
+    alias: String,
+    onAlias: (String) -> Unit,
+    spellingTag: String,
+    aliasTag: String,
+    classChoice: ClassChoice,
+    onClassChoice: (ClassChoice) -> Unit
+) {
+    Text(
+        text = "Write it like this",
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.SemiBold
+    )
+    TextField(
+        value = spelling,
+        onValueChange = onSpelling,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(spellingTag),
+        placeholder = { Text("30frst") },
+        singleLine = true,
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = Color.Transparent,
+            unfocusedContainerColor = Color.Transparent,
+            focusedIndicatorColor = MaterialTheme.colorScheme.primary,
+            unfocusedIndicatorColor = MaterialTheme.colorScheme.outlineVariant
+        )
+    )
+    Text(
+        text = "Exact spelling in the text box (e.g. 30frst).",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    Text(
+        text = "When I say this",
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.SemiBold
+    )
+    TextField(
+        value = alias,
+        onValueChange = onAlias,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(aliasTag),
+        placeholder = { Text("thirty first") },
+        singleLine = true,
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = Color.Transparent,
+            unfocusedContainerColor = Color.Transparent,
+            focusedIndicatorColor = MaterialTheme.colorScheme.primary,
+            unfocusedIndicatorColor = MaterialTheme.colorScheme.outlineVariant
+        )
+    )
+    Text(
+        text = "Normal words you will speak. Rapcha swaps them for the spelling above. Needed for tricky spellings Live cannot hear (digits, emails). Separate extra ways with commas.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    ClassChoiceRow(choice = classChoice, onChoice = onClassChoice)
+    Spacer(modifier = Modifier.height(6.dp))
+    Text(
+        text = classHint(spelling, classChoice, alias),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 @Composable

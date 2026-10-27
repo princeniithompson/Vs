@@ -24,19 +24,49 @@ object VocabClassifier {
         return VocabClass.EASY
     }
 
+    /**
+     * Comma-separated spoken triggers, whitespace collapsed. Empty pieces are dropped.
+     * "thirty first, three oh first" is two aliases. Matching ignores hyphens.
+     */
+    fun aliasParts(raw: String): List<String> {
+        return raw.split(',')
+            .map { it.trim().replace(Regex("\\s+"), " ") }
+            .filter { it.isNotEmpty() }
+    }
+
     fun normalizeAlias(raw: String): String {
-        return raw.trim().replace(Regex("\\s+"), " ")
+        return aliasParts(raw).joinToString(", ")
     }
 
     fun isUsableAlias(alias: String): Boolean {
-        val normalized = normalizeAlias(alias)
-        return normalized.length >= 2 && normalized.any { it.isLetter() }
+        val parts = aliasParts(alias)
+        if (parts.isEmpty()) return false
+        return parts.all { part -> part.length >= 2 && part.any { it.isLetter() } }
     }
 
     fun aliasError(alias: String): String? {
-        val normalized = normalizeAlias(alias)
-        if (normalized.isEmpty()) return null
-        if (!isUsableAlias(normalized)) return "Say it as a word or short phrase"
+        if (alias.isBlank()) return null
+        if (!isUsableAlias(alias)) {
+            return "Use normal words. Separate extra ways of saying it with commas."
+        }
         return null
     }
+
+    /**
+     * Forms used only for restore matching.
+     * "thirty-first" and "thirty first" share tokens [thirty, first] and joined "thirtyfirst".
+     */
+    fun matchKey(alias: String): AliasMatchKey {
+        val tokens = Regex("[\\p{L}\\p{N}]+")
+            .findAll(alias.lowercase())
+            .map { it.value }
+            .filter { it.isNotEmpty() }
+            .toList()
+        return AliasMatchKey(tokens, tokens.joinToString(""))
+    }
 }
+
+data class AliasMatchKey(
+    val tokens: List<String>,
+    val joined: String
+)

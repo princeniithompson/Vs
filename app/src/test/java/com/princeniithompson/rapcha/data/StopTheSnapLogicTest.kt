@@ -72,7 +72,7 @@ class StopTheSnapLogicTest {
             polished = "Please use thirty-first today",
             items = items
         )
-        assertEquals("use 30frst today", kept)
+        assertEquals("Please use 30frst today", kept)
 
         val allowed = AliasRestore.guardPolishedText(
             before = "use 30frst today",
@@ -80,6 +80,72 @@ class StopTheSnapLogicTest {
             items = items
         )
         assertEquals("Please use 30frst today.", allowed)
+    }
+
+    @Test
+    fun `taught alias matches joined and hyphenated live spellings only`() {
+        val key = VocabClassifier.matchKey("thirty-first")
+        assertEquals(listOf("thirty", "first"), key.tokens)
+        assertEquals("thirtyfirst", key.joined)
+        assertEquals(key.joined, VocabClassifier.matchKey("thirty first").joined)
+
+        val items = listOf(
+            VocabularyItem(
+                term = "30frst",
+                vocabClass = VocabClass.TRICKY,
+                spokenAlias = "thirty first",
+                trusted = false
+            )
+        )
+        assertEquals("30frst", AliasRestore.restore("ThirtyFirst", items).text)
+        assertEquals("30frst", AliasRestore.restore("thirty-first", items).text)
+        assertEquals("30frst", AliasRestore.restore("Thirty first", items).text)
+        val spoken = AliasRestore.restore("ThirtyFirst. My nickname is ThirtyFirst.", items)
+        assertEquals("30frst. My nickname is 30frst.", spoken.text)
+        assertEquals(2, spoken.replacementCount)
+
+        listOf(
+            "TouchyFirst",
+            "31st",
+            "Desi First",
+            "Grokbot",
+            "Grok bot",
+            "That's the first.",
+            "the thirty firstly"
+        ).forEach { phrase ->
+            val result = AliasRestore.restore(phrase, items)
+            assertEquals(phrase, result.text)
+            assertEquals(0, result.replacementCount)
+        }
+    }
+
+    @Test
+    fun `comma separated aliases restore only what was taught and longest wins`() {
+        val taught = listOf(
+            VocabularyItem(
+                term = "30frst",
+                vocabClass = VocabClass.TRICKY,
+                spokenAlias = "thirty first, 31st",
+                trusted = false
+            )
+        )
+        assertEquals("30frst", AliasRestore.restore("31st", taught).text)
+        assertEquals("30frst", AliasRestore.restore("ThirtyFirst", taught).text)
+
+        val untaught = taught.map { it.copy(spokenAlias = "thirty first") }
+        assertEquals("31st", AliasRestore.restore("31st", untaught).text)
+
+        val both = listOf(
+            VocabularyItem(term = "ONE", vocabClass = VocabClass.EASY, spokenAlias = "first"),
+            VocabularyItem(
+                term = "30frst",
+                vocabClass = VocabClass.TRICKY,
+                spokenAlias = "thirty first",
+                trusted = false
+            )
+        )
+        assertEquals("30frst", AliasRestore.restore("ThirtyFirst", both).text)
+        assertEquals("the ONE", AliasRestore.restore("the first", both).text)
     }
 
     @Test
