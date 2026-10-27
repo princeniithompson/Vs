@@ -48,6 +48,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,7 +68,9 @@ import com.princeniithompson.rapcha.data.CustomVocabularyRepository
 @Composable
 fun DictionaryScreen(
     onOpenMenu: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    draftTerm: String? = null,
+    onDraftConsumed: () -> Unit = {}
 ) {
     val vocabularyList by CustomVocabularyRepository.vocabulary.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
@@ -79,6 +82,16 @@ fun DictionaryScreen(
     var editingWord by remember { mutableStateOf<String?>(null) }
     var editedWordValue by remember { mutableStateOf("") }
     var editError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(draftTerm) {
+        val draft = draftTerm?.trim().orEmpty()
+        if (draft.isNotEmpty()) {
+            wordToAdd = draft
+            addError = null
+            showAddDialog = true
+            onDraftConsumed()
+        }
+    }
 
     val filteredList = remember(vocabularyList, searchQuery) {
         if (searchQuery.isBlank()) {

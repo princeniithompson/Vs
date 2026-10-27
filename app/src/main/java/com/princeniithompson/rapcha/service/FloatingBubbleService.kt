@@ -30,6 +30,7 @@ import com.princeniithompson.rapcha.service.floating.FloatingOverlayWindowManage
 import com.princeniithompson.rapcha.service.floating.FloatingPolishCoordinator
 import com.princeniithompson.rapcha.service.floating.FloatingTextInjector
 import com.princeniithompson.rapcha.service.floating.RapchaTextInserter
+import com.princeniithompson.rapcha.service.floating.VocabSuggestions
 import com.princeniithompson.rapcha.websocket.GeminiLiveWebSocketClient
 import com.princeniithompson.rapcha.websocket.InterimPreviewMonitor
 import kotlinx.coroutines.CoroutineScope
@@ -331,6 +332,8 @@ class FloatingBubbleService : Service() {
                     } else {
                         DictationAlerts.placementFailed(this)
                     }
+                    // Count the cutoff transcript only after the clipboard handoff.
+                    VocabSuggestions.onOutgoingText(this, text)
                 }
                 SessionPlacement.Path.INJECT -> Unit
             }
@@ -586,6 +589,8 @@ class FloatingBubbleService : Service() {
         serviceScope.launch {
             try {
                 val placed = FloatingTextInjector.injectReporting(this@FloatingBubbleService, textToInject)
+                // Count the injected transcript after placement. Do not count before inject.
+                VocabSuggestions.onOutgoingText(this@FloatingBubbleService, textToInject)
                 if (sessionLimitAutoFinish) {
                     when (placed) {
                         is RapchaTextInserter.InsertionResult.SuccessClipboardFallback ->
