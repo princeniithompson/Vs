@@ -70,7 +70,8 @@ object DictationAlerts {
         if (!canPost(context)) return false
         createChannel(context)
         val text = "Add \"$display\" to custom vocabulary?"
-        val detail = "You've used \"$display\" in $sessionCount sessions. Add it to your dictionary?"
+        val times = if (sessionCount == 1) "1 session" else "$sessionCount sessions"
+        val detail = "You've used \"$display\" in $times. Add it to your dictionary?"
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Rapcha")

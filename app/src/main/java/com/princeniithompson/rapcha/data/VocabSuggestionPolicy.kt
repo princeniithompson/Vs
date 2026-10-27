@@ -45,6 +45,10 @@ object VocabSuggestionPolicy {
         fun isReady(nowMs: Long): Boolean {
             return sessionCount >= SESSION_THRESHOLD && !prompted && nowMs >= snoozeUntilMs
         }
+
+        fun isPersonalReady(nowMs: Long): Boolean {
+            return sessionCount >= 1 && !prompted && nowMs >= snoozeUntilMs
+        }
     }
 
     data class Suggestion(
@@ -61,30 +65,51 @@ object VocabSuggestionPolicy {
     /**
      * One finished session. Repeated spellings inside [text] count once.
      * A blank session leaves [records] unchanged.
+     *
+     * Rare spellings that are not ordinary English need [SESSION_THRESHOLD]
+     * distinct finished sessions and an exact key. "30frst" and "30first" stay apart.
+     * Emails, phone-like numbers, @handles, and the single token after an intro
+     * phrase can be asked on the first session. Intro leftovers stop at and, who,
+     * that, a comma, or the end of the text. Only that one token is kept.
+     * "Prince Thompson" is not saved as one entry.
+     *
+     * [isOrdinaryWord] is SCOWL size 60 plus the supplementary common list.
+     * Ordinary words and [dictionaryTerms] are not counted. A snoozed key is
+     * quiet for both the three-session path and the one-session personal path.
      */
     fun observe(
         text: String,
         records: Map<String, SpellingRecord>,
         dictionaryTerms: Collection<String>,
-        nowMs: Long
+        nowMs: Long,
+        isOrdinaryWord: (String) -> Boolean = { false }
     ): ObserveResult {
         if (text.isBlank()) return ObserveResult(records, null)
 
         val known = dictionaryKeys(dictionaryTerms)
         val next = records.toMutableMap()
-        if (known.isNotEmpty()) {
-            next.keys.removeAll(known)
-        }
+        next.keys.removeAll { key -> key in known || isOrdinaryWord(key) }
 
         val seenThisSession = LinkedHashSet<String>()
+        val personalThisSession = LinkedHashSet<String>()
         val casingAdds = HashMap<String, MutableMap<String, Int>>()
-        for (token in countableTokens(text)) {
+
+        fun note(token: String, personal: Boolean) {
+            if (!canTrack(token)) return
             val key = token.lowercase()
-            if (key in known) continue
+            if (key in known || isOrdinaryWord(key)) return
+            if (key in seenThisSession) {
+                if (personal) personalThisSession.add(key)
+                return
+            }
             seenThisSession.add(key)
+            if (personal) personalThisSession.add(key)
             val bucket = casingAdds.getOrPut(key) { HashMap() }
             bucket[token] = (bucket[token] ?: 0) + 1
         }
+
+        for (token in personalIdentifiers(text)) note(token, personal = true)
+        for (token in countableTokens(text)) note(token, personal = false)
 
         for (key in seenThisSession) {
             val previous = next[key] ?: SpellingRecord()
@@ -98,10 +123,18 @@ object VocabSuggestionPolicy {
             )
         }
 
+        val personalReady = seenThisSession.filter { key ->
+            key in personalThisSession && next[key]?.isPersonalReady(nowMs) == true
+        }
+        val pool = if (personalReady.isNotEmpty()) {
+            personalReady
+        } else {
+            seenThisSession.filter { key -> next[key]?.isReady(nowMs) == true }
+        }
+
         var best: Suggestion? = null
-        for (key in seenThisSession) {
+        for (key in pool) {
             val record = next[key] ?: continue
-            if (!record.isReady(nowMs)) continue
             val candidate = Suggestion(
                 key = key,
                 display = record.display.ifBlank { key },
@@ -164,6 +197,39 @@ object VocabSuggestionPolicy {
         return records + (key to record.copy(prompted = false))
     }
 
+    /**
+     * Emails, phone-like numbers, @handles, and the one token after an intro phrase.
+     * The intro token stops at and, who, that, a comma, or the end of the text.
+     */
+    fun personalIdentifiers(text: String): List<String> {
+        if (text.isBlank()) return emptyList()
+        val source = text.replace('\u2019', '\'').replace('\u2018', '\'')
+        val found = ArrayList<String>()
+        val emailSpans = ArrayList<IntRange>()
+        for (match in EMAIL.findAll(source)) {
+            found.add(match.value)
+            emailSpans.add(match.range)
+        }
+        for (match in HANDLE.findAll(source)) {
+            if (emailSpans.any { match.range.first in it }) continue
+            found.add(match.value)
+        }
+        for (match in PHONE.findAll(source)) {
+            val raw = match.groupValues[1].trim().replace(Regex("\\s+"), " ")
+            val digits = raw.count { it.isDigit() }
+            if (digits in 10..15) found.add(raw)
+        }
+        for (phrase in INTRO_PHRASES) {
+            val regex = Regex("\\b${Regex.escape(phrase)}\\b", RegexOption.IGNORE_CASE)
+            for (match in regex.findAll(source)) {
+                val rest = source.substring(match.range.last + 1)
+                val token = firstContentToken(cutAtStop(rest)) ?: continue
+                found.add(token)
+            }
+        }
+        return found
+    }
+
     fun countableTokens(text: String): List<String> {
         if (text.isBlank()) return emptyList()
         val tokens = ArrayList<String>()
@@ -203,6 +269,43 @@ object VocabSuggestionPolicy {
         val byLength = candidate.display.length.compareTo(current.display.length)
         if (byLength != 0) return byLength
         return current.key.compareTo(candidate.key)
+    }
+
+    private val INTRO_PHRASES = listOf(
+        "my nickname is",
+        "my name is",
+        "i am",
+        "i'm",
+        "im",
+        "called",
+        "this is"
+    )
+
+    private val EMAIL = Regex("[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}")
+    private val HANDLE = Regex("(?<![A-Za-z0-9@])@[A-Za-z0-9_]{2,30}")
+    private val PHONE = Regex("(?<!\\d)(\\+?\\d[\\d\\s().-]{5,}\\d)(?!\\d)")
+    private val INTRO_STOP = Regex("\\b(?:and|who|that)\\b", RegexOption.IGNORE_CASE)
+
+    private fun cutAtStop(rest: String): String {
+        val comma = rest.indexOf(',')
+        val untilComma = if (comma >= 0) rest.substring(0, comma) else rest
+        val stop = INTRO_STOP.find(untilComma) ?: return untilComma
+        return untilComma.substring(0, stop.range.first)
+    }
+
+    private fun firstContentToken(slice: String): String? {
+        for (raw in slice.trim().split(Regex("\\s+"))) {
+            val token = normalizeToken(raw)
+            if (token.isEmpty()) continue
+            if (token.lowercase() in STOPWORDS) continue
+            return token
+        }
+        return null
+    }
+
+    private fun canTrack(token: String): Boolean {
+        if (token.isEmpty() || token.length > 80) return false
+        return token.any { it.isLetter() || it.isDigit() }
     }
 
     private fun isCountable(token: String): Boolean {

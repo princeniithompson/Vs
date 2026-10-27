@@ -6,6 +6,7 @@ import android.content.Intent
 import android.util.Log
 import com.princeniithompson.rapcha.MainActivity
 import com.princeniithompson.rapcha.data.CustomVocabularyRepository
+import com.princeniithompson.rapcha.data.EnglishLexicon
 import com.princeniithompson.rapcha.data.VocabSuggestionPolicy
 import com.princeniithompson.rapcha.data.VocabSuggestionStore
 
@@ -24,9 +25,31 @@ object VocabSuggestions {
     const val EXTRA_KEY = "vocab_suggestion_key"
     const val EXTRA_DISPLAY = "vocab_suggestion_display"
 
+    fun countsAsOutgoing(result: RapchaTextInserter.InsertionResult): Boolean {
+        return result is RapchaTextInserter.InsertionResult.SuccessDirect ||
+            result is RapchaTextInserter.InsertionResult.SuccessClipboardFallback
+    }
+
+    /** Count only after inject succeeded or the clipboard fallback was confirmed. */
+    fun onConfirmedPlacement(
+        context: Context,
+        text: String,
+        result: RapchaTextInserter.InsertionResult
+    ) {
+        if (!countsAsOutgoing(result)) return
+        onOutgoingText(context, text)
+    }
+
+    /** Count a Safe Mode cutoff only when the clipboard write succeeded. */
+    fun onConfirmedClipboard(context: Context, text: String, copied: Boolean) {
+        if (!copied) return
+        onOutgoingText(context, text)
+    }
+
     /**
-     * Call only after the final text has been injected, or after a Safe Mode
-     * clipboard cutoff has copied it. Blank text is ignored.
+     * The text already left the session: a successful inject, a confirmed
+     * clipboard fallback, or a confirmed Safe Mode clipboard cutoff.
+     * Blank text is ignored. A failed inject must not call this.
      */
     fun onOutgoingText(context: Context, text: String) {
         if (text.isBlank()) return
@@ -39,7 +62,8 @@ object VocabSuggestions {
                     text = text,
                     records = records,
                     dictionaryTerms = CustomVocabularyRepository.getVocabulary(),
-                    nowMs = now
+                    nowMs = now,
+                    isOrdinaryWord = EnglishLexicon::isOrdinary
                 )
                 result.records to result.suggestion
             } ?: return
@@ -122,6 +146,7 @@ object VocabSuggestions {
     private fun ensureReady(context: Context) {
         CustomVocabularyRepository.init(context)
         VocabSuggestionStore.init(context)
+        EnglishLexicon.ensureLoaded(context)
     }
 
     private fun editActivityIntent(

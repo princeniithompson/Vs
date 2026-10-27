@@ -329,11 +329,10 @@ class FloatingBubbleService : Service() {
                     val copied = RapchaTextInserter.getInstance(this).copyCutOffTranscript(text)
                     if (copied) {
                         DictationAlerts.textCopied(this)
+                        VocabSuggestions.onConfirmedClipboard(this, text, copied = true)
                     } else {
                         DictationAlerts.placementFailed(this)
                     }
-                    // Count the cutoff transcript only after the clipboard handoff.
-                    VocabSuggestions.onOutgoingText(this, text)
                 }
                 SessionPlacement.Path.INJECT -> Unit
             }
@@ -589,8 +588,7 @@ class FloatingBubbleService : Service() {
         serviceScope.launch {
             try {
                 val placed = FloatingTextInjector.injectReporting(this@FloatingBubbleService, textToInject)
-                // Count the injected transcript after placement. Do not count before inject.
-                VocabSuggestions.onOutgoingText(this@FloatingBubbleService, textToInject)
+                VocabSuggestions.onConfirmedPlacement(this@FloatingBubbleService, textToInject, placed)
                 if (sessionLimitAutoFinish) {
                     when (placed) {
                         is RapchaTextInserter.InsertionResult.SuccessClipboardFallback ->

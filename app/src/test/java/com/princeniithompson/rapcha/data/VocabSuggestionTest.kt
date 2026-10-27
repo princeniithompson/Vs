@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import com.princeniithompson.rapcha.MainActivity
+import com.princeniithompson.rapcha.service.floating.RapchaTextInserter
 import com.princeniithompson.rapcha.service.floating.VocabSuggestionReceiver
 import com.princeniithompson.rapcha.service.floating.VocabSuggestions
 import org.junit.Assert.assertEquals
@@ -256,6 +257,173 @@ class VocabSuggestionTest {
         val later = VocabSuggestionPolicy.observe("Quorvex only", third.records, emptyList(), NOW)
         assertEquals("quorvex", later.suggestion?.key)
         assertEquals("Quorvex", later.suggestion?.display)
+    }
+
+    @Test
+    fun `scowl size 60 and the common list are bundled and skip ordinary words`() {
+        val app = RuntimeEnvironment.getApplication()
+        val notice = app.assets.open(EnglishLexicon.COPYRIGHT_ASSET).bufferedReader().readText()
+        assertTrue(notice.contains("Copyright 2000-2018 by Kevin Atkinson"))
+        assertTrue(notice.contains("Permission to use, copy, modify, distribute and sell these word"))
+        EnglishLexicon.ensureLoaded(app)
+        assertTrue(EnglishLexicon.loadedWordCount() > 100_000)
+        assertTrue(EnglishLexicon.isOrdinary("tired"))
+        assertTrue(EnglishLexicon.isOrdinary("difficult"))
+        assertTrue(EnglishLexicon.isOrdinary("going"))
+        assertTrue(EnglishLexicon.isOrdinary("nickname"))
+        assertTrue(EnglishLexicon.isOrdinary("WhatsApp"))
+        assertTrue(EnglishLexicon.isOrdinary("YouTube"))
+        assertTrue(EnglishLexicon.isOrdinary("ChatGPT"))
+        assertTrue(EnglishLexicon.isOrdinary("OpenAI"))
+        assertTrue(EnglishLexicon.isOrdinary("TikTok"))
+        assertTrue(EnglishLexicon.isOrdinary("Accra"))
+        assertTrue(EnglishLexicon.isOrdinary("Ghana"))
+        assertFalse(EnglishLexicon.isOrdinary("30frst"))
+        assertFalse(EnglishLexicon.isOrdinary("30first"))
+
+        val appNotifications = app.getSystemService(NotificationManager::class.java)
+        repeat(3) {
+            VocabSuggestions.onOutgoingText(
+                app,
+                "I'm tired and going to Ghana on WhatsApp and YouTube"
+            )
+        }
+        VocabSuggestions.onOutgoingText(app, "This is difficult")
+        assertTrue(VocabSuggestionStore.load().isEmpty())
+        assertTrue(appNotifications.activeNotifications.isEmpty())
+    }
+
+    @Test
+    fun `nickname intro suggests only the following token once`() {
+        val app = RuntimeEnvironment.getApplication()
+        assertEquals(
+            listOf("30frst"),
+            VocabSuggestionPolicy.personalIdentifiers("my nickname is 30frst, thanks")
+        )
+        assertEquals(
+            listOf("30frst"),
+            VocabSuggestionPolicy.personalIdentifiers("my nickname is 30frst and who that called")
+        )
+        assertEquals(
+            listOf("tired"),
+            VocabSuggestionPolicy.personalIdentifiers("I'm tired")
+        )
+        assertEquals(
+            listOf("difficult"),
+            VocabSuggestionPolicy.personalIdentifiers("This is difficult")
+        )
+        assertEquals(
+            listOf("Prince"),
+            VocabSuggestionPolicy.personalIdentifiers("my name is Prince Thompson")
+        )
+
+        VocabSuggestions.onOutgoingText(app, "my nickname is 30frst and who knows")
+        assertEquals(setOf("30frst"), VocabSuggestionStore.load().keys)
+        assertEquals(1, VocabSuggestionStore.load().getValue("30frst").sessionCount)
+        val manager = app.getSystemService(NotificationManager::class.java)
+        val text = manager.activeNotifications.single().notification.extras
+            .getCharSequence(Notification.EXTRA_TEXT).toString()
+        assertTrue(text.contains("30frst"))
+        assertFalse(text.contains("nickname"))
+
+        val name = VocabSuggestionPolicy.observe(
+            "my name is Prince Thompson",
+            emptyMap(),
+            emptyList(),
+            NOW,
+            EnglishLexicon::isOrdinary
+        )
+        assertNull(name.suggestion)
+        assertFalse(name.records.containsKey("prince"))
+        assertFalse(name.records.containsKey("prince thompson"))
+    }
+
+    @Test
+    fun `rare spellings need three exact sessions and do not fuzzy merge`() {
+        val app = RuntimeEnvironment.getApplication()
+        val manager = app.getSystemService(NotificationManager::class.java)
+        VocabSuggestions.onOutgoingText(app, "note 30frst")
+        VocabSuggestions.onOutgoingText(app, "note 30first")
+        VocabSuggestions.onOutgoingText(app, "note 30frst")
+        assertTrue(manager.activeNotifications.isEmpty())
+        assertEquals(2, VocabSuggestionStore.load().getValue("30frst").sessionCount)
+        assertEquals(1, VocabSuggestionStore.load().getValue("30first").sessionCount)
+
+        VocabSuggestions.onOutgoingText(app, "note 30frst")
+        val text = manager.activeNotifications.single().notification.extras
+            .getCharSequence(Notification.EXTRA_TEXT).toString()
+        assertTrue(text.contains("30frst"))
+        assertFalse(text.contains("30first"))
+        assertEquals(3, VocabSuggestionStore.load().getValue("30frst").sessionCount)
+        assertEquals(1, VocabSuggestionStore.load().getValue("30first").sessionCount)
+    }
+
+    @Test
+    fun `no snooze blocks the same personal identifier on the next session`() {
+        val app = RuntimeEnvironment.getApplication()
+        val manager = app.getSystemService(NotificationManager::class.java)
+        VocabSuggestions.onOutgoingText(app, "my nickname is 30frst")
+        assertEquals(1, manager.activeNotifications.size)
+        VocabSuggestions.handleAction(app, VocabSuggestions.ACTION_NO, "30frst", "30frst")
+        assertTrue(manager.activeNotifications.isEmpty())
+        assertTrue(CustomVocabularyRepository.getVocabulary().isEmpty())
+
+        VocabSuggestions.onOutgoingText(app, "my nickname is 30frst")
+        assertTrue(manager.activeNotifications.isEmpty())
+        val snooze = VocabSuggestionStore.load().getValue("30frst").snoozeUntilMs
+        assertTrue(snooze >= System.currentTimeMillis() + 13L * 24 * 60 * 60 * 1000)
+    }
+
+    @Test
+    fun `emails handles and phone numbers suggest once`() {
+        val app = RuntimeEnvironment.getApplication()
+        val ids = VocabSuggestionPolicy.personalIdentifiers(
+            "ping prince@example.com or @nii_handle or +233 20 111 2222"
+        )
+        assertTrue(ids.any { it.equals("prince@example.com", ignoreCase = true) })
+        assertTrue(ids.any { it == "@nii_handle" })
+        assertTrue(ids.any { it.contains("233") && it.count { ch -> ch.isDigit() } >= 10 })
+
+        VocabSuggestions.onOutgoingText(app, "ping prince@example.com please")
+        val manager = app.getSystemService(NotificationManager::class.java)
+        val text = manager.activeNotifications.single().notification.extras
+            .getCharSequence(Notification.EXTRA_TEXT).toString()
+        assertTrue(text.contains("prince@example.com"))
+        assertEquals(1, VocabSuggestionStore.load().getValue("prince@example.com").sessionCount)
+        assertFalse(VocabSuggestionStore.load().containsKey("ping"))
+        assertFalse(VocabSuggestionStore.load().containsKey("please"))
+    }
+
+    @Test
+    fun `failed inject and failed clipboard cutoff do not increment`() {
+        val app = RuntimeEnvironment.getApplication()
+        assertFalse(VocabSuggestions.countsAsOutgoing(RapchaTextInserter.InsertionResult.Failed))
+        assertTrue(VocabSuggestions.countsAsOutgoing(RapchaTextInserter.InsertionResult.SuccessDirect))
+        assertTrue(
+            VocabSuggestions.countsAsOutgoing(RapchaTextInserter.InsertionResult.SuccessClipboardFallback)
+        )
+
+        VocabSuggestions.onConfirmedPlacement(
+            app,
+            "zylophant showed up",
+            RapchaTextInserter.InsertionResult.Failed
+        )
+        VocabSuggestions.onConfirmedClipboard(app, "zylophant showed up", copied = false)
+        VocabSuggestions.onConfirmedPlacement(
+            app,
+            "   ",
+            RapchaTextInserter.InsertionResult.SuccessDirect
+        )
+        assertTrue(VocabSuggestionStore.load().isEmpty())
+
+        VocabSuggestions.onConfirmedPlacement(
+            app,
+            "zylophant showed up",
+            RapchaTextInserter.InsertionResult.SuccessClipboardFallback
+        )
+        assertEquals(1, VocabSuggestionStore.load().getValue("zylophant").sessionCount)
+        VocabSuggestions.onConfirmedClipboard(app, "quorvex showed up", copied = true)
+        assertEquals(1, VocabSuggestionStore.load().getValue("quorvex").sessionCount)
     }
 
     private fun promptedRecord(): Map<String, VocabSuggestionPolicy.SpellingRecord> {

@@ -1,0 +1,7 @@
+US English word list, SCOWL size 60, version 2020.12.07.
+Built with: perl ./mk-list -v1 american 60
+Source: http://wordlist.aspell.net/  (scowl-2020.12.07.tar.gz)
+The list is lowercased. Accented spellings are also stored without accents.
+This is the output of the SCOWL scripts. The upstream copyright and permission
+notice is the Copyright file in this directory and must stay with this list.
+That notice is SCOWL's own permissive terms. It is not the MIT license.
