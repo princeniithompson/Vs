@@ -3,8 +3,9 @@ package com.princeniithompson.rapcha.ui.components.diagnostics
 import android.media.MediaPlayer
 import android.util.Log
 import android.widget.Toast
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,17 +15,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
@@ -32,12 +34,9 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -47,17 +46,19 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.princeniithompson.rapcha.data.AudioRecording
 import com.princeniithompson.rapcha.data.AudioRecordingRepository
 import com.princeniithompson.rapcha.data.DiagnosticSource
@@ -68,8 +69,8 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Audio Page: Focused purely on audio files, waveforms, playback controls, and export.
- * Formatted with clean white surfaces matching the app theme.
+ * Audio page: local WAV files, playback, share, download, and delete.
+ * Playback stays on-device. Share and download are explicit user actions.
  */
 @Composable
 fun DiagnosticsAudioSection(
@@ -77,10 +78,13 @@ fun DiagnosticsAudioSection(
     isDictating: Boolean,
     onDeleteRecording: (AudioRecording) -> Unit,
     onClearAllRecordings: () -> Unit,
+    requestClearAll: Boolean = false,
+    onClearAllRequestHandled: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     var showClearConfirmation by remember { mutableStateOf(false) }
+    val expanded = remember { mutableStateMapOf<String, Boolean>() }
 
     var playingFile by remember { mutableStateOf<File?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -88,6 +92,13 @@ fun DiagnosticsAudioSection(
     var totalDurationMs by remember { mutableIntStateOf(0) }
 
     val mediaPlayer = remember { MediaPlayer() }
+
+    LaunchedEffect(requestClearAll) {
+        if (requestClearAll) {
+            showClearConfirmation = true
+            onClearAllRequestHandled()
+        }
+    }
 
     LaunchedEffect(playingFile, isPlaying) {
         while (isPlaying && playingFile != null) {
@@ -174,205 +185,151 @@ fun DiagnosticsAudioSection(
     }
 
     val dateTimeFormat = remember { SimpleDateFormat("MMM dd, yyyy · HH:mm:ss", Locale.getDefault()) }
+    val totalBytes = recordings.sumOf { it.sizeBytes }
 
-    Column(modifier = modifier.fillMaxSize()) {
-        // Privacy Note Banner
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFF0FDFA)),
-            border = BorderStroke(1.dp, Color(0xFFCCFBF1)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        contentPadding = PaddingValues(bottom = 28.dp)
+    ) {
+        item {
             Row(
-                modifier = Modifier.padding(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .premiumSurface()
+                    .padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
                     imageVector = Icons.Filled.Lock,
                     contentDescription = null,
-                    tint = Color(0xFF0F766E),
-                    modifier = Modifier.size(20.dp)
+                    tint = DiagnosticsPalette.teal,
+                    modifier = Modifier.size(24.dp)
                 )
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(12.dp))
                 Text(
-                    text = "Privacy Note: Audio recordings stay strictly on your phone. Nothing is uploaded or shared unless you explicitly tap Share or Downloads.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF134E4A),
-                    lineHeight = 16.sp
+                    text = "Audio stays on this phone. Nothing is uploaded unless you tap Share or Download.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = DiagnosticsPalette.ink
                 )
             }
         }
 
-        // Top Toolbar: Storage count + Clear All button
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            val totalBytes = recordings.sumOf { it.sizeBytes }
-            val formattedTotalSize = formatFileSize(totalBytes)
+        item {
             Text(
-                text = "${recordings.size} audio recordings ($formattedTotalSize)",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF475569)
+                text = if (recordings.isEmpty()) {
+                    "No saved recordings"
+                } else {
+                    "${recordings.size} recordings · ${formatFileSize(totalBytes)}"
+                },
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = DiagnosticsPalette.muted
             )
-
-            if (recordings.isNotEmpty()) {
-                TextButton(
-                    onClick = { showClearConfirmation = true },
-                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFDC2626))
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.DeleteSweep,
-                        contentDescription = "Clear all recordings",
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Clear All", fontWeight = FontWeight.SemiBold)
-                }
-            }
         }
 
         if (recordings.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                     Icon(
                         imageVector = Icons.Filled.GraphicEq,
                         contentDescription = null,
-                        tint = Color(0xFF94A3B8),
+                        tint = DiagnosticsPalette.muted,
                         modifier = Modifier.size(56.dp)
                     )
                     Spacer(modifier = Modifier.height(14.dp))
                     Text(
                         text = "No saved audio recordings yet",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF0F172A)
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = DiagnosticsPalette.ink,
+                        textAlign = TextAlign.Center
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = "Voice recordings from the app or floating bubble will appear here.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF64748B)
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = DiagnosticsPalette.muted,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(recordings, key = { it.fileName }) { recording ->
-                    val isThisPlaying = playingFile == recording.file && isPlaying
+            itemsIndexed(recordings, key = { _, recording -> recording.fileName }) { index, recording ->
+                val isThisPlaying = playingFile == recording.file && isPlaying
+                val isExpanded = expanded[recording.fileName] != false
+                val currentMs = if (playingFile == recording.file) currentPositionMs else 0
+                val maxMs = if (playingFile == recording.file && totalDurationMs > 0) {
+                    totalDurationMs
+                } else {
+                    recording.durationMs.toInt().coerceAtLeast(1)
+                }
 
-                    Card(
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .premiumSurface(ring = false)
+                        .padding(16.dp)
+                ) {
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (isThisPlaying) Color(0xFFF0FDFA) else Color.White
-                        ),
-                        border = BorderStroke(
-                            width = if (isThisPlaying) 1.5.dp else 1.dp,
-                            color = if (isThisPlaying) Color(0xFF006874) else Color(0xFFE2E8F0)
-                        )
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            // Row 1: Source badge, Timestamp, Duration & File Size
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    val isBubble = recording.source == DiagnosticSource.BUBBLE
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(if (isBubble) Color(0xFFF3E8FF) else Color(0xFFCCFBF1))
-                                            .padding(horizontal = 8.dp, vertical = 3.dp)
-                                    ) {
-                                        Text(
-                                            text = recording.source.name,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isBubble) Color(0xFF7E22CE) else Color(0xFF0F766E)
-                                        )
-                                    }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = recordingTitle(recording, recordings),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = DiagnosticsPalette.ink,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = recordingMeta(recording, dateTimeFormat),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = DiagnosticsPalette.muted
+                            )
+                        }
+                        IconButton(
+                            onClick = { expanded[recording.fileName] = !isExpanded },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                contentDescription = if (isExpanded) "Collapse recording" else "Expand recording",
+                                tint = DiagnosticsPalette.muted
+                            )
+                        }
+                    }
 
-                                    Spacer(modifier = Modifier.width(6.dp))
-
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(Color(0xFFE0F2FE))
-                                            .padding(horizontal = 8.dp, vertical = 3.dp)
-                                    ) {
-                                        Text(
-                                            text = recording.pipelineTag,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF0369A1)
-                                        )
-                                    }
-
-                                    Spacer(modifier = Modifier.width(8.dp))
-
-                                    Text(
-                                        text = dateTimeFormat.format(Date(recording.timestamp)),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = FontWeight.Medium,
-                                        color = Color(0xFF0F172A)
-                                    )
-                                }
-
-                                Text(
-                                    text = "${formatDurationMs(recording.durationMs)} · ${formatFileSize(recording.sizeBytes)}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            // Mini Audio Waveform & Player Bar
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFFF8FAFC))
-                                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                IconButton(
-                                    onClick = { playAudio(recording.file) },
-                                    enabled = !isDictating,
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .background(Color(0xFF006874), CircleShape)
+                    if (isExpanded) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            PremiumPlayButton(
+                                isPlaying = isThisPlaying,
+                                enabledVisual = !isDictating,
+                                onClick = { playAudio(recording.file) }
+                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
-                                        imageVector = if (isThisPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                        contentDescription = if (isThisPlaying) "Pause" else "Play",
-                                        tint = Color.White,
+                                        imageVector = Icons.Filled.GraphicEq,
+                                        contentDescription = null,
+                                        tint = DiagnosticsPalette.muted,
                                         modifier = Modifier.size(22.dp)
                                     )
-                                }
-
-                                Column(modifier = Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                                    val currentMs = if (playingFile == recording.file) currentPositionMs else 0
-                                    val maxMs = if (playingFile == recording.file && totalDurationMs > 0) totalDurationMs else recording.durationMs.toInt().coerceAtLeast(1)
-
                                     Slider(
                                         value = currentMs.toFloat().coerceIn(0f, maxMs.toFloat()),
                                         onValueChange = { targetPos ->
@@ -382,92 +339,86 @@ fun DiagnosticsAudioSection(
                                         },
                                         valueRange = 0f..maxMs.toFloat(),
                                         colors = SliderDefaults.colors(
-                                            thumbColor = Color(0xFF006874),
-                                            activeTrackColor = Color(0xFF006874),
-                                            inactiveTrackColor = Color(0xFFCBD5E1)
+                                            thumbColor = DiagnosticsPalette.teal,
+                                            activeTrackColor = DiagnosticsPalette.teal,
+                                            inactiveTrackColor = DiagnosticsPalette.track
                                         ),
-                                        modifier = Modifier.height(24.dp)
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(48.dp)
                                     )
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            text = formatDurationMs(currentMs.toLong()),
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = Color(0xFF64748B)
-                                        )
-                                        Text(
-                                            text = formatDurationMs(maxMs.toLong()),
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = Color(0xFF64748B)
-                                        )
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            // Action buttons: Share, Save to Downloads, Delete
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        AudioRecordingRepository.shareRecording(context, recording)
-                                    },
-                                    modifier = Modifier.height(36.dp),
-                                    shape = RoundedCornerShape(10.dp),
-                                    border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
-                                ) {
-                                    Icon(Icons.Filled.Share, contentDescription = "Share", tint = Color(0xFF006874), modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Share", fontSize = 12.sp, color = Color(0xFF006874), fontWeight = FontWeight.SemiBold)
-                                }
-
-                                Spacer(modifier = Modifier.width(8.dp))
-
-                                OutlinedButton(
-                                    onClick = {
-                                        val success = AudioRecordingRepository.saveToDownloads(context, recording)
-                                        if (success) {
-                                            Toast.makeText(context, "Saved to Downloads folder", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            Toast.makeText(context, "Failed to save to Downloads", Toast.LENGTH_SHORT).show()
-                                        }
-                                    },
-                                    modifier = Modifier.height(36.dp),
-                                    shape = RoundedCornerShape(10.dp),
-                                    border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
-                                ) {
-                                    Icon(Icons.Filled.Download, contentDescription = "Save to Downloads", tint = Color(0xFF006874), modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Downloads", fontSize = 12.sp, color = Color(0xFF006874), fontWeight = FontWeight.SemiBold)
-                                }
-
-                                Spacer(modifier = Modifier.width(8.dp))
-
-                                IconButton(
-                                    onClick = { onDeleteRecording(recording) },
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(Color(0xFFFEE2E2), RoundedCornerShape(8.dp))
-                                ) {
                                     Icon(
-                                        imageVector = Icons.Filled.Delete,
-                                        contentDescription = "Delete recording",
-                                        tint = Color(0xFFDC2626),
-                                        modifier = Modifier.size(18.dp)
+                                        imageVector = Icons.Filled.GraphicEq,
+                                        contentDescription = null,
+                                        tint = DiagnosticsPalette.muted,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = String.format(Locale.US, "#%03d", index + 1),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Medium,
+                                        color = DiagnosticsPalette.muted
+                                    )
+                                    DiagnosticsCountBadge(
+                                        text = formatDurationMs(maxMs.toLong()),
+                                        container = DiagnosticsPalette.pill,
+                                        content = DiagnosticsPalette.ink
                                     )
                                 }
                             }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            AudioActionPill(
+                                icon = Icons.Filled.Share,
+                                label = "Share",
+                                onClick = { AudioRecordingRepository.shareRecording(context, recording) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            AudioActionPill(
+                                icon = Icons.Filled.Download,
+                                label = "Download",
+                                onClick = {
+                                    val success = AudioRecordingRepository.saveToDownloads(context, recording)
+                                    if (success) {
+                                        Toast.makeText(context, "Saved to Downloads folder", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, "Failed to save to Downloads", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        TextButton(
+                            onClick = { onDeleteRecording(recording) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp),
+                            colors = ButtonDefaults.textButtonColors(contentColor = DiagnosticsPalette.red)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Delete,
+                                contentDescription = null,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Delete",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
                 }
@@ -475,21 +426,22 @@ fun DiagnosticsAudioSection(
         }
     }
 
-    // Confirmation Dialog for Clear All
     if (showClearConfirmation) {
         AlertDialog(
             onDismissRequest = { showClearConfirmation = false },
             title = {
                 Text(
                     text = "Delete all saved audio?",
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF0F172A)
+                    color = DiagnosticsPalette.ink
                 )
             },
             text = {
                 Text(
                     text = "This will permanently delete all local audio files from your device. This cannot be undone.",
-                    color = Color(0xFF475569)
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = DiagnosticsPalette.muted
                 )
             },
             confirmButton = {
@@ -498,20 +450,119 @@ fun DiagnosticsAudioSection(
                         showClearConfirmation = false
                         onClearAllRecordings()
                     },
-                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFDC2626))
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    colors = ButtonDefaults.textButtonColors(contentColor = DiagnosticsPalette.red)
                 ) {
-                    Text("Delete All", fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "Delete All",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showClearConfirmation = false }) {
-                    Text("Cancel", color = Color(0xFF64748B))
+                TextButton(
+                    onClick = { showClearConfirmation = false },
+                    modifier = Modifier.heightIn(min = 48.dp)
+                ) {
+                    Text(
+                        text = "Cancel",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = DiagnosticsPalette.muted,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             },
             containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp)
+            shape = DiagnosticsShapes.card
         )
     }
+}
+
+@Composable
+private fun PremiumPlayButton(
+    isPlaying: Boolean,
+    enabledVisual: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(84.dp)
+            .alpha(if (enabledVisual) 1f else 0.45f)
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .border(4.dp, DiagnosticsPalette.playRing, CircleShape)
+            .padding(7.dp)
+            .clip(CircleShape)
+            .background(DiagnosticsPalette.playFill),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+            contentDescription = if (isPlaying) "Pause" else "Play",
+            tint = Color.White,
+            modifier = Modifier.size(34.dp)
+        )
+    }
+}
+
+@Composable
+private fun AudioActionPill(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .heightIn(min = 52.dp)
+            .clip(DiagnosticsShapes.pill)
+            .background(DiagnosticsPalette.pill)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = DiagnosticsPalette.ink,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = DiagnosticsPalette.ink
+        )
+    }
+}
+
+private fun recordingTitle(recording: AudioRecording, recordings: List<AudioRecording>): String {
+    val snippet = recording.transcriptSnippet?.trim().orEmpty()
+    if (snippet.isNotEmpty()) return snippet.take(48)
+    return when (recording.source) {
+        DiagnosticSource.APP -> {
+            val number = recordings.filter { it.source == DiagnosticSource.APP }
+                .indexOfFirst { it.fileName == recording.fileName } + 1
+            "Voice Memo $number"
+        }
+        DiagnosticSource.BUBBLE -> {
+            val bubbles = recordings.filter { it.source == DiagnosticSource.BUBBLE }
+            if (bubbles.size <= 1) {
+                "System Log Audio"
+            } else {
+                val number = bubbles.indexOfFirst { it.fileName == recording.fileName } + 1
+                "System Log Audio $number"
+            }
+        }
+    }
+}
+
+private fun recordingMeta(recording: AudioRecording, format: SimpleDateFormat): String {
+    val source = if (recording.source == DiagnosticSource.BUBBLE) "Bubble" else "In-app"
+    return "$source · ${recording.pipelineTag} · ${format.format(Date(recording.timestamp))} · ${formatFileSize(recording.sizeBytes)}"
 }
 
 private fun formatDurationMs(ms: Long): String {

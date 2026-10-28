@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -61,7 +62,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.princeniithompson.rapcha.data.ConnectionState
 import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.LiveStats
@@ -131,14 +131,10 @@ fun DiagnosticsLiveSection(
                     .fillMaxWidth()
                     .padding(bottom = 14.dp)
                     .testTag("live_source_banner"),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isBubble) Color(0xFFFAF5FF) else Color(0xFFF0FDFA)
-                ),
-                border = BorderStroke(
-                    1.dp,
-                    if (isBubble) Color(0xFFD8B4FE) else Color(0xFF99F6E4)
-                )
+                shape = DiagnosticsShapes.card,
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = BorderStroke(1.25.dp, DiagnosticsPalette.tealRing)
             ) {
                 Row(
                     modifier = Modifier
@@ -148,9 +144,9 @@ fun DiagnosticsLiveSection(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(46.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
-                            .background(if (isBubble) Color(0xFF7E22CE) else Color(0xFF0F766E)),
+                            .background(if (isBubble) DiagnosticsPalette.purpleIcon else DiagnosticsPalette.voiceIcon),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -171,32 +167,22 @@ fun DiagnosticsLiveSection(
                         ) {
                             Text(
                                 text = if (isBubble) "Floating Bubble" else "In-App Voice",
-                                fontSize = 16.sp,
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isBubble) Color(0xFF581C87) else Color(0xFF134E4A)
+                                color = DiagnosticsPalette.ink
                             )
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isBubble) Color(0xFFE9D5FF) else Color(0xFFCCFBF1))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) {
-                                Text(
-                                    text = if (isStreaming) "STREAMING" else "SYNCED",
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = 0.5.sp,
-                                    color = if (isBubble) Color(0xFF6B21A8) else Color(0xFF115E59)
-                                )
-                            }
+                            DiagnosticsCountBadge(
+                                text = if (isStreaming) "STREAMING" else "SYNCED",
+                                container = if (isBubble) DiagnosticsPalette.purpleSoft else DiagnosticsPalette.greenSoft,
+                                content = if (isBubble) DiagnosticsPalette.purple else DiagnosticsPalette.teal
+                            )
                         }
-                        Spacer(modifier = Modifier.height(3.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = if (isBubble) "Transcribing outside the app and injecting directly into your active fields."
                                    else "Transcribing your speech in real-time within the Rapcha application.",
-                            fontSize = 12.5.sp,
-                            color = if (isBubble) Color(0xFF6B21A8) else Color(0xFF115E59),
-                            lineHeight = 17.sp
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = DiagnosticsPalette.muted
                         )
                     }
                 }
@@ -207,9 +193,9 @@ fun DiagnosticsLiveSection(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.White),
-                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                shape = RoundedCornerShape(22.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                border = BorderStroke(1.25.dp, DiagnosticsPalette.tealRing),
+                shape = DiagnosticsShapes.card,
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
@@ -250,9 +236,8 @@ fun DiagnosticsLiveSection(
                             )
                             Text(
                                 text = speedSubtitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (stats.lastInjectionDurationMs > 0 || isStreaming) Color(0xFF166534) else Color(0xFF64748B),
-                                fontSize = 11.5.sp
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (stats.lastInjectionDurationMs > 0 || isStreaming) Color(0xFF166534) else DiagnosticsPalette.muted
                             )
                         }
                     }
@@ -281,7 +266,7 @@ fun DiagnosticsLiveSection(
                         PremiumMetricPill(
                             icon = Icons.Filled.RecordVoiceOver,
                             label = "Target App",
-                            value = if (stats.lastInjectionTargetApp.isNotBlank()) stats.lastInjectionTargetApp.take(12) else if (isBubble) "Active App" else "Rapcha",
+                            value = if (stats.lastInjectionTargetApp.isNotBlank()) stats.lastInjectionTargetApp else if (isBubble) "Active App" else "Rapcha",
                             accentColor = Color(0xFF7E22CE),
                             modifier = Modifier.weight(1f)
                         )
@@ -308,7 +293,7 @@ fun DiagnosticsLiveSection(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (isSmartMode) "Smart Polish Mode" else "Verbatim Speed Mode",
-                                style = MaterialTheme.typography.labelMedium,
+                                style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color(0xFF334155)
                             )
@@ -316,7 +301,7 @@ fun DiagnosticsLiveSection(
 
                         Text(
                             text = if (apiKeyConfigured) "AI Connected" else "API Key Needed",
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             color = if (apiKeyConfigured) Color(0xFF059669) else Color(0xFFD97706)
                         )
@@ -331,14 +316,16 @@ fun DiagnosticsLiveSection(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.White),
-                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.25.dp, DiagnosticsPalette.tealRing),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+                shape = DiagnosticsShapes.card,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(min = 48.dp)
                             .clickable { showApiKeyInput = !showApiKeyInput },
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
@@ -373,7 +360,7 @@ fun DiagnosticsLiveSection(
                         ) {
                             Text(
                                 text = "Enter your custom Gemini API key or leave blank for default:",
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.bodyLarge,
                                 color = Color(0xFF64748B)
                             )
                             Spacer(modifier = Modifier.height(8.dp))
@@ -395,7 +382,7 @@ fun DiagnosticsLiveSection(
                                         focusedBorderColor = Color(0xFF006874),
                                         unfocusedBorderColor = Color(0xFFCBD5E1)
                                     ),
-                                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                                    textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Button(
@@ -404,8 +391,10 @@ fun DiagnosticsLiveSection(
                                         showApiKeyInput = false
                                     },
                                     shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006874)),
-                                    modifier = Modifier.testTag("save_api_key_button")
+                                    colors = ButtonDefaults.buttonColors(containerColor = DiagnosticsPalette.teal),
+                                    modifier = Modifier
+                                        .heightIn(min = 48.dp)
+                                        .testTag("save_api_key_button")
                                 ) {
                                     Text("Save")
                                 }
@@ -429,14 +418,14 @@ fun DiagnosticsLiveSection(
             ) {
                 Text(
                     text = "Live Activity",
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF0F172A)
+                    color = DiagnosticsPalette.ink
                 )
                 Text(
                     text = "${liveLogs.size} events",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF64748B)
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = DiagnosticsPalette.muted
                 )
             }
         }
@@ -469,15 +458,15 @@ fun DiagnosticsLiveSection(
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
                             text = "No voice activity yet",
-                            style = MaterialTheme.typography.titleSmall,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF1E293B)
+                            color = DiagnosticsPalette.ink
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "Tap the floating bubble or the mic button to start dictating.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF64748B),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = DiagnosticsPalette.muted,
                             textAlign = TextAlign.Center
                         )
                     }
@@ -495,11 +484,13 @@ fun DiagnosticsLiveSection(
         // 5. Developer Socket Frames Accordion
         item {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
-                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = BorderStroke(1.25.dp, DiagnosticsPalette.tealRing),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                shape = DiagnosticsShapes.card,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 56.dp)
                     .clickable { showRawFrames = !showRawFrames }
             ) {
                 Row(
@@ -519,8 +510,8 @@ fun DiagnosticsLiveSection(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "Developer view: Raw socket frames",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFF64748B)
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = DiagnosticsPalette.muted
                         )
                     }
                     Icon(
@@ -566,18 +557,20 @@ private fun PremiumMetricPill(
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = label,
-            fontSize = 11.sp,
-            color = Color(0xFF64748B),
+            style = MaterialTheme.typography.labelLarge,
+            color = DiagnosticsPalette.muted,
             fontWeight = FontWeight.Medium,
-            maxLines = 1
+            textAlign = TextAlign.Center,
+            maxLines = 2
         )
-        Spacer(modifier = Modifier.height(2.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = value,
-            fontSize = 14.sp,
-            color = Color(0xFF0F172A),
+            style = MaterialTheme.typography.titleMedium,
+            color = DiagnosticsPalette.ink,
             fontWeight = FontWeight.Bold,
-            maxLines = 1
+            textAlign = TextAlign.Center,
+            maxLines = 2
         )
     }
 }
@@ -610,8 +603,9 @@ private fun PremiumActivityCard(entry: LogEntry, timeFormat: SimpleDateFormat) {
 
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.25.dp, DiagnosticsPalette.tealRing),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        shape = DiagnosticsShapes.card,
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -622,7 +616,7 @@ private fun PremiumActivityCard(entry: LogEntry, timeFormat: SimpleDateFormat) {
         ) {
             Box(
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
                     .background(iconBg),
                 contentAlignment = Alignment.Center
@@ -640,18 +634,16 @@ private fun PremiumActivityCard(entry: LogEntry, timeFormat: SimpleDateFormat) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = cleanMessage,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold,
                     color = titleColor
                 )
                 if (entry.payload != null && entry.payload != cleanMessage && !cleanMessage.contains(entry.payload.take(20))) {
-                    Spacer(modifier = Modifier.height(2.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = entry.payload.take(80),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF64748B),
-                        maxLines = 2
+                        text = entry.payload,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = DiagnosticsPalette.muted
                     )
                 }
             }
@@ -659,19 +651,11 @@ private fun PremiumActivityCard(entry: LogEntry, timeFormat: SimpleDateFormat) {
             Spacer(modifier = Modifier.width(8.dp))
 
             // Source Badge
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (isBubble) Color(0xFFF3E8FF) else Color(0xFFCCFBF1))
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
-            ) {
-                Text(
-                    text = if (isBubble) "BUBBLE" else "IN-APP",
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isBubble) Color(0xFF7E22CE) else Color(0xFF0F766E)
-                )
-            }
+            DiagnosticsCountBadge(
+                text = if (isBubble) "BUBBLE" else "IN-APP",
+                container = if (isBubble) DiagnosticsPalette.purpleSoft else DiagnosticsPalette.greenSoft,
+                content = if (isBubble) DiagnosticsPalette.purple else DiagnosticsPalette.teal
+            )
         }
     }
 }
@@ -687,10 +671,10 @@ private fun RawFrameItem(entry: LogEntry, timeFormat: SimpleDateFormat) {
             .padding(8.dp)
     ) {
         Text(
-            text = "[${entry.level.name}] ${entry.tag}: ${entry.message} ${entry.payload ?: ""}",
+            text = "${timeFormat.format(java.util.Date(entry.timestamp))} [${entry.level.name}] ${entry.tag}: ${entry.message} ${entry.payload ?: ""}",
+            style = MaterialTheme.typography.bodyMedium,
             fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
-            color = Color(0xFF94A3B8)
+            color = Color(0xFFCBD5E1)
         )
     }
 }

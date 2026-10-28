@@ -1,5 +1,6 @@
 package com.princeniithompson.rapcha.ui.components.diagnostics
 
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -45,8 +46,10 @@ fun DiagnosticsClearConfirmDialog(
                     containerColor = Color(0xFFDC2626),
                     contentColor = Color.White
                 ),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.testTag("confirm_clear_diagnostics_button")
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .testTag("confirm_clear_diagnostics_button")
             ) {
                 Text("Clear", fontWeight = FontWeight.SemiBold)
             }
@@ -54,7 +57,9 @@ fun DiagnosticsClearConfirmDialog(
         dismissButton = {
             TextButton(
                 onClick = onDismissRequest,
-                modifier = Modifier.testTag("cancel_clear_diagnostics_button")
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .testTag("cancel_clear_diagnostics_button")
             ) {
                 Text("Cancel", color = Color(0xFF64748B), fontWeight = FontWeight.SemiBold)
             }
