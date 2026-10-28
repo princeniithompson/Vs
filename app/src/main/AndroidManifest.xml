@@ -87,6 +87,10 @@
                 android:resource="@xml/method_service_meta_data" />
         </service>
 
+        <receiver
+            android:name=".service.floating.VocabSuggestionReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

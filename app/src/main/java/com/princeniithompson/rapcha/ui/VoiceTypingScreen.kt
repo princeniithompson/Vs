@@ -73,6 +73,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -114,7 +115,9 @@ enum class MainScreenTab {
 @Composable
 fun VoiceTypingScreen(
     viewModel: VoiceTypingViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    dictionaryDraft: String? = null,
+    onDictionaryDraftConsumed: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -138,7 +141,16 @@ fun VoiceTypingScreen(
     val selectedGlowStyleId by viewModel.selectedGlowStyleId.collectAsState()
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-    var selectedTab by remember { mutableStateOf(MainScreenTab.HOME) }
+    var selectedTab by remember {
+        mutableStateOf(
+            if (!dictionaryDraft.isNullOrBlank()) MainScreenTab.DICTIONARY else MainScreenTab.HOME
+        )
+    }
+    LaunchedEffect(dictionaryDraft) {
+        if (!dictionaryDraft.isNullOrBlank()) {
+            selectedTab = MainScreenTab.DICTIONARY
+        }
+    }
     var showDiagnostics by remember { mutableStateOf(false) }
     var showAccessibilityDisclosure by remember { mutableStateOf(false) }
     val diagnosticsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -786,6 +798,8 @@ fun VoiceTypingScreen(
                                 if (drawerState.isClosed) drawerState.open() else drawerState.close()
                             }
                         },
+                        draftTerm = dictionaryDraft,
+                        onDraftConsumed = onDictionaryDraftConsumed,
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(innerPadding)

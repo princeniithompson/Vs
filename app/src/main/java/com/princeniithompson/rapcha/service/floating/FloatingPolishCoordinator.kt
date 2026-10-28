@@ -152,7 +152,8 @@ class FloatingPolishCoordinator {
                         mode = "POLISHED",
                         appName = targetAppName
                     )
-                    FloatingTextInjector.injectOrFallbackToClipboard(context, polishedText)
+                    val placed = FloatingTextInjector.injectReporting(context, polishedText)
+                    VocabSuggestions.onConfirmedPlacement(context, polishedText, placed)
                     Toast.makeText(context, "Polished ✨", Toast.LENGTH_SHORT).show()
                 } else {
                     if (rawTranscript.isNotBlank()) {
@@ -161,7 +162,8 @@ class FloatingPolishCoordinator {
                             mode = "VERBATIM",
                             appName = targetAppName
                         )
-                        FloatingTextInjector.injectOrFallbackToClipboard(context, rawTranscript)
+                        val placed = FloatingTextInjector.injectReporting(context, rawTranscript)
+                        VocabSuggestions.onConfirmedPlacement(context, rawTranscript, placed)
                     }
                     val errorMsg = result?.errorDetail ?: "Unknown error"
                     Log.e(TAG, "Polish failed: $errorMsg")

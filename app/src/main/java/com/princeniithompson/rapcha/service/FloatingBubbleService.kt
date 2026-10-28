@@ -30,6 +30,7 @@ import com.princeniithompson.rapcha.service.floating.FloatingOverlayWindowManage
 import com.princeniithompson.rapcha.service.floating.FloatingPolishCoordinator
 import com.princeniithompson.rapcha.service.floating.FloatingTextInjector
 import com.princeniithompson.rapcha.service.floating.RapchaTextInserter
+import com.princeniithompson.rapcha.service.floating.VocabSuggestions
 import com.princeniithompson.rapcha.websocket.GeminiLiveWebSocketClient
 import com.princeniithompson.rapcha.websocket.InterimPreviewMonitor
 import kotlinx.coroutines.CoroutineScope
@@ -328,6 +329,7 @@ class FloatingBubbleService : Service() {
                     val copied = RapchaTextInserter.getInstance(this).copyCutOffTranscript(text)
                     if (copied) {
                         DictationAlerts.textCopied(this)
+                        VocabSuggestions.onConfirmedClipboard(this, text, copied = true)
                     } else {
                         DictationAlerts.placementFailed(this)
                     }
@@ -586,6 +588,7 @@ class FloatingBubbleService : Service() {
         serviceScope.launch {
             try {
                 val placed = FloatingTextInjector.injectReporting(this@FloatingBubbleService, textToInject)
+                VocabSuggestions.onConfirmedPlacement(this@FloatingBubbleService, textToInject, placed)
                 if (sessionLimitAutoFinish) {
                     when (placed) {
                         is RapchaTextInserter.InsertionResult.SuccessClipboardFallback ->
