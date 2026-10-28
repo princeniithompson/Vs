@@ -11,6 +11,7 @@ import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.data.DictationEndedReason
 import com.princeniithompson.rapcha.data.LogLevel
+import com.princeniithompson.rapcha.data.NetworkProblemPolicy
 import com.princeniithompson.rapcha.data.TranscriptPrivacy
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -59,7 +60,8 @@ class GeminiLiveWebSocketClient(
     private val onPreviewPhase: (InterimPreviewMonitor.Phase) -> Unit = {},
     private val onPieceCommitted: (String) -> Unit = {},
     private val onGoAway: (Long?) -> Unit = {},
-    private val onAudiblePause: () -> Unit = {}
+    private val onAudiblePause: () -> Unit = {},
+    private val onNetworkProblem: (String) -> Unit = {}
 ) {
     companion object {
         private const val TAG = "GeminiLiveWS"
@@ -139,6 +141,8 @@ class GeminiLiveWebSocketClient(
 
     val setupComplete: Boolean
         get() = isSetupComplete.get()
+
+    fun openedSocketCount(): Int = socketsOpened
 
     val isConnecting: Boolean
         get() = isConnectingGuard.get()
@@ -375,6 +379,7 @@ class GeminiLiveWebSocketClient(
     }
 
     private fun handleDisconnectOrFailure(errorDetails: String, throwable: Throwable?) {
+        noteResolveFailure(errorDetails, throwable)
         if (splitting.get() && !sessionFinalizing.get()) {
             planner.armFreshMode()
             pendingSplit = pendingSplit?.copy(freshConnection = true)
@@ -456,6 +461,37 @@ class GeminiLiveWebSocketClient(
         )
         notifyStateChanged(ConnectionState.Error(fatalMsg))
         notifyError(fatalMsg, GeminiLiveError.NetworkFailure(fatalMsg, throwable))
+    }
+
+    /**
+     * DNS and resolver failures often stay in Connecting while OkHttp retries,
+     * so the airplane-mode Error path never runs. Report them directly.
+     */
+    private fun noteResolveFailure(errorDetails: String, throwable: Throwable?) {
+        if (isExplicitlyClosed.get() || !isSessionActive()) return
+        val details = buildString {
+            append(errorDetails)
+            appendFailureText(throwable)
+        }
+        if (!NetworkProblemPolicy.isResolveFailure(details)) return
+        val reason = NetworkProblemPolicy.resolveReason(details)
+        dispatch { onNetworkProblem(reason) }
+    }
+
+    private fun StringBuilder.appendFailureText(throwable: Throwable?) {
+        var current = throwable
+        var depth = 0
+        while (current != null && depth < 4) {
+            append(' ')
+            append(current.javaClass.name)
+            val message = current.message
+            if (!message.isNullOrBlank()) {
+                append(' ')
+                append(message)
+            }
+            current = current.cause
+            depth += 1
+        }
     }
 
     private fun handleIncomingMessage(rawJson: String) {

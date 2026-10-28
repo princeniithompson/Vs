@@ -12,8 +12,10 @@ import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.data.LiveStats
 import com.princeniithompson.rapcha.data.LogLevel
+import com.princeniithompson.rapcha.data.NetworkProblemPolicy
 import com.princeniithompson.rapcha.data.TranscriptPrivacy
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
+import com.princeniithompson.rapcha.service.LiveNetworkSignals
 import com.princeniithompson.rapcha.websocket.DictationPiecePlanner
 import com.princeniithompson.rapcha.websocket.DictationSessionClock
 import com.princeniithompson.rapcha.websocket.GeminiLiveWebSocketClient
@@ -68,7 +70,7 @@ class FloatingDictationSessionManager(
         private set
 
     var isRecording: Boolean = false
-        private set
+        internal set
 
     var sessionChunksSent: Int = 0
         private set
@@ -206,7 +208,7 @@ class FloatingDictationSessionManager(
         val currentSessionScope = CoroutineScope(Dispatchers.Main + sJob)
         sessionScope = currentSessionScope
 
-        FloatingBubbleManager.setNetworkProblem(false)
+        LiveNetworkSignals.clear()
 
         finalizedTranscript.clear()
         interimTranscript = ""
@@ -267,7 +269,7 @@ class FloatingDictationSessionManager(
         // Start WebSocket
         webSocketClient = GeminiLiveWebSocketClient(
             onSetupComplete = {
-                FloatingBubbleManager.setNetworkProblem(false)
+                LiveNetworkSignals.clear()
                 AppLogRepository.updateLiveStats {
                     it.copy(
                         source = DiagnosticSource.BUBBLE,
@@ -330,11 +332,10 @@ class FloatingDictationSessionManager(
                 }
             },
             onStateChanged = { state ->
-                val isProblem = (state is ConnectionState.Error) ||
-                    (state is ConnectionState.Connecting && (webSocketClient?.isReconnecting == true))
-                FloatingBubbleManager.setNetworkProblem(isProblem)
-                onConnectionStateChanged(state)
-                AppLogRepository.updateConnectionState(state, DiagnosticSource.BUBBLE)
+                onLiveConnectionState(state, webSocketClient?.isReconnecting == true)
+            },
+            onNetworkProblem = { reason ->
+                LiveNetworkSignals.raise(DiagnosticSource.BUBBLE, reason)
             },
             onLog = { level, tag, msg, payload ->
                 AppLogRepository.addLog(level, tag, msg, payload, DiagnosticSource.BUBBLE)
@@ -366,6 +367,9 @@ class FloatingDictationSessionManager(
                 delay(1000)
                 refreshDurationFromClock()
                 webSocketClient?.pollInterimPreview()
+                flagNoSocketIfNeeded(
+                    (SystemClock.elapsedRealtime() - sessionStartedAtElapsed).coerceAtLeast(0L)
+                )
                 onSessionClockTick()
                 onDurationTicked(durationSeconds)
             }
@@ -379,7 +383,7 @@ class FloatingDictationSessionManager(
     fun stopSession(scope: CoroutineScope, endedReason: String = "completed") {
         if (!isRecording) return
         isRecording = false
-        FloatingBubbleManager.setNetworkProblem(false)
+        LiveNetworkSignals.clear()
 
         durationJob?.cancel()
         durationJob = null
@@ -547,9 +551,33 @@ class FloatingDictationSessionManager(
         onTranscriptUpdated("")
     }
 
+    /**
+     * Hard errors and in-flight reconnects use the airplane-mode red bubble.
+     * Opening a socket or finishing setup clears it. The first Connecting
+     * update does not, so a DNS attempt that never reaches SOCKET_OPEN stays red.
+     */
+    internal fun onLiveConnectionState(state: ConnectionState, reconnecting: Boolean) {
+        LiveNetworkSignals.onConnectionState(state, reconnecting)
+        onConnectionStateChanged(state)
+        AppLogRepository.updateConnectionState(state, DiagnosticSource.BUBBLE)
+    }
+
+    /**
+     * Called from the session clock. A live attempt with no socket after
+     * [NetworkProblemPolicy.NO_SOCKET_TIMEOUT_MS] raises the red bubble once.
+     */
+    internal fun flagNoSocketIfNeeded(elapsedMs: Long) {
+        if (!isRecording) return
+        val ws = webSocketClient
+        val opened = ws?.openedSocketCount() ?: 0
+        val ready = ws?.setupComplete == true
+        if (!NetworkProblemPolicy.noSocketOpen(elapsedMs, opened, ready)) return
+        LiveNetworkSignals.raise(DiagnosticSource.BUBBLE, NetworkProblemPolicy.noSocketReason())
+    }
+
     fun release() {
         isRecording = false
-        FloatingBubbleManager.setNetworkProblem(false)
+        LiveNetworkSignals.clear()
         durationJob?.cancel()
         durationJob = null
         drainJob?.cancel()
