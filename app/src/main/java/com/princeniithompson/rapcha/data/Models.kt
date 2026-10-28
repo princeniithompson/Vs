@@ -63,7 +63,8 @@ enum class DiagnosticType {
     SAFE_MODE_ENGAGED,
     SAFE_MODE_EXITED,
     SILENCE_DROPPED,
-    MIC_RELEASED
+    MIC_RELEASED,
+    NETWORK_PROBLEM
 }
 
 data class DiagnosticLogEntry(

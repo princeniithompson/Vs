@@ -426,6 +426,63 @@ class VocabSuggestionTest {
         assertEquals(1, VocabSuggestionStore.load().getValue("quorvex").sessionCount)
     }
 
+    @Test
+    fun `DNS three times does not suggest and personal or rare names still do`() {
+        val app = RuntimeEnvironment.getApplication()
+        EnglishLexicon.ensureLoaded(app)
+        listOf(
+            "DNS", "dns", "LTE", "vpn", "WiFi", "wi-fi", "API", "URL", "HTTP", "HTTPS",
+            "SMS", "OTP", "AI", "LLM", "MTN", "USD", "GHz", "Mbps", "2fa"
+        ).forEach { token ->
+            assertTrue("$token should be an exact ordinary token", EnglishLexicon.isOrdinary(token))
+            assertTrue(SupplementaryCommonWords.contains(token))
+        }
+        listOf("Bonsam", "Kweku", "Zalefant", "30frst", "adns", "dnslookup").forEach { token ->
+            assertFalse("$token must stay suggestable", SupplementaryCommonWords.contains(token))
+            assertFalse("$token must stay suggestable", EnglishLexicon.isOrdinary(token))
+        }
+
+        val skipped = VocabSuggestionPolicy.observe(
+            "check DNS DNS DNS",
+            emptyMap(),
+            emptyList(),
+            NOW,
+            EnglishLexicon::isOrdinary
+        )
+        assertNull(skipped.suggestion)
+        assertFalse(skipped.records.containsKey("dns"))
+
+        val manager = app.getSystemService(NotificationManager::class.java)
+        repeat(3) {
+            VocabSuggestions.onOutgoingText(app, "the DNS server is down")
+        }
+        assertFalse(VocabSuggestionStore.load().containsKey("dns"))
+        assertTrue(manager.activeNotifications.isEmpty())
+
+        VocabSuggestions.onOutgoingText(app, "my nickname is Zalefant")
+        VocabSuggestions.onOutgoingText(app, "my nickname is 30frst")
+        val personal = notificationText(manager)
+        assertTrue(personal.any { it.contains("Zalefant") })
+        assertTrue(personal.any { it.contains("30frst") })
+        assertFalse(personal.any { it.contains("Bonsam") })
+
+        VocabSuggestions.onOutgoingText(app, "call Bonsam later")
+        VocabSuggestions.onOutgoingText(app, "call Bonsam later")
+        assertFalse(notificationText(manager).any { it.contains("Bonsam") })
+        assertEquals(2, VocabSuggestionStore.load().getValue("bonsam").sessionCount)
+
+        VocabSuggestions.onOutgoingText(app, "call Bonsam later")
+        assertTrue(notificationText(manager).any { it.contains("Bonsam") })
+        assertEquals(3, VocabSuggestionStore.load().getValue("bonsam").sessionCount)
+        assertFalse(VocabSuggestionStore.load().containsKey("kweku"))
+    }
+
+    private fun notificationText(manager: NotificationManager): List<String> {
+        return manager.activeNotifications.map { status ->
+            status.notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+        }
+    }
+
     private fun promptedRecord(): Map<String, VocabSuggestionPolicy.SpellingRecord> {
         return mapOf(
             "zylophant" to VocabSuggestionPolicy.SpellingRecord(

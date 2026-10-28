@@ -170,6 +170,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
     private val webSocketClient = GeminiLiveWebSocketClient(
             onSetupComplete = {
+            com.princeniithompson.rapcha.service.LiveNetworkSignals.clear()
             addLog(LogLevel.INFO, TAG, "setupComplete received! Flushing buffered queue & streaming live audio.")
             com.princeniithompson.rapcha.data.AppLogRepository.updateLiveStats { it.copy(source = com.princeniithompson.rapcha.data.DiagnosticSource.APP, setupCompleted = true) }
             onLiveSetupComplete()
@@ -209,7 +210,13 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             com.princeniithompson.rapcha.data.AppLogRepository.updateLiveStats { it.copy(source = com.princeniithompson.rapcha.data.DiagnosticSource.APP, finalizedCount = it.finalizedCount + 1) }
         },
         onStateChanged = { newState ->
-            com.princeniithompson.rapcha.data.AppLogRepository.updateConnectionState(newState, com.princeniithompson.rapcha.data.DiagnosticSource.APP)
+            onLiveConnectionState(newState)
+        },
+        onNetworkProblem = { reason ->
+            com.princeniithompson.rapcha.service.LiveNetworkSignals.raise(
+                com.princeniithompson.rapcha.data.DiagnosticSource.APP,
+                reason
+            )
         },
         onLog = { level, tag, msg, payload ->
             addLog(level, tag, msg, payload)
@@ -328,6 +335,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         sessionEndLogged.set(false)
         connectionLostHapticSent = false
         finishAtNextPause = false
+        com.princeniithompson.rapcha.service.LiveNetworkSignals.clear()
         sessionClock = com.princeniithompson.rapcha.websocket.DictationSessionClock()
         sessionStartedAtMs = System.currentTimeMillis()
         _previewPhase.value = com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase.LISTENING
@@ -417,6 +425,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     fun stopRecording(endedReason: String = "completed") {
         if (!_isRecording.value) return
         _isRecording.value = false
+        com.princeniithompson.rapcha.service.LiveNetworkSignals.clear()
         val shouldLogEnd = sessionEndLogged.compareAndSet(false, true)
         val sessionLimitStop = endedReason == "session_limit"
         durationJob?.cancel()
@@ -492,6 +501,17 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    private fun onLiveConnectionState(state: ConnectionState) {
+        com.princeniithompson.rapcha.service.LiveNetworkSignals.onConnectionState(
+            state,
+            webSocketClient.isReconnecting
+        )
+        com.princeniithompson.rapcha.data.AppLogRepository.updateConnectionState(
+            state,
+            com.princeniithompson.rapcha.data.DiagnosticSource.APP
+        )
+    }
+
     private fun onLiveSetupComplete() {
         webSocketClient.signalActivityStart()
         drainAudioQueue()
@@ -546,6 +566,17 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     private fun onSessionClockTick(sessionMs: Long) {
+        if (com.princeniithompson.rapcha.data.NetworkProblemPolicy.noSocketOpen(
+                sessionMs,
+                webSocketClient.openedSocketCount(),
+                webSocketClient.setupComplete
+            )
+        ) {
+            com.princeniithompson.rapcha.service.LiveNetworkSignals.raise(
+                com.princeniithompson.rapcha.data.DiagnosticSource.APP,
+                com.princeniithompson.rapcha.data.NetworkProblemPolicy.noSocketReason()
+            )
+        }
         val tick = sessionClock.onTick(sessionMs, webSocketClient.isSingleConnection())
         if (tick.warn) {
             com.princeniithompson.rapcha.service.floating.DictationAlerts.endingSoon(getApplication())
