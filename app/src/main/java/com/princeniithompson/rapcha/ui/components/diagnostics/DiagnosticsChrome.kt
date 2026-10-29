@@ -1,15 +1,22 @@
 package com.princeniithompson.rapcha.ui.components.diagnostics
 
 import android.content.Context
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,79 +30,116 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import com.princeniithompson.rapcha.data.DiagnosticLogEntry
 
 /**
- * Shared visual system for the diagnostics hub and every sub-page.
- * Soft slate canvas, shadowed white surfaces, and a teal ring on explore cards.
+ * Neutral diagnostics surfaces. Color is reserved for status: ok, warning, danger.
+ * Light and dark use the same roles.
  */
-object DiagnosticsPalette {
-    val slate = Color(0xFFE7EBF1)
-    val ink = Color(0xFF1C2430)
-    val muted = Color(0xFF6E7787)
-    val tealRing = Color(0xFFB7D5C8)
-    val teal = Color(0xFF127A68)
-    val playFill = Color(0xFF2B323A)
-    val playRing = Color(0xFF1A9A72)
-    val green = Color(0xFF1E8F4A)
-    val greenSoft = Color(0xFFE7F6EE)
-    val greenRing = Color(0xFF8FCB9B)
-    val greenChip = Color(0xFFF4FBF6)
-    val blue = Color(0xFF2F6FE4)
-    val blueSoft = Color(0xFFE6F0FF)
-    val blueIcon = Color(0xFF2F6BFF)
-    val red = Color(0xFFE04B4B)
-    val redSoft = Color(0xFFFDECEC)
-    val purple = Color(0xFF7A4ED0)
-    val purpleSoft = Color(0xFFF3EAFB)
-    val purpleIcon = Color(0xFF6B46C1)
-    val amber = Color(0xFFB8860B)
-    val amberSoft = Color(0xFFFFF4D8)
-    val amberIcon = Color(0xFFE0A01A)
-    val voiceIcon = Color(0xFF0E8A78)
-    val audioIcon = Color(0xFFE3534A)
-    val pill = Color(0xFFF2F3F5)
-    val track = Color(0xFFD5D8DE)
-}
+data class DiagnosticsColors(
+    val canvas: Color,
+    val surface: Color,
+    val ink: Color,
+    val secondary: Color,
+    val line: Color,
+    val ok: Color,
+    val warning: Color,
+    val danger: Color
+)
 
-object DiagnosticsShapes {
-    val card = RoundedCornerShape(22.dp)
-    val tile = RoundedCornerShape(18.dp)
-    val control = RoundedCornerShape(16.dp)
-    val pill = RoundedCornerShape(50)
-}
+private val LightDiagnosticsColors = DiagnosticsColors(
+    canvas = Color(0xFFF3F4F6),
+    surface = Color(0xFFFFFFFF),
+    ink = Color(0xFF1A1C1F),
+    secondary = Color(0xFF5C6370),
+    line = Color(0xFFD9DDE3),
+    ok = Color(0xFF1B7F3A),
+    warning = Color(0xFF9A6700),
+    danger = Color(0xFFB42318)
+)
 
-fun Modifier.premiumSurface(
-    shape: Shape = DiagnosticsShapes.card,
-    ring: Boolean = true
-): Modifier {
-    val ringMod = if (ring) {
-        Modifier.border(1.25.dp, DiagnosticsPalette.tealRing, shape)
-    } else {
-        Modifier
+private val DarkDiagnosticsColors = DiagnosticsColors(
+    canvas = Color(0xFF111315),
+    surface = Color(0xFF1A1D21),
+    ink = Color(0xFFF3F4F6),
+    secondary = Color(0xFFB0B6C0),
+    line = Color(0xFF2E333A),
+    ok = Color(0xFF6FCF97),
+    warning = Color(0xFFE6B15A),
+    danger = Color(0xFFFF8A80)
+)
+
+val LocalDiagnosticsColors = staticCompositionLocalOf { LightDiagnosticsColors }
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun ProvideDiagnosticsColors(content: @Composable () -> Unit) {
+    val systemDark = isSystemInDarkTheme()
+    val schemeDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val colors = if (systemDark || schemeDark) DarkDiagnosticsColors else LightDiagnosticsColors
+    CompositionLocalProvider(LocalDiagnosticsColors provides colors) {
+        @Suppress("DEPRECATION")
+        CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
+            content()
+        }
     }
+}
+
+@Composable
+fun diagnosticsColors(): DiagnosticsColors = LocalDiagnosticsColors.current
+
+/** Theme colors for composables in this package. */
+val colors: DiagnosticsColors
+    @Composable get() = diagnosticsColors()
+
+/** Empty counts read as "None". A positive count is the number alone. */
+fun diagnosticsCountText(count: Int): String = if (count <= 0) "None" else count.toString()
+
+/** Day groups are a partition of [entries], so their sizes add up to the list size. */
+fun groupedHistoryCount(entries: List<DiagnosticLogEntry>): Int {
+    return DiagnosticsEventTracker.buildLogHistory(entries).values.sumOf { it.size }
+}
+
+private object ConsumeOverscrollConnection : NestedScrollConnection {
+    override fun onPostScroll(
+        consumed: Offset,
+        available: Offset,
+        source: NestedScrollSource
+    ): Offset = available
+
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = available
+}
+
+/** Leftover scroll and fling stay in the list. They are not handed to the sheet. */
+fun Modifier.diagnosticsNestedScrollGuard(): Modifier = this.nestedScroll(ConsumeOverscrollConnection)
+
+private val ToolShape = RoundedCornerShape(8.dp)
+
+@Composable
+fun Modifier.premiumSurface(ring: Boolean = true): Modifier {
+    val colors = diagnosticsColors()
     return this
-        .shadow(
-            elevation = 8.dp,
-            shape = shape,
-            clip = false,
-            ambientColor = Color(0x1A101828),
-            spotColor = Color(0x24101828)
-        )
-        .clip(shape)
-        .background(Color.White)
-        .then(ringMod)
+        .clip(ToolShape)
+        .background(colors.surface)
+        .border(1.dp, colors.line, ToolShape)
 }
 
 data class DiagnosticsMenuAction(
@@ -143,25 +187,21 @@ fun DiagnosticsSquareIconButton(
     testTag: String,
     modifier: Modifier = Modifier
 ) {
+    val colors = diagnosticsColors()
     IconButton(
         onClick = onClick,
         modifier = modifier
-            .size(52.dp)
-            .shadow(
-                elevation = 8.dp,
-                shape = DiagnosticsShapes.control,
-                ambientColor = Color(0x1A101828),
-                spotColor = Color(0x2A101828)
-            )
-            .clip(DiagnosticsShapes.control)
-            .background(Color.White)
+            .size(48.dp)
+            .clip(ToolShape)
+            .background(colors.surface)
+            .border(1.dp, colors.line, ToolShape)
             .testTag(testTag)
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = DiagnosticsPalette.ink,
-            modifier = Modifier.size(26.dp)
+            tint = colors.ink,
+            modifier = Modifier.size(22.dp)
         )
     }
 }
@@ -174,31 +214,29 @@ fun DiagnosticsLabeledIconButton(
     testTag: String,
     modifier: Modifier = Modifier
 ) {
+    val colors = diagnosticsColors()
     Column(
         modifier = modifier
-            .widthIn(min = 64.dp)
-            .heightIn(min = 64.dp)
-            .clip(DiagnosticsShapes.control)
+            .widthIn(min = 48.dp)
+            .heightIn(min = 48.dp)
+            .clip(ToolShape)
             .clickable(onClick = onClick)
             .testTag(testTag)
-            .padding(horizontal = 6.dp, vertical = 4.dp),
+            .padding(horizontal = 4.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(
             imageVector = icon,
             contentDescription = label,
-            tint = DiagnosticsPalette.ink,
-            modifier = Modifier.size(26.dp)
+            tint = colors.ink,
+            modifier = Modifier.size(22.dp)
         )
-        Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = label,
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium,
-            color = DiagnosticsPalette.muted,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            color = colors.secondary,
+            textAlign = TextAlign.Center
         )
     }
 }
@@ -209,6 +247,7 @@ fun DiagnosticsActionMenu(
     onDismissRequest: () -> Unit,
     actions: List<DiagnosticsMenuAction>
 ) {
+    val colors = diagnosticsColors()
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismissRequest
@@ -220,7 +259,7 @@ fun DiagnosticsActionMenu(
                         text = action.label,
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.Medium,
-                        color = if (action.destructive) DiagnosticsPalette.red else DiagnosticsPalette.ink
+                        color = if (action.destructive) colors.danger else colors.ink
                     )
                 },
                 onClick = {
@@ -233,7 +272,7 @@ fun DiagnosticsActionMenu(
                         Icon(
                             imageVector = icon,
                             contentDescription = null,
-                            tint = if (action.destructive) DiagnosticsPalette.red else DiagnosticsPalette.ink
+                            tint = if (action.destructive) colors.danger else colors.ink
                         )
                     }
                 },
@@ -241,32 +280,6 @@ fun DiagnosticsActionMenu(
             )
         }
     }
-}
-
-@Composable
-fun DiagnosticsStatusChip(
-    text: String,
-    container: Color,
-    content: Color,
-    borderColor: Color? = null,
-    modifier: Modifier = Modifier
-) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelLarge,
-        fontWeight = FontWeight.SemiBold,
-        color = content,
-        modifier = modifier
-            .then(
-                if (borderColor != null) {
-                    Modifier.border(1.25.dp, borderColor, DiagnosticsShapes.pill)
-                } else {
-                    Modifier
-                }
-            )
-            .background(container, DiagnosticsShapes.pill)
-            .padding(horizontal = 14.dp, vertical = 8.dp)
-    )
 }
 
 @Composable
@@ -278,52 +291,90 @@ fun DiagnosticsCountBadge(
 ) {
     Text(
         text = text,
-        style = MaterialTheme.typography.labelLarge,
-        fontWeight = FontWeight.Bold,
+        style = MaterialTheme.typography.bodyMedium,
+        fontFamily = FontFamily.Monospace,
+        fontWeight = FontWeight.Medium,
         color = content,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
         modifier = modifier
-            .clip(DiagnosticsShapes.pill)
-            .background(container)
-            .padding(horizontal = 10.dp, vertical = 6.dp)
     )
 }
 
 @Composable
-fun DiagnosticsActionTile(
-    label: String,
+fun DiagnosticsSectionRow(
+    title: String,
+    detail: String,
+    value: String,
     icon: ImageVector,
-    background: Color,
-    tint: Color,
+    valueColor: Color,
     onClick: () -> Unit,
-    testTag: String,
-    modifier: Modifier = Modifier
+    testTag: String
 ) {
-    Column(
-        modifier = modifier
-            .heightIn(min = 92.dp)
-            .clip(DiagnosticsShapes.tile)
-            .background(background)
+    val colors = diagnosticsColors()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clip(ToolShape)
+            .background(colors.surface)
+            .border(1.dp, colors.line, ToolShape)
             .clickable(onClick = onClick)
             .testTag(testTag)
-            .padding(vertical = 16.dp, horizontal = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = tint,
-            modifier = Modifier.size(28.dp)
+            tint = colors.ink,
+            modifier = Modifier.size(22.dp)
         )
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = colors.ink
+            )
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.bodyLarge,
+                color = colors.secondary
+            )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = label,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = DiagnosticsPalette.ink,
-            textAlign = TextAlign.Center,
-            maxLines = 1
+            text = value,
+            style = MaterialTheme.typography.bodyLarge,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium,
+            color = valueColor,
+            textAlign = TextAlign.End
+        )
+    }
+}
+
+@Composable
+fun DiagnosticsDragHandle(
+    onDragDelta: (Float) -> Unit,
+    onDragStopped: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colors = diagnosticsColors()
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .testTag("diagnostics_drag_handle")
+            .diagnosticsDrag(onDragDelta, onDragStopped),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .width(32.dp)
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(colors.line)
         )
     }
 }

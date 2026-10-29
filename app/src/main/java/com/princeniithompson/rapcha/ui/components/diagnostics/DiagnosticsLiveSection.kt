@@ -131,10 +131,10 @@ fun DiagnosticsLiveSection(
                     .fillMaxWidth()
                     .padding(bottom = 14.dp)
                     .testTag("live_source_banner"),
-                shape = DiagnosticsShapes.card,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
-                border = BorderStroke(1.25.dp, DiagnosticsPalette.tealRing)
+                border = BorderStroke(1.25.dp, colors.line)
             ) {
                 Row(
                     modifier = Modifier
@@ -146,7 +146,7 @@ fun DiagnosticsLiveSection(
                         modifier = Modifier
                             .size(48.dp)
                             .clip(CircleShape)
-                            .background(if (isBubble) DiagnosticsPalette.purpleIcon else DiagnosticsPalette.voiceIcon),
+                            .background(if (isBubble) colors.ink else colors.ink),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -169,12 +169,12 @@ fun DiagnosticsLiveSection(
                                 text = if (isBubble) "Floating Bubble" else "In-App Voice",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = DiagnosticsPalette.ink
+                                color = colors.ink
                             )
                             DiagnosticsCountBadge(
                                 text = if (isStreaming) "STREAMING" else "SYNCED",
-                                container = if (isBubble) DiagnosticsPalette.purpleSoft else DiagnosticsPalette.greenSoft,
-                                content = if (isBubble) DiagnosticsPalette.purple else DiagnosticsPalette.teal
+                                container = if (isBubble) colors.surface else colors.surface,
+                                content = if (isBubble) colors.secondary else colors.ink
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
@@ -182,7 +182,7 @@ fun DiagnosticsLiveSection(
                             text = if (isBubble) "Transcribing outside the app and injecting directly into your active fields."
                                    else "Transcribing your speech in real-time within the Rapcha application.",
                             style = MaterialTheme.typography.bodyLarge,
-                            color = DiagnosticsPalette.muted
+                            color = colors.secondary
                         )
                     }
                 }
@@ -193,8 +193,8 @@ fun DiagnosticsLiveSection(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.White),
-                border = BorderStroke(1.25.dp, DiagnosticsPalette.tealRing),
-                shape = DiagnosticsShapes.card,
+                border = BorderStroke(1.25.dp, colors.line),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -237,7 +237,7 @@ fun DiagnosticsLiveSection(
                             Text(
                                 text = speedSubtitle,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = if (stats.lastInjectionDurationMs > 0 || isStreaming) Color(0xFF166534) else DiagnosticsPalette.muted
+                                color = if (stats.lastInjectionDurationMs > 0 || isStreaming) Color(0xFF166534) else colors.secondary
                             )
                         }
                     }
@@ -316,9 +316,9 @@ fun DiagnosticsLiveSection(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.White),
-                border = BorderStroke(1.25.dp, DiagnosticsPalette.tealRing),
+                border = BorderStroke(1.25.dp, colors.line),
                 elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-                shape = DiagnosticsShapes.card,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -391,7 +391,7 @@ fun DiagnosticsLiveSection(
                                         showApiKeyInput = false
                                     },
                                     shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = DiagnosticsPalette.teal),
+                                    colors = ButtonDefaults.buttonColors(containerColor = colors.ink),
                                     modifier = Modifier
                                         .heightIn(min = 48.dp)
                                         .testTag("save_api_key_button")
@@ -420,12 +420,12 @@ fun DiagnosticsLiveSection(
                     text = "Live Activity",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = DiagnosticsPalette.ink
+                    color = colors.ink
                 )
                 Text(
                     text = "${liveLogs.size} events",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = DiagnosticsPalette.muted
+                    color = colors.secondary
                 )
             }
         }
@@ -460,13 +460,13 @@ fun DiagnosticsLiveSection(
                             text = "No voice activity yet",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = DiagnosticsPalette.ink
+                            color = colors.ink
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "Tap the floating bubble or the mic button to start dictating.",
                             style = MaterialTheme.typography.bodyLarge,
-                            color = DiagnosticsPalette.muted,
+                            color = colors.secondary,
                             textAlign = TextAlign.Center
                         )
                     }
@@ -485,9 +485,9 @@ fun DiagnosticsLiveSection(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.White),
-                border = BorderStroke(1.25.dp, DiagnosticsPalette.tealRing),
+                border = BorderStroke(1.25.dp, colors.line),
                 elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                shape = DiagnosticsShapes.card,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 56.dp)
@@ -511,7 +511,7 @@ fun DiagnosticsLiveSection(
                         Text(
                             text = "Developer view: Raw socket frames",
                             style = MaterialTheme.typography.bodyLarge,
-                            color = DiagnosticsPalette.muted
+                            color = colors.secondary
                         )
                     }
                     Icon(
@@ -558,7 +558,7 @@ private fun PremiumMetricPill(
         Text(
             text = label,
             style = MaterialTheme.typography.labelLarge,
-            color = DiagnosticsPalette.muted,
+            color = colors.secondary,
             fontWeight = FontWeight.Medium,
             textAlign = TextAlign.Center,
             maxLines = 2
@@ -567,7 +567,7 @@ private fun PremiumMetricPill(
         Text(
             text = value,
             style = MaterialTheme.typography.titleMedium,
-            color = DiagnosticsPalette.ink,
+            color = colors.ink,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
             maxLines = 2
@@ -603,9 +603,9 @@ private fun PremiumActivityCard(entry: LogEntry, timeFormat: SimpleDateFormat) {
 
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.25.dp, DiagnosticsPalette.tealRing),
+        border = BorderStroke(1.25.dp, colors.line),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-        shape = DiagnosticsShapes.card,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -643,7 +643,7 @@ private fun PremiumActivityCard(entry: LogEntry, timeFormat: SimpleDateFormat) {
                     Text(
                         text = entry.payload,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = DiagnosticsPalette.muted
+                        color = colors.secondary
                     )
                 }
             }
@@ -653,8 +653,8 @@ private fun PremiumActivityCard(entry: LogEntry, timeFormat: SimpleDateFormat) {
             // Source Badge
             DiagnosticsCountBadge(
                 text = if (isBubble) "BUBBLE" else "IN-APP",
-                container = if (isBubble) DiagnosticsPalette.purpleSoft else DiagnosticsPalette.greenSoft,
-                content = if (isBubble) DiagnosticsPalette.purple else DiagnosticsPalette.teal
+                container = if (isBubble) colors.surface else colors.surface,
+                content = if (isBubble) colors.secondary else colors.ink
             )
         }
     }

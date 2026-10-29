@@ -12,12 +12,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.BufferedReader
 import java.io.File
-import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Unified, persistent diagnostics logger covering both the in-app recorder and the floating bubble.
@@ -29,6 +28,7 @@ object AppLogRepository {
     private const val NOTES_FILE_NAME = "diagnostics_notes.jsonl"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val diskLoadGeneration = AtomicInteger(0)
 
     @Volatile
     private var appContext: Context? = null
@@ -103,6 +103,7 @@ object AppLogRepository {
     }
 
     private fun loadFromDisk() {
+        val generation = diskLoadGeneration.get()
         scope.launch {
             val context = appContext ?: return@launch
             try {
@@ -131,9 +132,6 @@ object AppLogRepository {
                         }
                     }
                 }
-                // Sort newest first
-                _diagnosticEntries.value = loadedLogs.sortedByDescending { it.timestamp }
-
                 // 2. Load Notes from JSONL
                 val noteFile = File(context.filesDir, NOTES_FILE_NAME)
                 val loadedNotes = mutableListOf<DiagnosticNote>()
@@ -157,7 +155,13 @@ object AppLogRepository {
                         }
                     }
                 }
-                _notes.value = loadedNotes.sortedByDescending { it.timestamp }
+                if (generation != diskLoadGeneration.get()) return@launch
+                _diagnosticEntries.update { current ->
+                    mergeDiagnosticEntries(current, loadedLogs)
+                }
+                _notes.update { current ->
+                    mergeDiagnosticNotes(current, loadedNotes)
+                }
 
                 Log.d(TAG, "Loaded ${loadedLogs.size} diagnostic logs and ${loadedNotes.size} notes from disk")
             } catch (e: Exception) {
@@ -252,6 +256,7 @@ object AppLogRepository {
      * Wipes all persisted diagnostics history and notes from disk and memory.
      */
     fun clearAllDiagnostics() {
+        diskLoadGeneration.incrementAndGet()
         _diagnosticEntries.value = emptyList()
         _notes.value = emptyList()
         _liveFrames.value = emptyList()
@@ -329,4 +334,22 @@ object AppLogRepository {
     fun getAllLogsFormatted(): String {
         return getFullExportFormatted()
     }
+}
+
+internal fun mergeDiagnosticEntries(
+    current: List<DiagnosticLogEntry>,
+    loaded: List<DiagnosticLogEntry>
+): List<DiagnosticLogEntry> {
+    val loadedIds = loaded.mapTo(HashSet()) { it.id }
+    val pending = current.filter { it.id !in loadedIds }
+    return (pending + loaded).distinctBy { it.id }.sortedByDescending { it.timestamp }
+}
+
+internal fun mergeDiagnosticNotes(
+    current: List<DiagnosticNote>,
+    loaded: List<DiagnosticNote>
+): List<DiagnosticNote> {
+    val loadedIds = loaded.mapTo(HashSet()) { it.id }
+    val pending = current.filter { it.id !in loadedIds }
+    return (pending + loaded).distinctBy { it.id }.sortedByDescending { it.timestamp }
 }

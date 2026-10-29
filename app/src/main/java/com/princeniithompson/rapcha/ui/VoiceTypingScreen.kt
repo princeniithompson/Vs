@@ -152,6 +152,14 @@ fun VoiceTypingScreen(
         }
     }
     var showDiagnostics by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(showDiagnostics) {
+        com.princeniithompson.rapcha.service.FloatingBubbleManager.setDiagnosticsSheetOpen(showDiagnostics)
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            com.princeniithompson.rapcha.service.FloatingBubbleManager.setDiagnosticsSheetOpen(false)
+        }
+    }
     var showAccessibilityDisclosure by remember { mutableStateOf(false) }
     val diagnosticsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showGlowStylesSheet by remember { mutableStateOf(false) }

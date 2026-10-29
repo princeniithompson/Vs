@@ -69,13 +69,13 @@ fun DiagnosticsNotesSection(
                 text = "Add a field note",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
-                color = DiagnosticsPalette.ink
+                color = colors.ink
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = "Jot down testing observations. Each note is timestamped and included in exports.",
                 style = MaterialTheme.typography.bodyLarge,
-                color = DiagnosticsPalette.muted
+                color = colors.secondary
             )
             Spacer(modifier = Modifier.height(12.dp))
             OutlinedTextField(
@@ -85,21 +85,21 @@ fun DiagnosticsNotesSection(
                     Text(
                         text = "Describe what happened...",
                         style = MaterialTheme.typography.bodyLarge,
-                        color = DiagnosticsPalette.muted
+                        color = colors.secondary
                     )
                 },
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("add_note_input"),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = DiagnosticsPalette.slate,
-                    unfocusedContainerColor = DiagnosticsPalette.slate,
-                    focusedBorderColor = DiagnosticsPalette.teal,
-                    unfocusedBorderColor = DiagnosticsPalette.track,
-                    focusedTextColor = DiagnosticsPalette.ink,
-                    unfocusedTextColor = DiagnosticsPalette.ink
+                    focusedContainerColor = colors.canvas,
+                    unfocusedContainerColor = colors.canvas,
+                    focusedBorderColor = colors.ink,
+                    unfocusedBorderColor = colors.line,
+                    focusedTextColor = colors.ink,
+                    unfocusedTextColor = colors.ink
                 ),
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = DiagnosticsPalette.ink),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.ink),
                 maxLines = 4
             )
             Spacer(modifier = Modifier.height(12.dp))
@@ -115,8 +115,11 @@ fun DiagnosticsNotesSection(
                         }
                     },
                     enabled = noteInput.isNotBlank(),
-                    shape = DiagnosticsShapes.control,
-                    colors = ButtonDefaults.buttonColors(containerColor = DiagnosticsPalette.teal),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.ink,
+                        contentColor = colors.canvas
+                    ),
                     modifier = Modifier
                         .heightIn(min = 48.dp)
                         .testTag("submit_add_note_button")
@@ -138,7 +141,7 @@ fun DiagnosticsNotesSection(
             text = "Chronological notes (${notes.size})",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
-            color = DiagnosticsPalette.ink
+            color = colors.ink
         )
 
         Spacer(modifier = Modifier.height(10.dp))
@@ -155,7 +158,7 @@ fun DiagnosticsNotesSection(
                 Text(
                     text = "No notes yet. Add one above to record a testing observation.",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = DiagnosticsPalette.muted,
+                    color = colors.secondary,
                     textAlign = TextAlign.Center
                 )
             }
@@ -178,7 +181,7 @@ fun DiagnosticsNotesSection(
                             Icon(
                                 imageVector = Icons.Filled.EditNote,
                                 contentDescription = null,
-                                tint = DiagnosticsPalette.teal,
+                                tint = colors.ink,
                                 modifier = Modifier.size(22.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
@@ -186,14 +189,14 @@ fun DiagnosticsNotesSection(
                                 text = noteDateFormat.format(Date(note.timestamp)),
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold,
-                                color = DiagnosticsPalette.muted
+                                color = colors.secondary
                             )
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = note.text,
                             style = MaterialTheme.typography.bodyLarge,
-                            color = DiagnosticsPalette.ink
+                            color = colors.ink
                         )
                     }
                 }

@@ -12,11 +12,16 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animate
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -24,45 +29,43 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AccountBalanceWallet
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 import com.princeniithompson.rapcha.data.AudioRecording
 import com.princeniithompson.rapcha.data.ConnectionState
 import com.princeniithompson.rapcha.data.DiagnosticLogEntry
@@ -72,7 +75,7 @@ import com.princeniithompson.rapcha.data.LogEntry
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsActionMenu
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsAudioSection
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsClearConfirmDialog
-import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsCountBadge
+import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsDragHandle
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsEventTracker
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsExportUtils
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsHistorySection
@@ -80,10 +83,13 @@ import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsLabeled
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsLiveSection
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsMenuAction
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsNotesSection
-import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsPalette
+import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsSectionRow
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsSquareIconButton
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsToolbarSection
-import com.princeniithompson.rapcha.ui.components.diagnostics.premiumSurface
+import com.princeniithompson.rapcha.ui.components.diagnostics.ProvideDiagnosticsColors
+import com.princeniithompson.rapcha.ui.components.diagnostics.diagnosticsColors
+import com.princeniithompson.rapcha.ui.components.diagnostics.diagnosticsCountText
+import com.princeniithompson.rapcha.ui.components.diagnostics.diagnosticsNestedScrollGuard
 import com.princeniithompson.rapcha.ui.components.diagnostics.standardDiagnosticsMenu
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -134,6 +140,9 @@ fun DiagnosticsBottomSheet(
     BackHandler(enabled = currentSubScreen != DiagnosticSubScreen.HUB) {
         currentSubScreen = DiagnosticSubScreen.HUB
     }
+    BackHandler(enabled = currentSubScreen == DiagnosticSubScreen.HUB) {
+        onDismiss()
+    }
 
     val dayHeaderFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
     val displayDayFormat = remember { SimpleDateFormat("EEEE, MMMM dd, yyyy", Locale.getDefault()) }
@@ -179,20 +188,49 @@ fun DiagnosticsBottomSheet(
         )
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = DiagnosticsPalette.slate,
-        dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFC5CDD8)) },
-        modifier = Modifier.testTag("diagnostics_bottom_sheet")
-    ) {
+    ProvideDiagnosticsColors {
+        val colors = diagnosticsColors()
+        var dragOffsetPx by remember { mutableFloatStateOf(0f) }
+        val dismissThreshold = with(LocalDensity.current) { 120.dp.toPx() }
+        val dragScope = rememberCoroutineScope()
+        val enterOffset = remember { Animatable(1600f) }
+        LaunchedEffect(sheetState) {
+            enterOffset.animateTo(0f, tween(280, easing = FastOutSlowInEasing))
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.32f))
+        ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.95f)
-                .background(DiagnosticsPalette.slate)
+                .fillMaxSize()
+                .offset { IntOffset(0, (enterOffset.value + dragOffsetPx).roundToInt()) }
+                .background(colors.canvas)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .diagnosticsNestedScrollGuard()
+                .testTag("diagnostics_bottom_sheet")
                 .padding(horizontal = 16.dp)
         ) {
+            DiagnosticsDragHandle(
+                onDragDelta = { delta ->
+                    dragOffsetPx = (dragOffsetPx + delta).coerceAtLeast(0f)
+                },
+                onDragStopped = { velocity ->
+                    val shouldDismiss = dragOffsetPx > dismissThreshold || velocity > 1500f
+                    if (shouldDismiss) {
+                        onDismiss()
+                    } else {
+                        val from = dragOffsetPx
+                        dragScope.launch {
+                            animate(initialValue = from, targetValue = 0f) { value, _ ->
+                                dragOffsetPx = value
+                            }
+                        }
+                    }
+                }
+            )
             AnimatedContent(
                 targetState = currentSubScreen,
                 transitionSpec = {
@@ -247,7 +285,7 @@ fun DiagnosticsBottomSheet(
                     DiagnosticSubScreen.LIVE -> {
                         SubScreenScaffold(
                             title = "Voice Activity & Speed",
-                            subtitle = "Live typing speed, word count & voice notes",
+                            subtitle = "Typing speed and words",
                             onBackClick = { currentSubScreen = DiagnosticSubScreen.HUB },
                             onDismiss = onDismiss,
                             menuActions = menuActions
@@ -267,7 +305,7 @@ fun DiagnosticsBottomSheet(
                     DiagnosticSubScreen.HISTORY -> {
                         SubScreenScaffold(
                             title = "Event History",
-                            subtitle = "Multi-day persistent event log & AI",
+                            subtitle = "Saved events by day",
                             onBackClick = { currentSubScreen = DiagnosticSubScreen.HUB },
                             onDismiss = onDismiss,
                             menuActions = menuActions
@@ -290,7 +328,7 @@ fun DiagnosticsBottomSheet(
                         )
                         SubScreenScaffold(
                             title = "Audio Recordings",
-                            subtitle = "Saved WAV files & player",
+                            subtitle = "Play saved voice files",
                             onBackClick = { currentSubScreen = DiagnosticSubScreen.HUB },
                             onDismiss = onDismiss,
                             menuActions = audioActions
@@ -308,7 +346,7 @@ fun DiagnosticsBottomSheet(
                     DiagnosticSubScreen.NOTES -> {
                         SubScreenScaffold(
                             title = "Field Notes",
-                            subtitle = "Manual user observations and logs",
+                            subtitle = "Notes you write here",
                             onBackClick = { currentSubScreen = DiagnosticSubScreen.HUB },
                             onDismiss = onDismiss,
                             menuActions = menuActions
@@ -322,6 +360,7 @@ fun DiagnosticsBottomSheet(
                     }
                 }
             }
+        }
         }
     }
 }
@@ -338,38 +377,33 @@ private fun DiagnosticsHubView(
     onDismiss: () -> Unit,
     onNavigateTo: (DiagnosticSubScreen) -> Unit
 ) {
-    val liveBadge = when (connectionState) {
-        is ConnectionState.Idle -> "READY"
-        is ConnectionState.Connecting -> "CONNECTING"
-        is ConnectionState.Streaming -> "STREAMING"
-        is ConnectionState.ConnectedWaitingSetup -> "WAITING"
-        is ConnectionState.Error -> "ERROR"
-        is ConnectionState.Stopping -> "STOPPING"
-    }
-    val liveBadgeBg = when (connectionState) {
-        is ConnectionState.Error -> DiagnosticsPalette.redSoft
+    val colors = diagnosticsColors()
+    val voiceValue = when (connectionState) {
+        is ConnectionState.Error -> "Error"
         is ConnectionState.Connecting,
         is ConnectionState.ConnectedWaitingSetup,
-        is ConnectionState.Stopping -> DiagnosticsPalette.amberSoft
-        else -> DiagnosticsPalette.greenSoft
+        is ConnectionState.Stopping -> "Wait"
+        is ConnectionState.Streaming,
+        is ConnectionState.Idle -> "OK"
     }
-    val liveBadgeFg = when (connectionState) {
-        is ConnectionState.Error -> DiagnosticsPalette.red
+    val voiceColor = when (connectionState) {
+        is ConnectionState.Error -> colors.danger
         is ConnectionState.Connecting,
         is ConnectionState.ConnectedWaitingSetup,
-        is ConnectionState.Stopping -> DiagnosticsPalette.amber
-        else -> DiagnosticsPalette.green
+        is ConnectionState.Stopping -> colors.warning
+        else -> colors.ok
     }
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .testTag("diagnostics_hub_container")
+            .diagnosticsNestedScrollGuard()
+            .testTag("diagnostics_hub_container"),
+        contentPadding = PaddingValues(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item {
             DiagnosticsToolbarSection(
-                eventCount = eventCount,
-                noteCount = noteCount,
                 connectionState = connectionState,
                 onExportTxt = onExportTxt,
                 onRequestClear = onRequestClear,
@@ -378,167 +412,60 @@ private fun DiagnosticsHubView(
         }
 
         item {
-            Spacer(modifier = Modifier.height(22.dp))
-            Text(
-                text = "Explore",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = DiagnosticsPalette.ink,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-        }
-
-        item {
-            DiagnosticSectionNavCard(
-                title = "App Detection",
-                subtitle = "Raw metadata extracted during app scans",
-                badgeText = "$appDetectionCount events",
-                badgeBg = DiagnosticsPalette.blueSoft,
-                badgeFg = DiagnosticsPalette.blue,
-                icon = Icons.Filled.Star,
-                iconBg = DiagnosticsPalette.blueIcon,
+            DiagnosticsSectionRow(
+                title = "App detection",
+                detail = "Package, window, and class",
+                value = diagnosticsCountText(appDetectionCount),
+                icon = Icons.Outlined.GridView,
+                valueColor = colors.secondary,
                 onClick = { onNavigateTo(DiagnosticSubScreen.APP_DETECTION) },
                 testTag = "nav_card_app_detection"
             )
-            Spacer(modifier = Modifier.height(12.dp))
         }
-
         item {
-            DiagnosticSectionNavCard(
-                title = "Voice Activity & Speed",
-                subtitle = "Live typing speed, word count & voice notes",
-                badgeText = liveBadge,
-                badgeBg = liveBadgeBg,
-                badgeFg = liveBadgeFg,
-                icon = Icons.Filled.AccountBalanceWallet,
-                iconBg = DiagnosticsPalette.voiceIcon,
+            DiagnosticsSectionRow(
+                title = "Voice activity",
+                detail = "Typing speed and words",
+                value = voiceValue,
+                icon = Icons.Outlined.GraphicEq,
+                valueColor = voiceColor,
                 onClick = { onNavigateTo(DiagnosticSubScreen.LIVE) },
                 testTag = "nav_card_live"
             )
-            Spacer(modifier = Modifier.height(12.dp))
         }
-
         item {
-            DiagnosticSectionNavCard(
-                title = "Event History",
-                subtitle = "Multi-day persistent event log & AI",
-                badgeText = "$eventCount events",
-                badgeBg = DiagnosticsPalette.purpleSoft,
-                badgeFg = DiagnosticsPalette.purple,
-                icon = Icons.Filled.Schedule,
-                iconBg = DiagnosticsPalette.purpleIcon,
+            DiagnosticsSectionRow(
+                title = "Event history",
+                detail = "Saved events by day",
+                value = diagnosticsCountText(eventCount),
+                icon = Icons.Outlined.History,
+                valueColor = colors.secondary,
                 onClick = { onNavigateTo(DiagnosticSubScreen.HISTORY) },
                 testTag = "nav_card_history"
             )
-            Spacer(modifier = Modifier.height(12.dp))
         }
-
         item {
-            DiagnosticSectionNavCard(
-                title = "Audio Recordings",
-                subtitle = "Voice memos and system audio logs",
-                badgeText = "$recordingCount files",
-                badgeBg = DiagnosticsPalette.redSoft,
-                badgeFg = DiagnosticsPalette.audioIcon,
-                icon = Icons.Filled.Mic,
-                iconBg = DiagnosticsPalette.audioIcon,
+            DiagnosticsSectionRow(
+                title = "Audio recordings",
+                detail = "Play saved voice files",
+                value = diagnosticsCountText(recordingCount),
+                icon = Icons.Outlined.Mic,
+                valueColor = colors.secondary,
                 onClick = { onNavigateTo(DiagnosticSubScreen.AUDIO) },
                 testTag = "nav_card_audio"
             )
-            Spacer(modifier = Modifier.height(12.dp))
         }
-
         item {
-            DiagnosticSectionNavCard(
-                title = "Field Notes",
-                subtitle = "Manual user observations and logs",
-                badgeText = "$noteCount notes",
-                badgeBg = DiagnosticsPalette.amberSoft,
-                badgeFg = DiagnosticsPalette.amberIcon,
-                icon = Icons.Filled.Edit,
-                iconBg = DiagnosticsPalette.amberIcon,
+            DiagnosticsSectionRow(
+                title = "Field notes",
+                detail = "Notes you write here",
+                value = diagnosticsCountText(noteCount),
+                icon = Icons.Outlined.EditNote,
+                valueColor = colors.secondary,
                 onClick = { onNavigateTo(DiagnosticSubScreen.NOTES) },
                 testTag = "nav_card_notes"
             )
-            Spacer(modifier = Modifier.height(24.dp))
         }
-    }
-}
-
-@Composable
-private fun DiagnosticSectionNavCard(
-    title: String,
-    subtitle: String,
-    badgeText: String,
-    badgeBg: Color,
-    badgeFg: Color,
-    icon: ImageVector,
-    iconBg: Color,
-    onClick: () -> Unit,
-    testTag: String
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .premiumSurface()
-            .clickable(onClick = onClick)
-            .testTag(testTag)
-            .padding(horizontal = 14.dp, vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .background(iconBg),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(24.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.width(14.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = DiagnosticsPalette.ink,
-                    modifier = Modifier.weight(1f, fill = false),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                DiagnosticsCountBadge(
-                    text = badgeText,
-                    container = badgeBg,
-                    content = badgeFg
-                )
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = DiagnosticsPalette.muted
-            )
-        }
-
-        Spacer(modifier = Modifier.width(6.dp))
-
-        Icon(
-            imageVector = Icons.Filled.ChevronRight,
-            contentDescription = "Open $title",
-            tint = Color(0xFF94A3B8),
-            modifier = Modifier.size(22.dp)
-        )
     }
 }
 
@@ -552,8 +479,13 @@ private fun SubScreenScaffold(
     content: @Composable () -> Unit
 ) {
     var showOptions by remember { mutableStateOf(false) }
+    val colors = diagnosticsColors()
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .diagnosticsNestedScrollGuard()
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -574,16 +506,12 @@ private fun SubScreenScaffold(
                     text = title,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = DiagnosticsPalette.ink,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                    color = colors.ink
                 )
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = DiagnosticsPalette.muted,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = colors.secondary
                 )
             }
 

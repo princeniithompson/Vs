@@ -62,8 +62,8 @@ import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsActionM
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsCountBadge
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsLabeledIconButton
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsMenuAction
-import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsPalette
 import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsSquareIconButton
+import com.princeniithompson.rapcha.ui.components.diagnostics.diagnosticsColors
 import com.princeniithompson.rapcha.ui.components.diagnostics.premiumSurface
 import com.princeniithompson.rapcha.ui.components.diagnostics.standardDiagnosticsMenu
 
@@ -76,6 +76,7 @@ fun AppDetectionDiagnosticsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val colors = diagnosticsColors()
     val events by AppDetectionLogRepository.events.collectAsState()
     var showClearDialog by remember { mutableStateOf(false) }
     var showOptions by remember { mutableStateOf(false) }
@@ -164,12 +165,12 @@ fun AppDetectionDiagnosticsScreen(
                     text = "App Detection",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = DiagnosticsPalette.ink
+                    color = colors.ink
                 )
                 Text(
-                    text = "Raw metadata extracted during app scans",
+                    text = "Package, window, and class",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = DiagnosticsPalette.muted
+                    color = colors.secondary
                 )
             }
             Box {
@@ -205,13 +206,13 @@ fun AppDetectionDiagnosticsScreen(
                         imageVector = Icons.Filled.Info,
                         contentDescription = null,
                         modifier = Modifier.size(56.dp),
-                        tint = DiagnosticsPalette.muted
+                        tint = colors.secondary
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = "No app detection events yet",
                         style = MaterialTheme.typography.titleMedium,
-                        color = DiagnosticsPalette.ink,
+                        color = colors.ink,
                         fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center
                     )
@@ -219,7 +220,7 @@ fun AppDetectionDiagnosticsScreen(
                     Text(
                         text = "Trigger the floating bubble in apps to inspect metadata.",
                         style = MaterialTheme.typography.bodyLarge,
-                        color = DiagnosticsPalette.muted,
+                        color = colors.secondary,
                         textAlign = TextAlign.Center
                     )
                 }
@@ -251,6 +252,7 @@ private fun AppDetectionEventCard(
     onToggle: () -> Unit
 ) {
     val context = LocalContext.current
+    val colors = diagnosticsColors()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -267,19 +269,19 @@ private fun AppDetectionEventCard(
                     text = event.resolvedAppName,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = DiagnosticsPalette.ink
+                    color = colors.ink
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = event.formattedTime,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = DiagnosticsPalette.muted
+                    color = colors.secondary
                 )
             }
             DiagnosticsCountBadge(
                 text = event.finalCategory,
-                container = categoryBackground(event.finalCategory),
-                content = categoryForeground(event.finalCategory)
+                container = colors.surface,
+                content = colors.secondary
             )
             IconButton(
                 onClick = onToggle,
@@ -288,7 +290,7 @@ private fun AppDetectionEventCard(
                 Icon(
                     imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                     contentDescription = if (expanded) "Collapse" else "Expand",
-                    tint = DiagnosticsPalette.muted
+                    tint = colors.secondary
                 )
             }
         }
@@ -298,13 +300,13 @@ private fun AppDetectionEventCard(
         Text(
             text = "Package: ${event.rawPackageName}",
             style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-            color = DiagnosticsPalette.ink
+            color = colors.ink
         )
         Text(
             text = event.classificationSource,
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
-            color = DiagnosticsPalette.blue
+            color = colors.secondary
         )
 
         AnimatedVisibility(visible = expanded) {
@@ -313,7 +315,7 @@ private fun AppDetectionEventCard(
                     .fillMaxWidth()
                     .padding(top = 12.dp)
                     .clip(RoundedCornerShape(16.dp))
-                    .background(DiagnosticsPalette.slate)
+                    .background(colors.canvas)
                     .padding(14.dp)
             ) {
                 DetailRow(label = "Window Title", value = event.rawWindowTitle ?: "None")
@@ -326,14 +328,14 @@ private fun AppDetectionEventCard(
                         text = "Top screen texts",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = DiagnosticsPalette.ink
+                        color = colors.ink
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     event.topScreenTexts.forEach { textSnippet ->
                         Text(
                             text = "• $textSnippet",
                             style = MaterialTheme.typography.bodyLarge,
-                            color = DiagnosticsPalette.ink,
+                            color = colors.ink,
                             modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)
                         )
                     }
@@ -345,13 +347,13 @@ private fun AppDetectionEventCard(
                         text = "AI prompt sent",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = DiagnosticsPalette.ink
+                        color = colors.ink
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = event.aiPromptSent ?: "",
                         style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                        color = DiagnosticsPalette.ink,
+                        color = colors.ink,
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(Color.White, RoundedCornerShape(12.dp))
@@ -365,13 +367,13 @@ private fun AppDetectionEventCard(
                         text = "AI raw response",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = DiagnosticsPalette.ink
+                        color = colors.ink
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = event.aiRawResponse ?: "",
                         style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                        color = DiagnosticsPalette.ink,
+                        color = colors.ink,
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(Color.White, RoundedCornerShape(12.dp))
@@ -428,18 +430,19 @@ private fun AppDetectionEventCard(
 
 @Composable
 private fun DetailRow(label: String, value: String) {
+    val colors = diagnosticsColors()
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Medium,
-            color = DiagnosticsPalette.muted
+            color = colors.secondary
         )
         Text(
             text = value,
             style = MaterialTheme.typography.bodyLarge,
             fontWeight = FontWeight.SemiBold,
-            color = DiagnosticsPalette.ink
+            color = colors.ink
         )
     }
 }
@@ -451,18 +454,3 @@ private fun copyAppDetectionReport(context: Context) {
     Toast.makeText(context, "Copied all logs to clipboard", Toast.LENGTH_SHORT).show()
 }
 
-private fun categoryBackground(category: String): Color = when (category.uppercase()) {
-    "AI" -> Color(0xFFEEF2FF)
-    "SOCIAL" -> Color(0xFFF0FDF4)
-    "EMAIL" -> Color(0xFFFEF3C7)
-    "WORK" -> DiagnosticsPalette.purpleSoft
-    else -> DiagnosticsPalette.pill
-}
-
-private fun categoryForeground(category: String): Color = when (category.uppercase()) {
-    "AI" -> Color(0xFF4F46E5)
-    "SOCIAL" -> Color(0xFF16A34A)
-    "EMAIL" -> Color(0xFFD97706)
-    "WORK" -> DiagnosticsPalette.purple
-    else -> DiagnosticsPalette.ink
-}

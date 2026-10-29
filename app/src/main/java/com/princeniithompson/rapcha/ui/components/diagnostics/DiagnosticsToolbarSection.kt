@@ -1,23 +1,18 @@
 package com.princeniithompson.rapcha.ui.components.diagnostics
 
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,19 +20,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.princeniithompson.rapcha.data.ConnectionState
 
 /**
- * Hub header: title, health chips, and the large Copy / Export / Clear / Options tiles.
+ * Title plus a slim Copy / Export / Options row. Clear stays a text action.
  */
 @Composable
 fun DiagnosticsToolbarSection(
-    eventCount: Int,
-    noteCount: Int,
     connectionState: ConnectionState,
     onExportTxt: () -> Unit,
     onRequestClear: () -> Unit,
@@ -45,31 +39,31 @@ fun DiagnosticsToolbarSection(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val colors = diagnosticsColors()
     var showOptions by remember { mutableStateOf(false) }
     val menuActions = standardDiagnosticsMenu(
         context = context,
         onExportTxt = onExportTxt,
         onRequestClear = onRequestClear
     )
-    val liveChip = liveChipStyle(connectionState)
+    val (statusLabel, statusColor) = liveStatus(connectionState, colors)
 
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                 Text(
                     text = "Diagnostics",
-                    style = MaterialTheme.typography.headlineSmall,
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = DiagnosticsPalette.ink
+                    color = colors.ink
                 )
                 Text(
-                    text = "System health & logs",
+                    text = "On-device logs",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = DiagnosticsPalette.muted
+                    color = colors.secondary
                 )
             }
             DiagnosticsSquareIconButton(
@@ -80,138 +74,88 @@ fun DiagnosticsToolbarSection(
             )
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = statusLabel,
+            style = MaterialTheme.typography.bodyLarge,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium,
+            color = statusColor,
+            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+        )
 
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            DiagnosticsStatusChip(
-                text = liveChip.label,
-                container = liveChip.container,
-                content = liveChip.content,
-                borderColor = liveChip.border
+            ToolTextButton(
+                label = "Copy",
+                onClick = { DiagnosticsExportUtils.copyToClipboard(context) },
+                testTag = "copy_logs_button",
+                color = colors.ink
             )
-            DiagnosticsStatusChip(
-                text = "$eventCount events",
-                container = DiagnosticsPalette.blueSoft,
-                content = DiagnosticsPalette.blue
+            ToolTextButton(
+                label = "Export",
+                onClick = onExportTxt,
+                testTag = "download_logs_button",
+                color = colors.ink
             )
-            DiagnosticsStatusChip(
-                text = "$noteCount notes",
-                container = DiagnosticsPalette.purpleSoft,
-                content = DiagnosticsPalette.purple
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .premiumSurface(ring = false)
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                DiagnosticsActionTile(
-                    label = "Copy",
-                    icon = Icons.Filled.ContentCopy,
-                    background = DiagnosticsPalette.greenSoft,
-                    tint = DiagnosticsPalette.green,
-                    onClick = { DiagnosticsExportUtils.copyToClipboard(context) },
-                    testTag = "copy_logs_button",
-                    modifier = Modifier.weight(1f)
+            Box {
+                ToolTextButton(
+                    label = "Options",
+                    onClick = { showOptions = true },
+                    testTag = "diagnostics_options_button",
+                    color = colors.ink
                 )
-                DiagnosticsActionTile(
-                    label = "Export",
-                    icon = Icons.Filled.Download,
-                    background = DiagnosticsPalette.blueSoft,
-                    tint = DiagnosticsPalette.blue,
-                    onClick = onExportTxt,
-                    testTag = "download_logs_button",
-                    modifier = Modifier.weight(1f)
+                DiagnosticsActionMenu(
+                    expanded = showOptions,
+                    onDismissRequest = { showOptions = false },
+                    actions = menuActions
                 )
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                DiagnosticsActionTile(
-                    label = "Clear",
-                    icon = Icons.Filled.Delete,
-                    background = DiagnosticsPalette.redSoft,
-                    tint = DiagnosticsPalette.red,
-                    onClick = onRequestClear,
-                    testTag = "clear_logs_button",
-                    modifier = Modifier.weight(1f)
-                )
-                Box(modifier = Modifier.weight(1f)) {
-                    DiagnosticsActionTile(
-                        label = "Options",
-                        icon = Icons.Filled.MoreHoriz,
-                        background = DiagnosticsPalette.purpleSoft,
-                        tint = DiagnosticsPalette.purple,
-                        onClick = { showOptions = true },
-                        testTag = "diagnostics_options_button",
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    DiagnosticsActionMenu(
-                        expanded = showOptions,
-                        onDismissRequest = { showOptions = false },
-                        actions = menuActions
-                    )
-                }
-            }
+            Spacer(modifier = Modifier.weight(1f))
+            ToolTextButton(
+                label = "Clear",
+                onClick = onRequestClear,
+                testTag = "clear_logs_button",
+                color = colors.danger
+            )
         }
     }
 }
 
-private data class LiveChipStyle(
-    val label: String,
-    val container: Color,
-    val content: Color,
-    val border: Color?
-)
+@Composable
+private fun ToolTextButton(
+    label: String,
+    onClick: () -> Unit,
+    testTag: String,
+    color: androidx.compose.ui.graphics.Color
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .testTag(testTag)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Medium,
+            color = color
+        )
+    }
+}
 
-private fun liveChipStyle(state: ConnectionState): LiveChipStyle {
+private fun liveStatus(
+    state: ConnectionState,
+    colors: DiagnosticsColors
+): Pair<String, androidx.compose.ui.graphics.Color> {
     return when (state) {
-        is ConnectionState.Error -> LiveChipStyle(
-            label = "Live · Error",
-            container = DiagnosticsPalette.redSoft,
-            content = DiagnosticsPalette.red,
-            border = DiagnosticsPalette.red
-        )
-        is ConnectionState.Connecting -> LiveChipStyle(
-            label = "Live · Connecting",
-            container = DiagnosticsPalette.amberSoft,
-            content = DiagnosticsPalette.amber,
-            border = DiagnosticsPalette.amber
-        )
-        is ConnectionState.ConnectedWaitingSetup -> LiveChipStyle(
-            label = "Live · Setup",
-            container = DiagnosticsPalette.amberSoft,
-            content = DiagnosticsPalette.amber,
-            border = DiagnosticsPalette.amber
-        )
-        is ConnectionState.Stopping -> LiveChipStyle(
-            label = "Live · Stopping",
-            container = DiagnosticsPalette.amberSoft,
-            content = DiagnosticsPalette.amber,
-            border = DiagnosticsPalette.amber
-        )
+        is ConnectionState.Error -> "Live error" to colors.danger
+        is ConnectionState.Connecting,
+        is ConnectionState.ConnectedWaitingSetup,
+        is ConnectionState.Stopping -> "Live wait" to colors.warning
         is ConnectionState.Streaming,
-        is ConnectionState.Idle -> LiveChipStyle(
-            label = "Live · OK",
-            container = DiagnosticsPalette.greenChip,
-            content = DiagnosticsPalette.green,
-            border = DiagnosticsPalette.greenRing
-        )
+        is ConnectionState.Idle -> "Live OK" to colors.ok
     }
 }

@@ -329,6 +329,10 @@ object FloatingBubbleManager {
         FloatingBubbleService.instance?.onFieldFocusChanged(isFocused)
     }
 
+    fun setDiagnosticsSheetOpen(open: Boolean) {
+        FloatingBubbleService.instance?.setDiagnosticsSheetOpen(open)
+    }
+
     fun notifyKeyboardVisibility(visible: Boolean) {
         if (visible && !_isKeyboardVisible.value) {
             bubbleSignalAtElapsed = SystemClock.elapsedRealtime()

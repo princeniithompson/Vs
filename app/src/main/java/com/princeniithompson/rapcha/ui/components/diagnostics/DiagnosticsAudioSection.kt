@@ -203,14 +203,14 @@ fun DiagnosticsAudioSection(
                 Icon(
                     imageVector = Icons.Filled.Lock,
                     contentDescription = null,
-                    tint = DiagnosticsPalette.teal,
+                    tint = colors.ink,
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
                     text = "Audio stays on this phone. Nothing is uploaded unless you tap Share or Download.",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = DiagnosticsPalette.ink
+                    color = colors.ink
                 )
             }
         }
@@ -224,7 +224,7 @@ fun DiagnosticsAudioSection(
                 },
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium,
-                color = DiagnosticsPalette.muted
+                color = colors.secondary
             )
         }
 
@@ -239,7 +239,7 @@ fun DiagnosticsAudioSection(
                     Icon(
                         imageVector = Icons.Filled.GraphicEq,
                         contentDescription = null,
-                        tint = DiagnosticsPalette.muted,
+                        tint = colors.secondary,
                         modifier = Modifier.size(56.dp)
                     )
                     Spacer(modifier = Modifier.height(14.dp))
@@ -247,14 +247,14 @@ fun DiagnosticsAudioSection(
                         text = "No saved audio recordings yet",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = DiagnosticsPalette.ink,
+                        color = colors.ink,
                         textAlign = TextAlign.Center
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = "Voice recordings from the app or floating bubble will appear here.",
                         style = MaterialTheme.typography.bodyLarge,
-                        color = DiagnosticsPalette.muted,
+                        color = colors.secondary,
                         textAlign = TextAlign.Center
                     )
                 }
@@ -285,7 +285,7 @@ fun DiagnosticsAudioSection(
                                 text = recordingTitle(recording, recordings),
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
-                                color = DiagnosticsPalette.ink,
+                                color = colors.ink,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -293,7 +293,7 @@ fun DiagnosticsAudioSection(
                             Text(
                                 text = recordingMeta(recording, dateTimeFormat),
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = DiagnosticsPalette.muted
+                                color = colors.secondary
                             )
                         }
                         IconButton(
@@ -303,7 +303,7 @@ fun DiagnosticsAudioSection(
                             Icon(
                                 imageVector = if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                                 contentDescription = if (isExpanded) "Collapse recording" else "Expand recording",
-                                tint = DiagnosticsPalette.muted
+                                tint = colors.secondary
                             )
                         }
                     }
@@ -327,7 +327,7 @@ fun DiagnosticsAudioSection(
                                     Icon(
                                         imageVector = Icons.Filled.GraphicEq,
                                         contentDescription = null,
-                                        tint = DiagnosticsPalette.muted,
+                                        tint = colors.secondary,
                                         modifier = Modifier.size(22.dp)
                                     )
                                     Slider(
@@ -339,9 +339,9 @@ fun DiagnosticsAudioSection(
                                         },
                                         valueRange = 0f..maxMs.toFloat(),
                                         colors = SliderDefaults.colors(
-                                            thumbColor = DiagnosticsPalette.teal,
-                                            activeTrackColor = DiagnosticsPalette.teal,
-                                            inactiveTrackColor = DiagnosticsPalette.track
+                                            thumbColor = colors.ink,
+                                            activeTrackColor = colors.ink,
+                                            inactiveTrackColor = colors.line
                                         ),
                                         modifier = Modifier
                                             .weight(1f)
@@ -350,7 +350,7 @@ fun DiagnosticsAudioSection(
                                     Icon(
                                         imageVector = Icons.Filled.GraphicEq,
                                         contentDescription = null,
-                                        tint = DiagnosticsPalette.muted,
+                                        tint = colors.secondary,
                                         modifier = Modifier.size(22.dp)
                                     )
                                 }
@@ -363,12 +363,12 @@ fun DiagnosticsAudioSection(
                                         text = String.format(Locale.US, "#%03d", index + 1),
                                         style = MaterialTheme.typography.labelLarge,
                                         fontWeight = FontWeight.Medium,
-                                        color = DiagnosticsPalette.muted
+                                        color = colors.secondary
                                     )
                                     DiagnosticsCountBadge(
                                         text = formatDurationMs(maxMs.toLong()),
-                                        container = DiagnosticsPalette.pill,
-                                        content = DiagnosticsPalette.ink
+                                        container = colors.canvas,
+                                        content = colors.ink
                                     )
                                 }
                             }
@@ -406,7 +406,7 @@ fun DiagnosticsAudioSection(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = 48.dp),
-                            colors = ButtonDefaults.textButtonColors(contentColor = DiagnosticsPalette.red)
+                            colors = ButtonDefaults.textButtonColors(contentColor = colors.danger)
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.Delete,
@@ -434,14 +434,14 @@ fun DiagnosticsAudioSection(
                     text = "Delete all saved audio?",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = DiagnosticsPalette.ink
+                    color = colors.ink
                 )
             },
             text = {
                 Text(
                     text = "This will permanently delete all local audio files from your device. This cannot be undone.",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = DiagnosticsPalette.muted
+                    color = colors.secondary
                 )
             },
             confirmButton = {
@@ -451,7 +451,7 @@ fun DiagnosticsAudioSection(
                         onClearAllRecordings()
                     },
                     modifier = Modifier.heightIn(min = 48.dp),
-                    colors = ButtonDefaults.textButtonColors(contentColor = DiagnosticsPalette.red)
+                    colors = ButtonDefaults.textButtonColors(contentColor = colors.danger)
                 ) {
                     Text(
                         text = "Delete All",
@@ -468,13 +468,13 @@ fun DiagnosticsAudioSection(
                     Text(
                         text = "Cancel",
                         style = MaterialTheme.typography.titleMedium,
-                        color = DiagnosticsPalette.muted,
+                        color = colors.secondary,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
             },
             containerColor = Color.White,
-            shape = DiagnosticsShapes.card
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
         )
     }
 }
@@ -487,14 +487,14 @@ private fun PremiumPlayButton(
 ) {
     Box(
         modifier = Modifier
-            .size(84.dp)
+            .size(56.dp)
             .alpha(if (enabledVisual) 1f else 0.45f)
             .clip(CircleShape)
             .clickable(onClick = onClick)
-            .border(4.dp, DiagnosticsPalette.playRing, CircleShape)
+            .border(4.dp, colors.line, CircleShape)
             .padding(7.dp)
             .clip(CircleShape)
-            .background(DiagnosticsPalette.playFill),
+            .background(colors.ink),
         contentAlignment = Alignment.Center
     ) {
         Icon(
@@ -516,8 +516,8 @@ private fun AudioActionPill(
     Row(
         modifier = modifier
             .heightIn(min = 52.dp)
-            .clip(DiagnosticsShapes.pill)
-            .background(DiagnosticsPalette.pill)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .background(colors.canvas)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.Center,
@@ -526,7 +526,7 @@ private fun AudioActionPill(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = DiagnosticsPalette.ink,
+            tint = colors.ink,
             modifier = Modifier.size(22.dp)
         )
         Spacer(modifier = Modifier.width(8.dp))
@@ -534,7 +534,7 @@ private fun AudioActionPill(
             text = label,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
-            color = DiagnosticsPalette.ink
+            color = colors.ink
         )
     }
 }

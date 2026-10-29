@@ -681,6 +681,11 @@ class FloatingBubbleService : Service() {
         overlayWindowManager.updateOverlayVisibility(isSessionActive = false)
     }
 
+    fun setDiagnosticsSheetOpen(open: Boolean) {
+        if (!::overlayWindowManager.isInitialized) return
+        overlayWindowManager.setDiagnosticsSheetOpen(open)
+    }
+
     fun onKeyboardVisibilityChanged(isVisible: Boolean) {
         if (!componentsReady()) return
         val isSessionActive = sessionManager.isRecording ||
