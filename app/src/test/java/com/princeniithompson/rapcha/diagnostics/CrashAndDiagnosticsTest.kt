@@ -65,6 +65,14 @@ class CrashAndDiagnosticsTest {
             DictationEndedReason.CONNECTION_DROP,
             DictationEndedReason.fromMessage("connection reset")
         )
+        assertEquals(
+            DictationEndedReason.NO_SOCKET,
+            DictationEndedReason.fromMessage("Gemini Live no_socket after 2 attempts deadline_ms=3000")
+        )
+        assertEquals(
+            DictationEndedReason.NO_SOCKET,
+            DictationEndedReason.fromMessage("no_socket connect timeout")
+        )
     }
 
     @Test
@@ -90,17 +98,20 @@ class CrashAndDiagnosticsTest {
     }
 
     @Test
-    fun activeDictationSchedulesReconnect() {
+    fun activeDictationRetriesOnceThenStops() {
         GeminiLiveWebSocketClient.debugSetActiveSocketCount(0)
         val attempts = AtomicInteger(0)
         val active = AtomicBoolean(true)
         val client = failingClient(attempts, active)
         client.connect("AIzaSyFakeKeyForCrashDiagnostics12345")
-        ShadowLooper.shadowMainLooper().idleFor(2500, TimeUnit.MILLISECONDS)
-        assertTrue("expected a reconnect while dictation is active, attempts=${attempts.get()}", attempts.get() >= 2)
+        ShadowLooper.shadowMainLooper().idle()
+        assertEquals("a pre-open failure retries once", 2, attempts.get())
+        ShadowLooper.shadowMainLooper().idleFor(8, TimeUnit.SECONDS)
+        assertEquals("the second miss is terminal and does not keep reconnecting", 2, attempts.get())
         active.set(false)
         client.disconnect()
         ShadowLooper.shadowMainLooper().idleFor(5, TimeUnit.SECONDS)
+        assertEquals(2, attempts.get())
         GeminiLiveWebSocketClient.debugSetActiveSocketCount(0)
     }
 
