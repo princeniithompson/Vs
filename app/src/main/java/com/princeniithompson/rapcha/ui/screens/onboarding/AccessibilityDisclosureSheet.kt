@@ -55,7 +55,7 @@ fun AccessibilityDisclosureSheet(
         onDismissRequest = { },
         sheetState = sheetState,
         properties = ModalBottomSheetProperties(shouldDismissOnBackPress = false),
-        containerColor = Color.White
+        containerColor = MaterialTheme.colorScheme.surface
     ) {
         Column(
             modifier = Modifier

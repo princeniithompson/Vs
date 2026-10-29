@@ -106,17 +106,22 @@ fun AppDetectionDiagnosticsScreen(
     if (showClearDialog) {
         AlertDialog(
             onDismissRequest = { showClearDialog = false },
+            containerColor = colors.surfaceRaised,
+            titleContentColor = colors.textPrimary,
+            textContentColor = colors.textSecondary,
             title = {
                 Text(
                     text = "Clear App Detection Logs",
                     style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary
                 )
             },
             text = {
                 Text(
                     text = "Are you sure you want to clear all recorded app detection and classification logs?",
-                    style = MaterialTheme.typography.bodyLarge
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = colors.textSecondary
                 )
             },
             confirmButton = {
@@ -356,7 +361,7 @@ private fun AppDetectionEventCard(
                         color = colors.ink,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color.White, RoundedCornerShape(12.dp))
+                            .background(colors.surfaceRaised, RoundedCornerShape(12.dp))
                             .padding(12.dp)
                     )
                 }
@@ -376,7 +381,7 @@ private fun AppDetectionEventCard(
                         color = colors.ink,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color.White, RoundedCornerShape(12.dp))
+                            .background(colors.surfaceRaised, RoundedCornerShape(12.dp))
                             .padding(12.dp)
                     )
                 }

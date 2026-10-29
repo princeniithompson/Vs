@@ -339,9 +339,9 @@ fun DiagnosticsAudioSection(
                                         },
                                         valueRange = 0f..maxMs.toFloat(),
                                         colors = SliderDefaults.colors(
-                                            thumbColor = colors.ink,
-                                            activeTrackColor = colors.ink,
-                                            inactiveTrackColor = colors.line
+                                            thumbColor = colors.textPrimary,
+                                            activeTrackColor = colors.accent,
+                                            inactiveTrackColor = colors.border
                                         ),
                                         modifier = Modifier
                                             .weight(1f)
@@ -473,7 +473,7 @@ fun DiagnosticsAudioSection(
                     )
                 }
             },
-            containerColor = Color.White,
+            containerColor = colors.surfaceRaised,
             shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
         )
     }
@@ -490,18 +490,15 @@ private fun PremiumPlayButton(
             .size(56.dp)
             .alpha(if (enabledVisual) 1f else 0.45f)
             .clip(CircleShape)
-            .clickable(onClick = onClick)
-            .border(4.dp, colors.line, CircleShape)
-            .padding(7.dp)
-            .clip(CircleShape)
-            .background(colors.ink),
+            .background(colors.accent)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
             contentDescription = if (isPlaying) "Pause" else "Play",
-            tint = Color.White,
-            modifier = Modifier.size(34.dp)
+            tint = colors.onAccent,
+            modifier = Modifier.size(28.dp)
         )
     }
 }
@@ -515,9 +512,10 @@ private fun AudioActionPill(
 ) {
     Row(
         modifier = modifier
-            .heightIn(min = 52.dp)
+            .heightIn(min = 48.dp)
             .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-            .background(colors.canvas)
+            .background(colors.surfaceRaised)
+            .border(1.dp, colors.border, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.Center,

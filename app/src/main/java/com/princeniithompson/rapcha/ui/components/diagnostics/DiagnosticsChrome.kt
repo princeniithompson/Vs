@@ -55,36 +55,53 @@ import com.princeniithompson.rapcha.data.DiagnosticLogEntry
  * Light and dark use the same roles.
  */
 data class DiagnosticsColors(
-    val canvas: Color,
+    val background: Color,
     val surface: Color,
-    val ink: Color,
-    val secondary: Color,
-    val line: Color,
-    val ok: Color,
-    val warning: Color,
-    val danger: Color
-)
+    val surfaceRaised: Color,
+    val border: Color,
+    val textPrimary: Color,
+    val textSecondary: Color,
+    val accent: Color,
+    val onAccent: Color,
+    val statusOk: Color,
+    val statusWarn: Color,
+    val statusError: Color
+) {
+    val canvas: Color get() = background
+    val ink: Color get() = textPrimary
+    val secondary: Color get() = textSecondary
+    val line: Color get() = border
+    val ok: Color get() = statusOk
+    val warning: Color get() = statusWarn
+    val danger: Color get() = statusError
+}
 
 private val LightDiagnosticsColors = DiagnosticsColors(
-    canvas = Color(0xFFF3F4F6),
+    background = Color(0xFFF4F5F7),
     surface = Color(0xFFFFFFFF),
-    ink = Color(0xFF1A1C1F),
-    secondary = Color(0xFF5C6370),
-    line = Color(0xFFD9DDE3),
-    ok = Color(0xFF1B7F3A),
-    warning = Color(0xFF9A6700),
-    danger = Color(0xFFB42318)
+    surfaceRaised = Color(0xFFFFFFFF),
+    border = Color(0xFFD5D8DE),
+    textPrimary = Color(0xFF1A1C1F),
+    textSecondary = Color(0xFF4E5560),
+    accent = Color(0xFF0E6B52),
+    onAccent = Color(0xFFFFFFFF),
+    statusOk = Color(0xFF146C36),
+    statusWarn = Color(0xFF8A5A00),
+    statusError = Color(0xFFB42318)
 )
 
 private val DarkDiagnosticsColors = DiagnosticsColors(
-    canvas = Color(0xFF111315),
-    surface = Color(0xFF1A1D21),
-    ink = Color(0xFFF3F4F6),
-    secondary = Color(0xFFB0B6C0),
-    line = Color(0xFF2E333A),
-    ok = Color(0xFF6FCF97),
-    warning = Color(0xFFE6B15A),
-    danger = Color(0xFFFF8A80)
+    background = Color(0xFF0E0F12),
+    surface = Color(0xFF1A1C20),
+    surfaceRaised = Color(0xFF26292E),
+    border = Color(0xFF3A3F46),
+    textPrimary = Color(0xFFF4F5F7),
+    textSecondary = Color(0xFFC5CAD3),
+    accent = Color(0xFF3DDC97),
+    onAccent = Color(0xFF062015),
+    statusOk = Color(0xFF7DDEA0),
+    statusWarn = Color(0xFFF5C16C),
+    statusError = Color(0xFFFF8A80)
 )
 
 val LocalDiagnosticsColors = staticCompositionLocalOf { LightDiagnosticsColors }
@@ -139,7 +156,7 @@ fun Modifier.premiumSurface(ring: Boolean = true): Modifier {
     return this
         .clip(ToolShape)
         .background(colors.surface)
-        .border(1.dp, colors.line, ToolShape)
+        .border(1.dp, colors.border, ToolShape)
 }
 
 data class DiagnosticsMenuAction(
@@ -194,7 +211,7 @@ fun DiagnosticsSquareIconButton(
             .size(48.dp)
             .clip(ToolShape)
             .background(colors.surface)
-            .border(1.dp, colors.line, ToolShape)
+            .border(1.dp, colors.border, ToolShape)
             .testTag(testTag)
     ) {
         Icon(
@@ -250,7 +267,9 @@ fun DiagnosticsActionMenu(
     val colors = diagnosticsColors()
     DropdownMenu(
         expanded = expanded,
-        onDismissRequest = onDismissRequest
+        onDismissRequest = onDismissRequest,
+        containerColor = colors.surfaceRaised,
+        shape = RoundedCornerShape(8.dp)
     ) {
         actions.forEach { action ->
             DropdownMenuItem(
@@ -316,7 +335,7 @@ fun DiagnosticsSectionRow(
             .heightIn(min = 64.dp)
             .clip(ToolShape)
             .background(colors.surface)
-            .border(1.dp, colors.line, ToolShape)
+            .border(1.dp, colors.border, ToolShape)
             .clickable(onClick = onClick)
             .testTag(testTag)
             .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -374,7 +393,7 @@ fun DiagnosticsDragHandle(
                 .width(32.dp)
                 .height(4.dp)
                 .clip(RoundedCornerShape(2.dp))
-                .background(colors.line)
+                .background(colors.border)
         )
     }
 }

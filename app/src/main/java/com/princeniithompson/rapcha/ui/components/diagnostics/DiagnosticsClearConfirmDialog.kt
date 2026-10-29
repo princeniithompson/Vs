@@ -10,7 +10,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -23,28 +22,29 @@ fun DiagnosticsClearConfirmDialog(
     onDismissRequest: () -> Unit,
     onConfirm: () -> Unit
 ) {
+    val colors = diagnosticsColors()
     AlertDialog(
         onDismissRequest = onDismissRequest,
         title = {
             Text(
                 text = "Clear all diagnostics?",
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFF0F172A)
+                color = colors.textPrimary
             )
         },
         text = {
             Text(
                 text = "This deletes everything logged so far (including multi-day event history and user notes) and cannot be undone.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF475569)
+                style = MaterialTheme.typography.bodyLarge,
+                color = colors.textSecondary
             )
         },
         confirmButton = {
             Button(
                 onClick = onConfirm,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFDC2626),
-                    contentColor = Color.White
+                    containerColor = colors.statusError,
+                    contentColor = colors.background
                 ),
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
@@ -61,10 +61,10 @@ fun DiagnosticsClearConfirmDialog(
                     .heightIn(min = 48.dp)
                     .testTag("cancel_clear_diagnostics_button")
             ) {
-                Text("Cancel", color = Color(0xFF64748B), fontWeight = FontWeight.SemiBold)
+                Text("Cancel", color = colors.textSecondary, fontWeight = FontWeight.SemiBold)
             }
         },
-        containerColor = Color.White,
+        containerColor = colors.surfaceRaised,
         shape = RoundedCornerShape(20.dp)
     )
 }

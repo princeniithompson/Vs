@@ -42,6 +42,7 @@ class FloatingDragSnapHandler(private val context: Context) {
     fun loadPreferences() {
         val prefs = context.getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)
         isSnappedToRight = prefs.getBoolean("bubble_snapped_right", true)
+        com.princeniithompson.rapcha.service.FloatingBubbleManager.noteBubbleAnchoredRight(isSnappedToRight)
         val posStr = prefs.getString("settle_position", SettlePosition.BOTTOM.name) ?: SettlePosition.BOTTOM.name
         currentSettlePosition = try {
             SettlePosition.valueOf(posStr)
@@ -57,6 +58,7 @@ class FloatingDragSnapHandler(private val context: Context) {
     fun savePreferences(snappedRight: Boolean, y: Int) {
         isSnappedToRight = snappedRight
         savedY = y
+        com.princeniithompson.rapcha.service.FloatingBubbleManager.noteBubbleAnchoredRight(snappedRight)
         context.getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)
             .edit()
             .putBoolean("bubble_snapped_right", snappedRight)

@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import com.princeniithompson.rapcha.service.FloatingBubbleManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -190,6 +191,8 @@ fun DiagnosticsBottomSheet(
 
     ProvideDiagnosticsColors {
         val colors = diagnosticsColors()
+        val bubbleOnRight by FloatingBubbleManager.bubbleAnchoredRight.collectAsState()
+        val bubbleGutter = 72.dp
         var dragOffsetPx by remember { mutableFloatStateOf(0f) }
         val dismissThreshold = with(LocalDensity.current) { 120.dp.toPx() }
         val dragScope = rememberCoroutineScope()
@@ -211,7 +214,10 @@ fun DiagnosticsBottomSheet(
                 .navigationBarsPadding()
                 .diagnosticsNestedScrollGuard()
                 .testTag("diagnostics_bottom_sheet")
-                .padding(horizontal = 16.dp)
+                .padding(
+                    start = if (bubbleOnRight) 16.dp else 16.dp + bubbleGutter,
+                    end = if (bubbleOnRight) 16.dp + bubbleGutter else 16.dp
+                )
         ) {
             DiagnosticsDragHandle(
                 onDragDelta = { delta ->

@@ -132,8 +132,8 @@ fun DiagnosticsLiveSection(
                     .padding(bottom = 14.dp)
                     .testTag("live_source_banner"),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.surface, contentColor = colors.textPrimary),
                 border = BorderStroke(1.25.dp, colors.line)
             ) {
                 Row(
@@ -146,13 +146,13 @@ fun DiagnosticsLiveSection(
                         modifier = Modifier
                             .size(48.dp)
                             .clip(CircleShape)
-                            .background(if (isBubble) colors.ink else colors.ink),
+                            .background(colors.accent),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = if (isBubble) Icons.Filled.BubbleChart else Icons.Filled.Mic,
                             contentDescription = null,
-                            tint = Color.White,
+                            tint = colors.onAccent,
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -192,10 +192,10 @@ fun DiagnosticsLiveSection(
         // 2. Premium Activity & Speed Score Card
         item {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = colors.surface, contentColor = colors.textPrimary),
                 border = BorderStroke(1.25.dp, colors.line),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
@@ -205,7 +205,7 @@ fun DiagnosticsLiveSection(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(
-                                color = if (stats.lastInjectionDurationMs > 0 || isStreaming) Color(0xFFF0FDF4) else Color(0xFFF8FAFC),
+                                color = if (stats.lastInjectionDurationMs > 0 || isStreaming) colors.surfaceRaised else colors.surfaceRaised,
                                 shape = RoundedCornerShape(16.dp)
                             )
                             .padding(horizontal = 14.dp, vertical = 12.dp)
@@ -214,13 +214,13 @@ fun DiagnosticsLiveSection(
                             modifier = Modifier
                                 .size(38.dp)
                                 .clip(CircleShape)
-                                .background(if (stats.lastInjectionDurationMs > 0 || isStreaming) Color(0xFF16A34A) else Color(0xFF64748B)),
+                                .background(if (stats.lastInjectionDurationMs > 0 || isStreaming) colors.accent else colors.textSecondary),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = if (isStreaming) Icons.Filled.GraphicEq else Icons.Filled.Bolt,
                                 contentDescription = null,
-                                tint = Color.White,
+                                tint = colors.onAccent,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -232,12 +232,12 @@ fun DiagnosticsLiveSection(
                                 text = speedHeadline,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = if (stats.lastInjectionDurationMs > 0 || isStreaming) Color(0xFF14532D) else Color(0xFF0F172A)
+                                color = if (stats.lastInjectionDurationMs > 0 || isStreaming) colors.textPrimary else colors.background
                             )
                             Text(
                                 text = speedSubtitle,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = if (stats.lastInjectionDurationMs > 0 || isStreaming) Color(0xFF166534) else colors.secondary
+                                color = if (stats.lastInjectionDurationMs > 0 || isStreaming) colors.textSecondary else colors.secondary
                             )
                         }
                     }
@@ -253,21 +253,21 @@ fun DiagnosticsLiveSection(
                             icon = Icons.Filled.Speed,
                             label = "Typing Speed",
                             value = if (stats.lastInjectionDurationMs > 0) "${speedTimeSec}s" else "Instant",
-                            accentColor = Color(0xFF0284C7),
+                            accentColor = colors.accent,
                             modifier = Modifier.weight(1f)
                         )
                         PremiumMetricPill(
                             icon = Icons.Filled.TextFields,
                             label = "Words Typed",
                             value = if (stats.lastInjectionWordCount > 0) "${stats.lastInjectionWordCount} words" else if (stats.finalizedCount > 0) "${stats.finalizedCount} words" else "0 words",
-                            accentColor = Color(0xFF16A34A),
+                            accentColor = colors.accent,
                             modifier = Modifier.weight(1f)
                         )
                         PremiumMetricPill(
                             icon = Icons.Filled.RecordVoiceOver,
                             label = "Target App",
                             value = if (stats.lastInjectionTargetApp.isNotBlank()) stats.lastInjectionTargetApp else if (isBubble) "Active App" else "Rapcha",
-                            accentColor = Color(0xFF7E22CE),
+                            accentColor = colors.accent,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -278,32 +278,30 @@ fun DiagnosticsLiveSection(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color(0xFFF8FAFC), RoundedCornerShape(12.dp))
-                            .padding(horizontal = 12.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .background(colors.surfaceRaised, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(if (apiKeyConfigured) Color(0xFF10B981) else Color(0xFFF59E0B))
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (isSmartMode) "Smart Polish Mode" else "Verbatim Speed Mode",
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF334155)
-                            )
-                        }
-
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(if (apiKeyConfigured) colors.statusOk else colors.statusWarn)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isSmartMode) "Smart Polish Mode" else "Verbatim Speed Mode",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.textPrimary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = if (apiKeyConfigured) "AI Connected" else "API Key Needed",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = if (apiKeyConfigured) Color(0xFF059669) else Color(0xFFD97706)
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (apiKeyConfigured) colors.statusOk else colors.statusWarn
                         )
                     }
                 }
@@ -315,9 +313,9 @@ fun DiagnosticsLiveSection(
         // 3. API Key Connection Card
         item {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = colors.surface, contentColor = colors.textPrimary),
                 border = BorderStroke(1.25.dp, colors.line),
-                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -335,20 +333,20 @@ fun DiagnosticsLiveSection(
                                 Icons.Filled.Key,
                                 contentDescription = null,
                                 modifier = Modifier.size(18.dp),
-                                tint = if (apiKeyConfigured) Color(0xFF059669) else Color(0xFFD97706)
+                                tint = if (apiKeyConfigured) colors.statusOk else colors.statusWarn
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (apiKeyConfigured) "Gemini API Connection: Connected" else "Gemini API Key: Setup Needed",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = if (apiKeyConfigured) Color(0xFF059669) else Color(0xFFD97706)
+                                color = if (apiKeyConfigured) colors.statusOk else colors.statusWarn
                             )
                         }
                         Icon(
                             imageVector = if (showApiKeyInput) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                             contentDescription = null,
-                            tint = Color(0xFF64748B)
+                            tint = colors.textSecondary
                         )
                     }
 
@@ -361,7 +359,7 @@ fun DiagnosticsLiveSection(
                             Text(
                                 text = "Enter your custom Gemini API key or leave blank for default:",
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = Color(0xFF64748B)
+                                color = colors.textSecondary
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Row(
@@ -377,10 +375,10 @@ fun DiagnosticsLiveSection(
                                         .weight(1f)
                                         .testTag("api_key_override_input"),
                                     colors = OutlinedTextFieldDefaults.colors(
-                                        focusedContainerColor = Color(0xFFF8FAFC),
-                                        unfocusedContainerColor = Color(0xFFF8FAFC),
-                                        focusedBorderColor = Color(0xFF006874),
-                                        unfocusedBorderColor = Color(0xFFCBD5E1)
+                                        focusedContainerColor = colors.surfaceRaised,
+                                        unfocusedContainerColor = colors.surfaceRaised,
+                                        focusedBorderColor = colors.accent,
+                                        unfocusedBorderColor = colors.textSecondary
                                     ),
                                     textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace)
                                 )
@@ -436,7 +434,7 @@ fun DiagnosticsLiveSection(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFFF8FAFC), RoundedCornerShape(16.dp))
+                        .background(colors.surfaceRaised, RoundedCornerShape(16.dp))
                         .padding(24.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -445,13 +443,13 @@ fun DiagnosticsLiveSection(
                             modifier = Modifier
                                 .size(44.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFFE2E8F0)),
+                                .background(colors.border),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.GraphicEq,
                                 contentDescription = null,
-                                tint = Color(0xFF64748B),
+                                tint = colors.textSecondary,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
@@ -484,9 +482,9 @@ fun DiagnosticsLiveSection(
         // 5. Developer Socket Frames Accordion
         item {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = colors.surface, contentColor = colors.textPrimary),
                 border = BorderStroke(1.25.dp, colors.line),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -504,7 +502,7 @@ fun DiagnosticsLiveSection(
                         Icon(
                             Icons.Filled.Code,
                             contentDescription = null,
-                            tint = Color(0xFF64748B),
+                            tint = colors.textSecondary,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
@@ -517,7 +515,7 @@ fun DiagnosticsLiveSection(
                     Icon(
                         imageVector = if (showRawFrames) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                         contentDescription = null,
-                        tint = Color(0xFF64748B),
+                        tint = colors.textSecondary,
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -543,8 +541,8 @@ private fun PremiumMetricPill(
 ) {
     Column(
         modifier = modifier
-            .background(Color(0xFFF8FAFC), RoundedCornerShape(14.dp))
-            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(14.dp))
+            .background(colors.surfaceRaised, RoundedCornerShape(14.dp))
+            .border(1.dp, colors.border, RoundedCornerShape(14.dp))
             .padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -591,20 +589,20 @@ private fun PremiumActivityCard(entry: LogEntry, timeFormat: SimpleDateFormat) {
         .trim()
 
     val (icon, iconBg, iconTint, titleColor) = when {
-        entry.level == LogLevel.ERROR -> Quad(Icons.Filled.Warning, Color(0xFFFEE2E2), Color(0xFFDC2626), Color(0xFFDC2626))
-        cleanMessage.contains("Finished typing", ignoreCase = true) || entry.tag == "Speed" -> Quad(Icons.Filled.Send, Color(0xFFDCFCE7), Color(0xFF16A34A), Color(0xFF15803D))
-        cleanMessage.contains("Polish", ignoreCase = true) -> Quad(Icons.Filled.AutoAwesome, Color(0xFFF3E8FF), Color(0xFF9333EA), Color(0xFF7E22CE))
-        cleanMessage.contains("setupComplete", ignoreCase = true) || cleanMessage.contains("Connected", ignoreCase = true) -> Quad(Icons.Filled.CheckCircle, Color(0xFFE0F2FE), Color(0xFF0284C7), Color(0xFF0369A1))
-        cleanMessage.contains("Starting voice typing", ignoreCase = true) || cleanMessage.contains("Mode:", ignoreCase = true) -> Quad(Icons.Filled.Mic, Color(0xFFCCFBF1), Color(0xFF0F766E), Color(0xFF0F766E))
-        entry.level == LogLevel.RECEIVED -> Quad(Icons.Filled.Hearing, Color(0xFFF1F5F9), Color(0xFF334155), Color(0xFF0F172A))
-        entry.level == LogLevel.SENT -> Quad(Icons.Filled.Bolt, Color(0xFFF1F5F9), Color(0xFF64748B), Color(0xFF334155))
-        else -> Quad(Icons.Filled.TextFields, Color(0xFFF1F5F9), Color(0xFF64748B), Color(0xFF334155))
+        entry.level == LogLevel.ERROR -> Quad(Icons.Filled.Warning, colors.surfaceRaised, colors.statusError, colors.statusError)
+        cleanMessage.contains("Finished typing", ignoreCase = true) || entry.tag == "Speed" -> Quad(Icons.Filled.Send, colors.surfaceRaised, colors.accent, colors.statusOk)
+        cleanMessage.contains("Polish", ignoreCase = true) -> Quad(Icons.Filled.AutoAwesome, colors.surfaceRaised, colors.accent, colors.accent)
+        cleanMessage.contains("setupComplete", ignoreCase = true) || cleanMessage.contains("Connected", ignoreCase = true) -> Quad(Icons.Filled.CheckCircle, colors.surfaceRaised, colors.accent, colors.textPrimary)
+        cleanMessage.contains("Starting voice typing", ignoreCase = true) || cleanMessage.contains("Mode:", ignoreCase = true) -> Quad(Icons.Filled.Mic, colors.surfaceRaised, colors.accent, colors.accent)
+        entry.level == LogLevel.RECEIVED -> Quad(Icons.Filled.Hearing, colors.surfaceRaised, colors.textPrimary, colors.textPrimary)
+        entry.level == LogLevel.SENT -> Quad(Icons.Filled.Bolt, colors.surfaceRaised, colors.textSecondary, colors.textPrimary)
+        else -> Quad(Icons.Filled.TextFields, colors.surfaceRaised, colors.textSecondary, colors.textPrimary)
     }
 
     Card(
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = colors.surface, contentColor = colors.textPrimary),
         border = BorderStroke(1.25.dp, colors.line),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -667,14 +665,14 @@ private fun RawFrameItem(entry: LogEntry, timeFormat: SimpleDateFormat) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF0F172A), RoundedCornerShape(6.dp))
+            .background(colors.background, RoundedCornerShape(6.dp))
             .padding(8.dp)
     ) {
         Text(
             text = "${timeFormat.format(java.util.Date(entry.timestamp))} [${entry.level.name}] ${entry.tag}: ${entry.message} ${entry.payload ?: ""}",
             style = MaterialTheme.typography.bodyMedium,
             fontFamily = FontFamily.Monospace,
-            color = Color(0xFFCBD5E1)
+            color = colors.textSecondary
         )
     }
 }

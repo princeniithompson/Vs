@@ -681,9 +681,17 @@ class FloatingBubbleService : Service() {
         overlayWindowManager.updateOverlayVisibility(isSessionActive = false)
     }
 
-    fun setDiagnosticsSheetOpen(open: Boolean) {
-        if (!::overlayWindowManager.isInitialized) return
-        overlayWindowManager.setDiagnosticsSheetOpen(open)
+    fun recoverStuckHiddenBubble() {
+        if (!componentsReady()) return
+        if (!FloatingBubbleManager.isKeyboardVisible.value) return
+        if (FloatingBubbleManager.isCurrentAppSensitive.value) return
+        if (overlayWindowManager.isBubbleVisible()) return
+        com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
+            com.princeniithompson.rapcha.data.DiagnosticSource.BUBBLE,
+            com.princeniithompson.rapcha.data.DiagnosticType.BUBBLE_SHOWN,
+            "recovered stuck-hidden bubble"
+        )
+        overlayWindowManager.showImmediately()
     }
 
     fun onKeyboardVisibilityChanged(isVisible: Boolean) {

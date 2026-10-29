@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         FloatingBubbleManager.checkPermissions(this)
+        FloatingBubbleManager.ensureBubbleRunning(this)
         viewModel.refreshPermissions()
     }
 

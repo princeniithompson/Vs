@@ -57,7 +57,6 @@ class FloatingOverlayWindowManager(private val context: Context) {
     val dragSnapHandler = FloatingDragSnapHandler(context)
 
     private var overlayScope: CoroutineScope? = null
-    private var diagnosticsSheetOpen = false
     private var windowManager: WindowManager? = null
     var overlayView: View? = null
         private set
@@ -355,29 +354,9 @@ class FloatingOverlayWindowManager(private val context: Context) {
         }, 1300L)
     }
 
-    fun setDiagnosticsSheetOpen(open: Boolean) {
-        mainHandler.post {
-            diagnosticsSheetOpen = open
-            val root = overlayView ?: return@post
-            if (open) {
-                root.animate().cancel()
-                root.visibility = View.GONE
-            } else if (!FloatingBubbleManager.isCurrentAppSensitive.value) {
-                val keyboardOpen = FloatingBubbleManager.isKeyboardVisible.value
-                if (keyboardOpen || overlayRecording.value || overlayExpanded.value) {
-                    revealBubble(root)
-                }
-            }
-        }
-    }
-
     fun showImmediately() {
         fun apply() {
             val root = overlayView ?: return
-            if (diagnosticsSheetOpen) {
-                root.visibility = View.GONE
-                return
-            }
             if (!FloatingBubbleManager.isKeyboardVisible.value) return
             if (FloatingBubbleManager.isCurrentAppSensitive.value) {
                 root.visibility = View.GONE
@@ -395,7 +374,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
     fun onKeyboardVisibilityChanged(isVisible: Boolean, isSessionActive: Boolean) {
         fun apply() {
             val root = overlayView ?: return
-            if (diagnosticsSheetOpen || FloatingBubbleManager.isCurrentAppSensitive.value) {
+            if (FloatingBubbleManager.isCurrentAppSensitive.value) {
                 root.visibility = View.GONE
                 return
             }
@@ -420,11 +399,12 @@ class FloatingOverlayWindowManager(private val context: Context) {
         }
     }
 
+    fun isBubbleVisible(): Boolean {
+        val root = overlayView ?: return false
+        return root.visibility == View.VISIBLE && root.alpha >= 0.99f
+    }
+
     private fun revealBubble(root: View) {
-        if (diagnosticsSheetOpen) {
-            root.visibility = View.GONE
-            return
-        }
         if (root.visibility == View.VISIBLE && root.alpha >= 0.99f && root.scaleX >= 0.99f) {
             return
         }
@@ -488,7 +468,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
 
     fun restoreOverlayVisibility(isKeyboardOpen: Boolean) {
         mainHandler.post {
-            if (diagnosticsSheetOpen || FloatingBubbleManager.isCurrentAppSensitive.value) {
+            if (FloatingBubbleManager.isCurrentAppSensitive.value) {
                 overlayView?.visibility = View.GONE
                 return@post
             }
@@ -520,6 +500,16 @@ class FloatingOverlayWindowManager(private val context: Context) {
 
                 newWm.addView(currentOverlay, currentLp)
                 Log.d(TAG, "Re-attached overlay to TYPE_ACCESSIBILITY_OVERLAY successfully!")
+                val keyboardUp = FloatingBubbleManager.isKeyboardVisible.value
+                val sensitive = FloatingBubbleManager.isCurrentAppSensitive.value
+                if (keyboardUp && !sensitive && currentOverlay.visibility != View.VISIBLE) {
+                    AppLogRepository.logEvent(
+                        DiagnosticSource.BUBBLE,
+                        DiagnosticType.BUBBLE_SHOWN,
+                        "recovered stuck-hidden bubble"
+                    )
+                    revealBubble(currentOverlay)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error attaching to accessibility window manager", e)
             }
@@ -527,7 +517,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
     }
 
     fun updateOverlayVisibility(isSessionActive: Boolean) {
-        if (diagnosticsSheetOpen || FloatingBubbleManager.isCurrentAppSensitive.value) {
+        if (FloatingBubbleManager.isCurrentAppSensitive.value) {
             overlayView?.visibility = View.GONE
             return
         }

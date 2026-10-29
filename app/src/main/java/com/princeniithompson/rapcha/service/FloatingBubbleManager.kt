@@ -286,6 +286,11 @@ object FloatingBubbleManager {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start FloatingBubbleService", e)
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.WARNING,
+                "bubble service start failed: ${e.javaClass.simpleName}"
+            )
         }
     }
 
@@ -329,8 +334,35 @@ object FloatingBubbleManager {
         FloatingBubbleService.instance?.onFieldFocusChanged(isFocused)
     }
 
-    fun setDiagnosticsSheetOpen(open: Boolean) {
-        FloatingBubbleService.instance?.setDiagnosticsSheetOpen(open)
+    private val _bubbleAnchoredRight = MutableStateFlow(true)
+    val bubbleAnchoredRight: StateFlow<Boolean> = _bubbleAnchoredRight.asStateFlow()
+
+    fun noteBubbleAnchoredRight(onRight: Boolean) {
+        _bubbleAnchoredRight.value = onRight
+    }
+
+    /**
+     * After a package update the accessibility process can log KEYBOARD_SHOWN
+     * before this foreground service exists. Opening the app retries the start.
+     * A running overlay that stayed GONE while the keyboard is up is shown again.
+     */
+    fun ensureBubbleRunning(context: Context) {
+        if (!initialized) init(context)
+        if (!_isBubbleEnabled.value || !canDrawOverlays(context)) return
+        if (!isUiForeground(context)) return
+        val keyboardUp = _isKeyboardVisible.value
+        if (FloatingBubbleService.instance == null) {
+            startBubbleService(context)
+            if (keyboardUp) {
+                AppLogRepository.logEvent(
+                    DiagnosticSource.BUBBLE,
+                    DiagnosticType.BUBBLE_SHOWN,
+                    "recovered stuck-hidden bubble"
+                )
+            }
+        } else if (keyboardUp) {
+            FloatingBubbleService.instance?.recoverStuckHiddenBubble()
+        }
     }
 
     fun notifyKeyboardVisibility(visible: Boolean) {
