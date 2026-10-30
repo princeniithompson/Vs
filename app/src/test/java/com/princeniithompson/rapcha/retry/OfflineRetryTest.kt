@@ -5,6 +5,8 @@ import androidx.test.core.app.ApplicationProvider
 import com.princeniithompson.rapcha.config.RapchaConfig
 import com.princeniithompson.rapcha.core.ApiConfig
 import com.princeniithompson.rapcha.data.AudioRecordingRepository
+import com.princeniithompson.rapcha.data.HistoryOverflowMenu
+import com.princeniithompson.rapcha.data.HistoryRepository
 import com.princeniithompson.rapcha.data.RetryClipStore
 import com.princeniithompson.rapcha.data.RetryQuota
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
@@ -13,6 +15,8 @@ import com.princeniithompson.rapcha.service.floating.GeminiHttpResponse
 import com.princeniithompson.rapcha.service.floating.GeminiHttpTransport
 import com.princeniithompson.rapcha.service.floating.OfflineRetryCoordinator
 import com.princeniithompson.rapcha.service.floating.OfflineRetryRules
+import com.princeniithompson.rapcha.data.DiagnosticType
+import com.princeniithompson.rapcha.data.AppLogRepository
 import com.princeniithompson.rapcha.service.floating.RetryClipLength
 import com.princeniithompson.rapcha.service.floating.RetryTapGate
 import com.princeniithompson.rapcha.service.floating.TranscribeFallbackClient
@@ -190,6 +194,16 @@ class OfflineRetryTest {
                 dataBytes = 0
             )
         )
+        assertTrue(
+            OfflineRetryRules.shouldOffer(
+                recording = true,
+                networkProblem = false,
+                holdingFailure = false,
+                busy = false,
+                dataBytes = 3200,
+                sticky = true
+            )
+        )
     }
 
     @Test
@@ -346,7 +360,8 @@ class OfflineRetryTest {
         val coordinator = OfflineRetryCoordinator(
             client = client,
             nowElapsed = { now },
-            nowWall = { 1_700_000_000_000L }
+            nowWall = { 1_700_000_000_000L },
+            isOnline = { true }
         )
         val wav = tempWav(1600)
         var injected: String? = null
@@ -367,7 +382,8 @@ class OfflineRetryTest {
         val failing = OfflineRetryCoordinator(
             client = TranscribeFallbackClient(ScriptedTransport(generateMode = "500")) { },
             nowElapsed = { now + 5_000L },
-            nowWall = { 1_700_000_000_000L }
+            nowWall = { 1_700_000_000_000L },
+            isOnline = { true }
         )
         failing.runRetry(
             context = context,
@@ -394,7 +410,12 @@ class OfflineRetryTest {
                 throw IOException("should not upload")
             }
         }) { }
-        val coordinator = OfflineRetryCoordinator(client, nowElapsed = { now }, nowWall = { 1_700_000_000_000L })
+        val coordinator = OfflineRetryCoordinator(
+            client,
+            nowElapsed = { now },
+            nowWall = { 1_700_000_000_000L },
+            isOnline = { true }
+        )
         val longClip = storedClip(9_600_000)
         coordinator.runRetry(context, "test-key", emptyList(), { longClip }) { }
         assertEquals(0, calls.get())
@@ -413,7 +434,8 @@ class OfflineRetryTest {
         val debounced = OfflineRetryCoordinator(
             TranscribeFallbackClient(ok) { },
             nowElapsed = { now },
-            nowWall = { 1_700_000_000_000L }
+            nowWall = { 1_700_000_000_000L },
+            isOnline = { true }
         )
         debounced.runRetry(context, "test-key", emptyList(), { tempWav(400) }) { }
         val afterFirst = ok.calls.count { it.url.contains("generateContent") }
@@ -459,6 +481,96 @@ class OfflineRetryTest {
         } finally {
             server.stop(0)
         }
+    }
+
+    @Test
+    fun stickyRetryStaysUpWhenNetworkProblemClears() {
+        storedClip(1600)
+        val coordinator = OfflineRetryCoordinator(
+            client = TranscribeFallbackClient(ScriptedTransport()) { },
+            nowWall = { 1_700_000_000_000L },
+            isOnline = { true }
+        )
+        assertTrue(coordinator.stick())
+        assertFalse(coordinator.stick())
+        assertTrue(coordinator.publish(context, recording = true, networkProblem = true))
+        assertNotNull(FloatingBubbleManager.offlineRetry.value)
+        assertTrue(coordinator.publish(context, recording = true, networkProblem = false))
+        assertNotNull(FloatingBubbleManager.offlineRetry.value)
+        assertTrue(
+            AppLogRepository.diagnosticEntries.value.any { it.type == DiagnosticType.RETRY_STICKY }
+        )
+    }
+
+    @Test
+    fun offlineTapKeepsRetryUiAndDoesNotUpload() = runBlocking {
+        storedClip(800)
+        var prepared = false
+        val calls = AtomicInteger(0)
+        val coordinator = OfflineRetryCoordinator(
+            client = TranscribeFallbackClient(object : GeminiHttpTransport {
+                override fun execute(request: GeminiHttpRequest): GeminiHttpResponse {
+                    calls.incrementAndGet()
+                    throw IOException("should stay offline")
+                }
+            }) { },
+            nowElapsed = { 80_000L },
+            nowWall = { 1_700_000_000_000L },
+            isOnline = { false }
+        )
+        coordinator.stick()
+        coordinator.runRetry(
+            context = context,
+            apiKey = "test-key",
+            vocabulary = emptyList(),
+            prepareClip = {
+                prepared = true
+                RetryClipStore.sessionWavFile()
+            },
+            onAcceptedText = { }
+        )
+        assertFalse(prepared)
+        assertEquals(0, calls.get())
+        val offer = FloatingBubbleManager.offlineRetry.value
+        assertNotNull(offer)
+        assertEquals(OfflineRetryRules.OFFLINE_TAP_MESSAGE, offer!!.message)
+        assertTrue(coordinator.isSticky())
+    }
+
+    @Test
+    fun historyMenuOffersRetryInsteadOfShareAndLinksPendingAudio() {
+        assertEquals(
+            listOf(
+                HistoryOverflowMenu.Action.COPY,
+                HistoryOverflowMenu.Action.RETRY,
+                HistoryOverflowMenu.Action.DELETE
+            ),
+            HistoryOverflowMenu.actions
+        )
+        assertFalse(HistoryOverflowMenu.actions.any { it.name == "SHARE" })
+        assertFalse(HistoryOverflowMenu.retryEnabled(null, audioExists = true))
+        assertFalse(HistoryOverflowMenu.retryEnabled("clip", audioExists = false))
+        assertTrue(HistoryOverflowMenu.retryEnabled("clip", audioExists = true))
+
+        context.getSharedPreferences("history_repository_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        HistoryRepository.clearForTest()
+        HistoryRepository.init(context)
+        HistoryRepository.upsertPendingRetry("clip-a", "", "Keep", 3)
+        val pending = HistoryRepository.historyItems.value.single()
+        assertEquals(HistoryRepository.PENDING_RETRY_TEXT, pending.text)
+        assertEquals("clip-a", pending.retryClipId)
+
+        HistoryRepository.upsertPendingRetry("clip-a", "partial words", "Keep", 4)
+        assertEquals("partial words", HistoryRepository.historyItems.value.single().text)
+
+        HistoryRepository.detachRetryClip("clip-a")
+        val kept = HistoryRepository.historyItems.value.single()
+        assertEquals("partial words", kept.text)
+        assertNull(kept.retryClipId)
+
+        HistoryRepository.upsertPendingRetry("clip-b", "", "Keep", 1)
+        HistoryRepository.detachRetryClip("clip-b")
+        assertTrue(HistoryRepository.historyItems.value.none { it.retryClipId == "clip-b" })
     }
 
     private fun storedClip(pcmBytes: Int): File {

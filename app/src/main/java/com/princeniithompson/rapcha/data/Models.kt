@@ -68,7 +68,12 @@ enum class DiagnosticType {
     RETRY_STARTED,
     RETRY_SUCCESS,
     RETRY_FAILED,
-    RETRY_DISCARDED
+    RETRY_DISCARDED,
+    RETRY_STICKY,
+    RETRY_LIVE_CANCELLED,
+    RETRY_OFFLINE,
+    RETRY_NETWORK_BACK,
+    RETRY_HISTORY
 }
 
 data class DiagnosticLogEntry(

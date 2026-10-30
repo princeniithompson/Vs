@@ -67,6 +67,9 @@ class FloatingDictationSessionManager(
 
     private var durationJob: Job? = null
     private var retryStopJob: Job? = null
+
+    @Volatile
+    private var liveAbandoned = false
     private val sessionEndLogged = AtomicBoolean(false)
     var durationSeconds: Int = 0
         private set
@@ -105,7 +108,7 @@ class FloatingDictationSessionManager(
                 } catch (t: Throwable) {
                     Log.w(TAG, "Retry clip append skipped: ${t.javaClass.simpleName}")
                 }
-                val ws = webSocketClient
+                val ws = if (liveAbandoned) null else webSocketClient
                 if (ws != null && ws.setupComplete) {
                     val sent = ws.sendAudioChunk(chunk)
                     if (sent) {
@@ -207,6 +210,7 @@ class FloatingDictationSessionManager(
     ) {
         if (isRecording) return
         isRecording = true
+        liveAbandoned = false
         sessionEndLogged.set(false)
 
         sessionJob?.cancel()
@@ -389,6 +393,27 @@ class FloatingDictationSessionManager(
 
     private fun refreshDurationFromClock() {
         durationSeconds = elapsedSeconds(sessionStartedAtElapsed, SystemClock.elapsedRealtime())
+    }
+
+    /**
+     * Drop Gemini Live for this session and cancel reconnects.
+     * The microphone and the retry WAV keep running.
+     */
+    fun abandonLiveKeepMicrophone() {
+        if (liveAbandoned) return
+        liveAbandoned = true
+        val ws = webSocketClient
+        webSocketClient = null
+        try {
+            ws?.disconnect()
+        } catch (t: Throwable) {
+            Log.w(TAG, "Live cancel failed: ${t.javaClass.simpleName}")
+        }
+        AppLogRepository.logEvent(
+            DiagnosticSource.BUBBLE,
+            DiagnosticType.RETRY_LIVE_CANCELLED,
+            "reconnect_cancelled"
+        )
     }
 
     fun stopSession(

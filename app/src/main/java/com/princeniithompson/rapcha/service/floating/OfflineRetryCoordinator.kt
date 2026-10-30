@@ -34,16 +34,19 @@ object OfflineRetryRules {
         }
     }
 
+    const val OFFLINE_TAP_MESSAGE = "Device is offline. Retry when the network is back."
+
     fun shouldOffer(
         recording: Boolean,
         networkProblem: Boolean,
         holdingFailure: Boolean,
         busy: Boolean,
-        dataBytes: Long
+        dataBytes: Long,
+        sticky: Boolean = false
     ): Boolean {
         if (busy) return true
         if (dataBytes <= 0L) return false
-        if (holdingFailure) return true
+        if (sticky || holdingFailure) return true
         return recording && networkProblem
     }
 
@@ -112,16 +115,18 @@ class RetryTapGate(
 }
 
 /**
- * Manual offline Retry. Live stays in charge until this is tapped.
- * A failed attempt keeps the clip; success hands text to the Complete inject path.
+ * Manual offline Retry. Once Retry is offered, it stays until the user taps
+ * Retry or Discard. Live reconnect is not allowed to take the session back.
  */
 class OfflineRetryCoordinator(
     private val client: TranscribeFallbackClient = TranscribeFallbackClient(),
     private val nowElapsed: () -> Long = { SystemClock.elapsedRealtime() },
-    private val nowWall: () -> Long = { System.currentTimeMillis() }
+    private val nowWall: () -> Long = { System.currentTimeMillis() },
+    private val isOnline: (Context) -> Boolean = { RetryConnectivity.isOnline(it) }
 ) {
     private val gate = RetryTapGate(now = nowElapsed)
     private val holding = AtomicBoolean(false)
+    private val sticky = AtomicBoolean(false)
 
     @Volatile
     private var busy = false
@@ -132,10 +137,27 @@ class OfflineRetryCoordinator(
     @Volatile
     private var loggedOffer = false
 
-    fun isHolding(): Boolean = holding.get()
+    fun isHolding(): Boolean = holding.get() || sticky.get()
+
+    fun isSticky(): Boolean = sticky.get()
+
+    /** First call sticks the Retry UI for this session. Later calls are no-ops. */
+    fun stick(): Boolean {
+        holding.set(true)
+        val first = sticky.compareAndSet(false, true)
+        if (first) {
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.RETRY_STICKY,
+                "sticky_hold"
+            )
+        }
+        return first
+    }
 
     fun onNewSession() {
         holding.set(false)
+        sticky.set(false)
         statusMessage = null
         loggedOffer = false
         FloatingBubbleManager.setOfflineRetry(null)
@@ -143,10 +165,12 @@ class OfflineRetryCoordinator(
 
     fun holdAfterFailure() {
         holding.set(true)
+        sticky.set(true)
     }
 
     fun clearHold() {
         holding.set(false)
+        sticky.set(false)
         statusMessage = null
         loggedOffer = false
         FloatingBubbleManager.setOfflineRetry(null)
@@ -155,8 +179,8 @@ class OfflineRetryCoordinator(
     fun restorePending(context: Context) {
         val pending = RetryClipStore.latestPending(nowWall()) ?: return
         if (pending.dataBytes <= 0L) return
-        holding.set(true)
-        publish(context, recording = false, networkProblem = true)
+        stick()
+        publish(context, recording = false, networkProblem = false)
     }
 
     fun publish(context: Context, recording: Boolean, networkProblem: Boolean): Boolean {
@@ -166,7 +190,8 @@ class OfflineRetryCoordinator(
             networkProblem = networkProblem,
             holdingFailure = holding.get(),
             busy = busy,
-            dataBytes = bytes
+            dataBytes = bytes,
+            sticky = sticky.get()
         )
         if (!show) {
             if (!busy) FloatingBubbleManager.setOfflineRetry(null)
@@ -210,8 +235,19 @@ class OfflineRetryCoordinator(
             RetryTapGate.Decision.BUSY -> return
             RetryTapGate.Decision.START -> Unit
         }
+        stick()
+        if (!isOnline(context)) {
+            gate.finish()
+            statusMessage = OfflineRetryRules.OFFLINE_TAP_MESSAGE
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.RETRY_OFFLINE,
+                "tap_while_offline"
+            )
+            publish(context, recording = true, networkProblem = true)
+            return
+        }
         busy = true
-        holding.set(true)
         statusMessage = null
         publish(context, recording = false, networkProblem = true)
         var accepted = false
@@ -260,6 +296,7 @@ class OfflineRetryCoordinator(
                         )
                         accepted = true
                         holding.set(false)
+                        sticky.set(false)
                         statusMessage = null
                         FloatingBubbleManager.setOfflineRetry(null)
                         onAcceptedText(text)
@@ -285,6 +322,7 @@ class OfflineRetryCoordinator(
             gate.finish()
             if (!accepted) {
                 holding.set(true)
+                sticky.set(true)
                 publish(context, recording = false, networkProblem = true)
             }
         }

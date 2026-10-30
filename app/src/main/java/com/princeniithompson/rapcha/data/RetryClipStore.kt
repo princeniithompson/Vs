@@ -108,6 +108,14 @@ object RetryClipStore {
 
     fun currentId(): String? = activeId ?: sessionClip?.id
 
+    /** WAV for a pending or in-progress clip, if it already has audio samples. */
+    fun clipFile(id: String?): File? {
+        if (id.isNullOrBlank()) return null
+        val context = appContext ?: return null
+        val file = File(File(context.filesDir, DIR_NAME), "$id.wav")
+        return if (file.exists() && file.length() > 44L) file else null
+    }
+
     fun append(chunk: ByteArray) {
         if (chunk.isEmpty()) return
         val id = activeId ?: return

@@ -1,6 +1,7 @@
 package com.princeniithompson.rapcha.service
 
 import android.Manifest
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -32,6 +33,8 @@ import com.princeniithompson.rapcha.service.floating.FloatingOverlayWindowManage
 import com.princeniithompson.rapcha.service.floating.FloatingPolishCoordinator
 import com.princeniithompson.rapcha.service.floating.FloatingTextInjector
 import com.princeniithompson.rapcha.service.floating.RapchaTextInserter
+import com.princeniithompson.rapcha.service.floating.OfflineRetryRules
+import com.princeniithompson.rapcha.service.floating.RetryNetworkWatcher
 import com.princeniithompson.rapcha.service.floating.VocabSuggestions
 import com.princeniithompson.rapcha.websocket.GeminiLiveWebSocketClient
 import com.princeniithompson.rapcha.websocket.InterimPreviewMonitor
@@ -56,6 +59,9 @@ class FloatingBubbleService : Service() {
 
     companion object {
         private const val TAG = "FloatingBubbleService"
+        const val ACTION_RETRY_CLIP = "com.princeniithompson.rapcha.action.RETRY_CLIP"
+        const val EXTRA_CLIP_ID = "retry_clip_id"
+        const val EXTRA_FROM_HISTORY = "from_history"
 
         var instance: FloatingBubbleService? = null
             private set
@@ -117,12 +123,21 @@ class FloatingBubbleService : Service() {
     private var activeDetectionJob: Job? = null
     private var fgsDowngradeJob: Job? = null
     private var connectionLostHapticSent = false
+    private var networkWatcher: RetryNetworkWatcher? = null
+    private var networkBackNotifiedFor: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!enterSpecialUseForeground()) {
             stopSelf()
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_RETRY_CLIP && ::sessionManager.isInitialized) {
+            onRetryClicked(
+                clipId = intent.getStringExtra(EXTRA_CLIP_ID),
+                fromHistory = intent.getBooleanExtra(EXTRA_FROM_HISTORY, false)
+            )
         }
         return START_NOT_STICKY
     }
@@ -136,6 +151,7 @@ class FloatingBubbleService : Service() {
         }
         Log.d(TAG, "FloatingBubbleService onCreate")
         CustomVocabularyRepository.init(this)
+        HistoryRepository.init(this)
         RetryClipStore.init(this)
         FloatingBubbleManager.onOfflineRetry = { onRetryClicked() }
         FloatingBubbleManager.onOfflineDiscard = { onDiscardClicked() }
@@ -178,7 +194,7 @@ class FloatingBubbleService : Service() {
                     DiagnosticType.ERROR,
                     err
                 )
-                if (sessionManager.isRecording) {
+                if (sessionManager.isRecording && !offlineRetry.isSticky()) {
                     stopVoiceTyping(endedReason = endedReasonTag, discardRetryClip = false)
                     serviceScope.launch {
                         sessionManager.awaitRetryClip()
@@ -190,7 +206,9 @@ class FloatingBubbleService : Service() {
                 }
             },
             onDurationTicked = { _ ->
-                if (sessionManager.isRecording && FloatingBubbleManager.isNetworkProblem.value) {
+                if (sessionManager.isRecording &&
+                    (FloatingBubbleManager.isNetworkProblem.value || offlineRetry.isSticky())
+                ) {
                     refreshRetryOffer()
                 }
             },
@@ -227,9 +245,13 @@ class FloatingBubbleService : Service() {
             onCompleteClick = { onConfirmClicked() }
         )
         offlineRetry.restorePending(this)
+        RetryClipStore.currentId()?.let { clipId ->
+            if (offlineRetry.isSticky()) linkPendingHistory(clipId)
+        }
         if (FloatingBubbleManager.offlineRetry.value != null && FloatingBubbleManager.isKeyboardVisible.value) {
             overlayWindowManager.expandPanel()
         }
+        networkWatcher = RetryNetworkWatcher(this) { onNetworkBack() }.also { it.start() }
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing overlay window", e)
         }
@@ -613,28 +635,70 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    private fun onRetryClicked() {
+    private fun onRetryClicked(clipId: String? = null, fromHistory: Boolean = false) {
+        if (fromHistory) {
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.RETRY_HISTORY,
+                "source=history"
+            )
+        }
+        if (com.princeniithompson.rapcha.service.floating.RetryConnectivity.isOnline(this)) {
+            DictationAlerts.cancel(this, DictationAlerts.RETRY_READY_NOTIFICATION_ID)
+            networkBackNotifiedFor = null
+        }
         serviceScope.launch {
             offlineRetry.runRetry(
                 context = this@FloatingBubbleService,
                 apiKey = getEffectiveApiKey(),
                 vocabulary = CustomVocabularyRepository.getVocabulary(),
                 prepareClip = {
-                    if (sessionManager.isRecording) {
+                    val target = clipId ?: RetryClipStore.currentId()
+                    val recordingThisClip = sessionManager.isRecording &&
+                        (target == null || RetryClipStore.currentId() == target)
+                    if (recordingThisClip) {
                         stopVoiceTyping(endedReason = "offline_retry", discardRetryClip = false)
+                        sessionManager.awaitRetryClip()
+                    } else if (target != null && RetryClipStore.currentId() == target) {
+                        withContext(Dispatchers.IO) { RetryClipStore.finalizeIfCurrent(target) }
                     }
-                    sessionManager.awaitRetryClip()
-                    RetryClipStore.sessionWavFile()
+                    if (target != null) RetryClipStore.clipFile(target) else RetryClipStore.sessionWavFile()
                 },
                 onAcceptedText = { text ->
-                    withContext(Dispatchers.IO) { sessionManager.settleRetryClip(discard = true) }
+                    val finishedId = clipId ?: RetryClipStore.currentId()
+                    withContext(Dispatchers.IO) {
+                        if (finishedId != null) RetryClipStore.discard(finishedId)
+                        else sessionManager.settleRetryClip(discard = true)
+                    }
+                    if (finishedId != null) HistoryRepository.removePendingRetry(finishedId)
+                    networkBackNotifiedFor = null
+                    DictationAlerts.cancel(this@FloatingBubbleService, DictationAlerts.RETRY_READY_NOTIFICATION_ID)
                     performInjectionAndClose(text)
                 }
             )
         }
     }
 
+    fun noteRetryClipDeleted(clipId: String) {
+        if (!::sessionManager.isInitialized) return
+        if (RetryClipStore.currentId() != clipId) return
+        serviceScope.launch {
+            if (sessionManager.isRecording && RetryClipStore.currentId() == clipId) {
+                stopVoiceTyping(endedReason = "history_deleted", discardRetryClip = true)
+                sessionManager.awaitRetryClip()
+            } else {
+                withContext(Dispatchers.IO) { RetryClipStore.discard(clipId) }
+            }
+            HistoryRepository.detachRetryClip(clipId)
+            networkBackNotifiedFor = null
+            DictationAlerts.cancel(this@FloatingBubbleService, DictationAlerts.RETRY_READY_NOTIFICATION_ID)
+            offlineRetry.clearHold()
+            resetAndCollapse()
+        }
+    }
+
     private fun onDiscardClicked() {
+        val clipId = RetryClipStore.currentId()
         val durationMs = RetryClipStore.durationMsForBytes(RetryClipStore.peekDataBytes())
         AppLogRepository.logEvent(
             DiagnosticSource.BUBBLE,
@@ -648,6 +712,9 @@ class FloatingBubbleService : Service() {
             } else {
                 withContext(Dispatchers.IO) { sessionManager.settleRetryClip(discard = true) }
             }
+            if (clipId != null) HistoryRepository.detachRetryClip(clipId)
+            networkBackNotifiedFor = null
+            DictationAlerts.cancel(this@FloatingBubbleService, DictationAlerts.RETRY_READY_NOTIFICATION_ID)
             offlineRetry.clearHold()
             pendingCompletionTimeoutJob?.cancel()
             pendingCompletionTimeoutJob = null
@@ -660,14 +727,65 @@ class FloatingBubbleService : Service() {
 
     private fun refreshRetryOffer() {
         if (!::sessionManager.isInitialized || !::overlayWindowManager.isInitialized) return
+        val bytes = RetryClipStore.peekDataBytes()
+        val networkProblem = FloatingBubbleManager.isNetworkProblem.value
+        val recording = sessionManager.isRecording
+        val shouldStick = !offlineRetry.isSticky() && OfflineRetryRules.shouldOffer(
+            recording = recording,
+            networkProblem = networkProblem,
+            holdingFailure = false,
+            busy = false,
+            dataBytes = bytes,
+            sticky = false
+        )
+        if (shouldStick) {
+            offlineRetry.stick()
+            sessionManager.abandonLiveKeepMicrophone()
+            RetryClipStore.currentId()?.let { linkPendingHistory(it) }
+        }
         val showing = offlineRetry.publish(
             context = this,
-            recording = sessionManager.isRecording,
-            networkProblem = FloatingBubbleManager.isNetworkProblem.value
+            recording = recording,
+            networkProblem = networkProblem
         )
         if (showing && !overlayWindowManager.overlayExpanded.value) {
             overlayWindowManager.expandPanel()
         }
+    }
+
+    private fun linkPendingHistory(clipId: String) {
+        HistoryRepository.init(this)
+        val transcript = if (::sessionManager.isInitialized) sessionManager.getFullTranscriptText() else ""
+        HistoryRepository.upsertPendingRetry(
+            clipId = clipId,
+            text = transcript,
+            appContext = FloatingBubbleManager.lockedSessionContext.value ?: "Rapcha",
+            durationSeconds = if (::sessionManager.isInitialized) sessionManager.durationSeconds else 0
+        )
+    }
+
+    private fun onNetworkBack() {
+        if (!offlineRetry.isSticky() && FloatingBubbleManager.offlineRetry.value == null) return
+        val clipId = RetryClipStore.currentId() ?: return
+        if (RetryClipStore.clipFile(clipId) == null && RetryClipStore.peekDataBytes() <= 0L) return
+        if (networkBackNotifiedFor == clipId) return
+        networkBackNotifiedFor = clipId
+        val retryIntent = Intent(this, FloatingBubbleService::class.java).apply {
+            action = ACTION_RETRY_CLIP
+            putExtra(EXTRA_CLIP_ID, clipId)
+        }
+        val tap = PendingIntent.getService(
+            this,
+            17,
+            retryIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val posted = DictationAlerts.retryNetworkBack(this, tap)
+        AppLogRepository.logEvent(
+            DiagnosticSource.BUBBLE,
+            DiagnosticType.RETRY_NETWORK_BACK,
+            "notify=${if (posted) "posted" else "denied"}"
+        )
     }
 
     private fun isBubbleSessionActive(): Boolean {
@@ -1004,6 +1122,9 @@ class FloatingBubbleService : Service() {
         activeDetectionJob = null
         AppDetector.clearCache()
 
+        networkWatcher?.stop()
+        networkWatcher = null
+        DictationAlerts.cancel(this, DictationAlerts.RETRY_READY_NOTIFICATION_ID)
         polishCoordinator.cancel()
         isPendingInjectionOnSmartCompletion = false
         pendingCompletionTimeoutJob?.cancel()

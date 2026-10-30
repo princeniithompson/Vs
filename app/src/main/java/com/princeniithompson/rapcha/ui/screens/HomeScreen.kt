@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -66,8 +67,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import kotlin.math.absoluteValue
+import android.os.Build
 import com.princeniithompson.rapcha.data.HistoryItem
+import com.princeniithompson.rapcha.data.HistoryOverflowMenu
 import com.princeniithompson.rapcha.data.HistoryRepository
+import com.princeniithompson.rapcha.data.RetryClipStore
+import com.princeniithompson.rapcha.service.FloatingBubbleService
 import com.princeniithompson.rapcha.ui.VoiceTypingViewModel
 import com.princeniithompson.rapcha.ui.components.InAppVoiceTypingBubble
 import kotlinx.coroutines.delay
@@ -191,7 +196,29 @@ fun HomeScreen(
                                 context.startActivity(Intent.createChooser(sendIntent, "Share Transcription"))
                             },
                             onDelete = {
+                                item.retryClipId?.let { clipId ->
+                                    RetryClipStore.discard(clipId)
+                                    FloatingBubbleService.instance?.noteRetryClipDeleted(clipId)
+                                }
                                 HistoryRepository.deleteHistoryItem(item.id)
+                            },
+                            onRetry = {
+                                val clipId = item.retryClipId
+                                val hasAudio = RetryClipStore.clipFile(clipId) != null
+                                if (!HistoryOverflowMenu.retryEnabled(clipId, hasAudio)) {
+                                    Toast.makeText(context, HistoryOverflowMenu.NO_AUDIO, Toast.LENGTH_SHORT).show()
+                                } else {
+                                    val retryIntent = Intent(context, FloatingBubbleService::class.java).apply {
+                                        action = FloatingBubbleService.ACTION_RETRY_CLIP
+                                        putExtra(FloatingBubbleService.EXTRA_CLIP_ID, clipId)
+                                        putExtra(FloatingBubbleService.EXTRA_FROM_HISTORY, true)
+                                    }
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        context.startForegroundService(retryIntent)
+                                    } else {
+                                        context.startService(retryIntent)
+                                    }
+                                }
                             }
                         )
                         Spacer(modifier = Modifier.height(14.dp))
@@ -405,7 +432,8 @@ private fun HistoryCardItem(
     item: HistoryItem,
     onCopy: () -> Unit,
     onShare: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onRetry: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -532,14 +560,30 @@ private fun HistoryCardItem(
                                 Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                             }
                         )
+                        val retryReady = HistoryOverflowMenu.retryEnabled(
+                            item.retryClipId,
+                            RetryClipStore.clipFile(item.retryClipId) != null
+                        )
                         DropdownMenuItem(
-                            text = { Text("Share") },
+                            text = {
+                                Column {
+                                    Text("Retry")
+                                    if (!retryReady) {
+                                        Text(
+                                            text = HistoryOverflowMenu.NO_AUDIO,
+                                            fontSize = 11.sp,
+                                            color = Color(0xFF94A3B8)
+                                        )
+                                    }
+                                }
+                            },
+                            enabled = retryReady,
                             onClick = {
                                 showMenu = false
-                                onShare()
+                                onRetry()
                             },
                             leadingIcon = {
-                                Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                             }
                         )
                         DropdownMenuItem(
