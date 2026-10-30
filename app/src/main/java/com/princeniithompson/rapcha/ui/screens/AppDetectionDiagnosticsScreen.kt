@@ -10,40 +10,35 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -59,121 +54,173 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.princeniithompson.rapcha.data.AppDetectionEvent
 import com.princeniithompson.rapcha.data.AppDetectionLogRepository
+import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsActionMenu
+import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsCountBadge
+import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsLabeledIconButton
+import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsMenuAction
+import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsPalette
+import com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsSquareIconButton
+import com.princeniithompson.rapcha.ui.components.diagnostics.premiumSurface
+import com.princeniithompson.rapcha.ui.components.diagnostics.standardDiagnosticsMenu
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppDetectionDiagnosticsScreen(
     onBackClick: () -> Unit,
+    onDismiss: () -> Unit = {},
+    onExportTxt: () -> Unit = {},
+    onRequestClearDiagnostics: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val events by AppDetectionLogRepository.events.collectAsState()
     var showClearDialog by remember { mutableStateOf(false) }
-
-    // Track expanded state for each event card (collapsed by default)
+    var showOptions by remember { mutableStateOf(false) }
     val expandedMap = remember { mutableStateMapOf<String, Boolean>() }
+
+    val menuActions = standardDiagnosticsMenu(
+        context = context,
+        onExportTxt = onExportTxt,
+        onRequestClear = onRequestClearDiagnostics,
+        extra = listOf(
+            DiagnosticsMenuAction(
+                label = "Copy app detection report",
+                onClick = { copyAppDetectionReport(context) },
+                testTag = "copy_all_button",
+                icon = Icons.Filled.ContentCopy
+            ),
+            DiagnosticsMenuAction(
+                label = "Clear app detection logs",
+                onClick = { showClearDialog = true },
+                destructive = true,
+                testTag = "clear_logs_button",
+                icon = Icons.Filled.Delete
+            )
+        )
+    )
 
     if (showClearDialog) {
         AlertDialog(
             onDismissRequest = { showClearDialog = false },
-            title = { Text("Clear App Detection Logs") },
-            text = { Text("Are you sure you want to clear all recorded app detection and classification logs?") },
+            title = {
+                Text(
+                    text = "Clear App Detection Logs",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to clear all recorded app detection and classification logs?",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
                         showClearDialog = false
                         AppDetectionLogRepository.clearEvents()
                         Toast.makeText(context, "App detection logs cleared.", Toast.LENGTH_SHORT).show()
-                    }
+                    },
+                    modifier = Modifier.heightIn(min = 48.dp)
                 ) {
-                    Text("Clear", color = MaterialTheme.colorScheme.error)
+                    Text(
+                        text = "Clear",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showClearDialog = false }) {
-                    Text("Cancel")
+                TextButton(
+                    onClick = { showClearDialog = false },
+                    modifier = Modifier.heightIn(min = 48.dp)
+                ) {
+                    Text(text = "Cancel", style = MaterialTheme.typography.titleMedium)
                 }
             }
         )
     }
 
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        text = "App Detection Diagnostics",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
-                    }
-                },
-                actions = {
-                    if (events.isNotEmpty()) {
-                        IconButton(
-                            onClick = {
-                                val report = AppDetectionLogRepository.exportAsFormattedText()
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("App Detection Diagnostics Report", report))
-                                Toast.makeText(context, "Copied all logs to clipboard", Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.testTag("copy_all_button")
-                        ) {
-                            Icon(imageVector = Icons.Filled.ContentCopy, contentDescription = "Copy All")
-                        }
-                        IconButton(
-                            onClick = { showClearDialog = true },
-                            modifier = Modifier.testTag("clear_logs_button")
-                        ) {
-                            Icon(imageVector = Icons.Filled.Delete, contentDescription = "Clear Logs", tint = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = Color.White
-                )
+    Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            DiagnosticsSquareIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Back to Diagnostics",
+                onClick = onBackClick,
+                testTag = "subscreen_back_button"
             )
-        },
-        containerColor = Color(0xFFF8FAFC),
-        modifier = modifier.fillMaxSize()
-    ) { innerPadding ->
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "App Detection",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = DiagnosticsPalette.ink
+                )
+                Text(
+                    text = "Raw metadata extracted during app scans",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = DiagnosticsPalette.muted
+                )
+            }
+            Box {
+                DiagnosticsLabeledIconButton(
+                    icon = Icons.Filled.MoreVert,
+                    label = "Options",
+                    onClick = { showOptions = true },
+                    testTag = "subscreen_options_button"
+                )
+                DiagnosticsActionMenu(
+                    expanded = showOptions,
+                    onDismissRequest = { showOptions = false },
+                    actions = menuActions
+                )
+            }
+            DiagnosticsLabeledIconButton(
+                icon = Icons.Filled.Close,
+                label = "Close",
+                onClick = onDismiss,
+                testTag = "subscreen_close_button"
+            )
+        }
+
         if (events.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .weight(1f),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
                         imageVector = Icons.Filled.Info,
                         contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = Color(0xFF94A3B8)
+                        modifier = Modifier.size(56.dp),
+                        tint = DiagnosticsPalette.muted
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = "No app detection events yet",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = Color(0xFF64748B),
-                        fontWeight = FontWeight.Medium
+                        style = MaterialTheme.typography.titleMedium,
+                        color = DiagnosticsPalette.ink,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = "Trigger the floating bubble in apps to inspect metadata.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF94A3B8)
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = DiagnosticsPalette.muted,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -181,222 +228,198 @@ fun AppDetectionDiagnosticsScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                    .weight(1f),
+                contentPadding = PaddingValues(bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(events, key = { it.id }) { event ->
-                    val isExpanded = expandedMap[event.id] == true
+                    AppDetectionEventCard(
+                        event = event,
+                        expanded = expandedMap[event.id] == true,
+                        onToggle = { expandedMap[event.id] = expandedMap[event.id] != true }
+                    )
+                }
+            }
+        }
+    }
+}
 
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                        shape = RoundedCornerShape(16.dp),
+@Composable
+private fun AppDetectionEventCard(
+    event: AppDetectionEvent,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .premiumSurface()
+            .clickable(onClick = onToggle)
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = event.resolvedAppName,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = DiagnosticsPalette.ink
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = event.formattedTime,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = DiagnosticsPalette.muted
+                )
+            }
+            DiagnosticsCountBadge(
+                text = event.finalCategory,
+                container = categoryBackground(event.finalCategory),
+                content = categoryForeground(event.finalCategory)
+            )
+            IconButton(
+                onClick = onToggle,
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = DiagnosticsPalette.muted
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Text(
+            text = "Package: ${event.rawPackageName}",
+            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+            color = DiagnosticsPalette.ink
+        )
+        Text(
+            text = event.classificationSource,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = DiagnosticsPalette.blue
+        )
+
+        AnimatedVisibility(visible = expanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(DiagnosticsPalette.slate)
+                    .padding(14.dp)
+            ) {
+                DetailRow(label = "Window Title", value = event.rawWindowTitle ?: "None")
+                Spacer(modifier = Modifier.height(8.dp))
+                DetailRow(label = "PackageManager Label", value = event.packageManagerLabel ?: "None")
+
+                if (event.topScreenTexts.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Top screen texts",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = DiagnosticsPalette.ink
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    event.topScreenTexts.forEach { textSnippet ->
+                        Text(
+                            text = "• $textSnippet",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = DiagnosticsPalette.ink,
+                            modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)
+                        )
+                    }
+                }
+
+                if (!event.aiPromptSent.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "AI prompt sent",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = DiagnosticsPalette.ink
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = event.aiPromptSent ?: "",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                        color = DiagnosticsPalette.ink,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { expandedMap[event.id] = !isExpanded }
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp)
-                        ) {
-                            // Header Row
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = event.resolvedAppName,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF0F172A)
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = event.formattedTime,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFF64748B)
-                                    )
-                                }
+                            .background(Color.White, RoundedCornerShape(12.dp))
+                            .padding(12.dp)
+                    )
+                }
 
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    // Category Badge
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(
-                                                when (event.finalCategory.uppercase()) {
-                                                    "AI" -> Color(0xFFEEF2FF)
-                                                    "SOCIAL" -> Color(0xFFF0FDF4)
-                                                    "EMAIL" -> Color(0xFFFEF3C7)
-                                                    "WORK" -> Color(0xFFF3E8FF)
-                                                    else -> Color(0xFFF1F5F9)
-                                                }
-                                            )
-                                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                                    ) {
-                                        Text(
-                                            text = event.finalCategory,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = when (event.finalCategory.uppercase()) {
-                                                "AI" -> Color(0xFF4F46E5)
-                                                "SOCIAL" -> Color(0xFF16A34A)
-                                                "EMAIL" -> Color(0xFFD97706)
-                                                "WORK" -> Color(0xFF9333EA)
-                                                else -> Color(0xFF475569)
-                                            }
-                                        )
-                                    }
+                if (!event.aiRawResponse.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "AI raw response",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = DiagnosticsPalette.ink
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = event.aiRawResponse ?: "",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                        color = DiagnosticsPalette.ink,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White, RoundedCornerShape(12.dp))
+                            .padding(12.dp)
+                    )
+                }
 
-                                    Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                                    Icon(
-                                        imageVector = if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                        contentDescription = if (isExpanded) "Collapse" else "Expand",
-                                        tint = Color(0xFF64748B),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
+                OutlinedButton(
+                    onClick = {
+                        val eventText = buildString {
+                            appendLine("App Detection Event [${event.formattedTime}]")
+                            appendLine("Resolved App Name: ${event.resolvedAppName}")
+                            appendLine("Category: ${event.finalCategory}")
+                            appendLine("Source: ${event.classificationSource}")
+                            appendLine("Package: ${event.rawPackageName}")
+                            appendLine("Window Title: ${event.rawWindowTitle ?: "None"}")
+                            appendLine("PackageManager Label: ${event.packageManagerLabel ?: "None"}")
+                            if (event.topScreenTexts.isNotEmpty()) {
+                                appendLine("Top Screen Texts: ${event.topScreenTexts.joinToString(", ")}")
                             }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            // Metadata Summary Row
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = "Package: ${event.rawPackageName}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = Color(0xFF334155),
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    text = event.classificationSource,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF0284C7)
-                                )
+                            if (!event.aiPromptSent.isNullOrBlank()) {
+                                appendLine("Prompt: ${event.aiPromptSent}")
                             }
-
-                            // Expandable Details Section (Collapsed by default)
-                            AnimatedVisibility(visible = isExpanded) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 12.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color(0xFFF8FAFC))
-                                        .padding(12.dp)
-                                ) {
-                                    DetailRow(label = "Window Title", value = event.rawWindowTitle ?: "None")
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    DetailRow(label = "PackageManager Label", value = event.packageManagerLabel ?: "None")
-
-                                    if (event.topScreenTexts.isNotEmpty()) {
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(
-                                            text = "Top Screen Texts Extracted:",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF475569)
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        event.topScreenTexts.forEach { textSnippet ->
-                                            Text(
-                                                text = "• $textSnippet",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = Color(0xFF334155),
-                                                modifier = Modifier.padding(start = 8.dp, bottom = 2.dp)
-                                            )
-                                        }
-                                    }
-
-                                    if (!event.aiPromptSent.isNullOrBlank()) {
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(
-                                            text = "AI Prompt Sent:",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF475569)
-                                        )
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = event.aiPromptSent ?: "",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = Color(0xFF1E293B),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .background(Color(0xFFE2E8F0), RoundedCornerShape(4.dp))
-                                                .padding(8.dp)
-                                        )
-                                    }
-
-                                    if (!event.aiRawResponse.isNullOrBlank()) {
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(
-                                            text = "AI Raw Response:",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF475569)
-                                        )
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = event.aiRawResponse ?: "",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = Color(0xFF1E293B),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .background(Color(0xFFE2E8F0), RoundedCornerShape(4.dp))
-                                                .padding(8.dp)
-                                        )
-                                    }
-
-                                    Spacer(modifier = Modifier.height(12.dp))
-
-                                    // Copy Event Button
-                                    OutlinedButton(
-                                        onClick = {
-                                            val eventText = buildString {
-                                                appendLine("App Detection Event [${event.formattedTime}]")
-                                                appendLine("Resolved App Name: ${event.resolvedAppName}")
-                                                appendLine("Category: ${event.finalCategory}")
-                                                appendLine("Source: ${event.classificationSource}")
-                                                appendLine("Package: ${event.rawPackageName}")
-                                                appendLine("Window Title: ${event.rawWindowTitle ?: "None"}")
-                                                appendLine("PackageManager Label: ${event.packageManagerLabel ?: "None"}")
-                                                if (event.topScreenTexts.isNotEmpty()) {
-                                                    appendLine("Top Screen Texts: ${event.topScreenTexts.joinToString(", ")}")
-                                                }
-                                                if (!event.aiPromptSent.isNullOrBlank()) {
-                                                    appendLine("Prompt: ${event.aiPromptSent}")
-                                                }
-                                                if (!event.aiRawResponse.isNullOrBlank()) {
-                                                    appendLine("Response: ${event.aiRawResponse}")
-                                                }
-                                            }
-                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                            clipboard.setPrimaryClip(ClipData.newPlainText("App Detection Event", eventText))
-                                            Toast.makeText(context, "Copied event trace to clipboard", Toast.LENGTH_SHORT).show()
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Icon(imageVector = Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text("Copy Event Trace")
-                                    }
-                                }
+                            if (!event.aiRawResponse.isNullOrBlank()) {
+                                appendLine("Response: ${event.aiRawResponse}")
                             }
                         }
-                    }
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("App Detection Event", eventText))
+                        Toast.makeText(context, "Copied event trace to clipboard", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ContentCopy,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Copy Event Trace",
+                        style = MaterialTheme.typography.titleMedium
+                    )
                 }
             }
         }
@@ -405,21 +428,41 @@ fun AppDetectionDiagnosticsScreen(
 
 @Composable
 private fun DetailRow(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Medium,
-            color = Color(0xFF64748B)
+            color = DiagnosticsPalette.muted
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF0F172A)
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = DiagnosticsPalette.ink
         )
     }
+}
+
+private fun copyAppDetectionReport(context: Context) {
+    val report = AppDetectionLogRepository.exportAsFormattedText()
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("App Detection Diagnostics Report", report))
+    Toast.makeText(context, "Copied all logs to clipboard", Toast.LENGTH_SHORT).show()
+}
+
+private fun categoryBackground(category: String): Color = when (category.uppercase()) {
+    "AI" -> Color(0xFFEEF2FF)
+    "SOCIAL" -> Color(0xFFF0FDF4)
+    "EMAIL" -> Color(0xFFFEF3C7)
+    "WORK" -> DiagnosticsPalette.purpleSoft
+    else -> DiagnosticsPalette.pill
+}
+
+private fun categoryForeground(category: String): Color = when (category.uppercase()) {
+    "AI" -> Color(0xFF4F46E5)
+    "SOCIAL" -> Color(0xFF16A34A)
+    "EMAIL" -> Color(0xFFD97706)
+    "WORK" -> DiagnosticsPalette.purple
+    else -> DiagnosticsPalette.ink
 }
