@@ -12,6 +12,7 @@ import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.data.LiveStats
 import com.princeniithompson.rapcha.data.LogLevel
+import com.princeniithompson.rapcha.data.RetryClipStore
 import com.princeniithompson.rapcha.data.TranscriptPrivacy
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
 import com.princeniithompson.rapcha.websocket.DictationPiecePlanner
@@ -26,7 +27,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -63,6 +66,7 @@ class FloatingDictationSessionManager(
     private var drainJob: Job? = null
 
     private var durationJob: Job? = null
+    private var retryStopJob: Job? = null
     private val sessionEndLogged = AtomicBoolean(false)
     var durationSeconds: Int = 0
         private set
@@ -96,6 +100,11 @@ class FloatingDictationSessionManager(
     private val audioRecorder = AudioRecorder(
         onChunkReady = { chunk ->
             if (isRecording) {
+                try {
+                    RetryClipStore.append(chunk)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Retry clip append skipped: ${t.javaClass.simpleName}")
+                }
                 val ws = webSocketClient
                 if (ws != null && ws.setupComplete) {
                     val sent = ws.sendAudioChunk(chunk)
@@ -258,6 +267,12 @@ class FloatingDictationSessionManager(
             Log.w(TAG, "Could not acquire WakeLock", e)
         }
 
+        try {
+            RetryClipStore.begin(context)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Retry clip not started: ${t.javaClass.simpleName}")
+        }
+
         // Start Audio Recorder tied to session scope
         audioRecorder.start(
             currentSessionScope,
@@ -376,9 +391,14 @@ class FloatingDictationSessionManager(
         durationSeconds = elapsedSeconds(sessionStartedAtElapsed, SystemClock.elapsedRealtime())
     }
 
-    fun stopSession(scope: CoroutineScope, endedReason: String = "completed") {
+    fun stopSession(
+        scope: CoroutineScope,
+        endedReason: String = "completed",
+        discardRetryClip: Boolean = false
+    ) {
         if (!isRecording) return
         isRecording = false
+        val retryClipId = RetryClipStore.currentId()
         FloatingBubbleManager.setNetworkProblem(false)
 
         durationJob?.cancel()
@@ -400,13 +420,22 @@ class FloatingDictationSessionManager(
         sessionJob = null
         sessionScope = null
 
-        scope.launch(Dispatchers.IO) {
+        retryStopJob = scope.launch(Dispatchers.IO) {
             try {
                 audioRecorder.stopAndJoin()
                 ws?.disconnect()
             } catch (e: Exception) {
                 Log.e(TAG, "Error stopping audio/websocket", e)
             } finally {
+                try {
+                    if (discardRetryClip) {
+                        RetryClipStore.discard(retryClipId)
+                    } else {
+                        RetryClipStore.finalizeIfCurrent(retryClipId)
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Retry clip settle failed: ${t.javaClass.simpleName}")
+                }
                 logSessionEndOnce(
                     "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${ws?.sessionSummary().orEmpty()}"
                 )
@@ -419,6 +448,23 @@ class FloatingDictationSessionManager(
                     Log.w(TAG, "Error releasing WakeLock", e)
                 }
             }
+        }
+    }
+
+    /**
+     * Wait until the in-flight stop has closed the retry WAV.
+     * Safe to call when the session was already stopped.
+     */
+    suspend fun awaitRetryClip() {
+        retryStopJob?.join()
+    }
+
+    fun settleRetryClip(discard: Boolean) {
+        val id = RetryClipStore.currentId()
+        try {
+            if (discard) RetryClipStore.discard(id) else RetryClipStore.finalizeIfCurrent(id)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Retry clip settle failed: ${t.javaClass.simpleName}")
         }
     }
 
@@ -477,6 +523,9 @@ class FloatingDictationSessionManager(
                 Log.e(TAG, "Error disconnecting after activityEnd", e)
             }
             webSocketClient = null
+            withContext(NonCancellable + Dispatchers.IO) {
+                settleRetryClip(discard = false)
+            }
             logSessionEndOnce(
                 "ended_reason: completed | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${ws?.sessionSummary().orEmpty()}"
             )
@@ -567,6 +616,9 @@ class FloatingDictationSessionManager(
             wakeLock = null
         } catch (e: Exception) {
             Log.w(TAG, "Error releasing session manager", e)
+        }
+        if (retryStopJob?.isActive != true) {
+            settleRetryClip(discard = false)
         }
     }
 }

@@ -21,8 +21,10 @@ import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.data.DictationEndedReason
 import com.princeniithompson.rapcha.data.HistoryRepository
+import com.princeniithompson.rapcha.data.RetryClipStore
 import com.princeniithompson.rapcha.service.floating.DictationAlerts
 import com.princeniithompson.rapcha.service.floating.FloatingDictationSessionManager
+import com.princeniithompson.rapcha.service.floating.OfflineRetryCoordinator
 import com.princeniithompson.rapcha.service.floating.FloatingHapticManager
 import com.princeniithompson.rapcha.service.floating.FloatingHapticType
 import com.princeniithompson.rapcha.service.floating.FloatingNotificationManager
@@ -41,6 +43,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Thin coordinator service for the floating voice bubble overlay.
@@ -94,6 +97,7 @@ class FloatingBubbleService : Service() {
     private lateinit var overlayWindowManager: FloatingOverlayWindowManager
     private lateinit var sessionManager: FloatingDictationSessionManager
     val polishCoordinator = FloatingPolishCoordinator()
+    private val offlineRetry = OfflineRetryCoordinator()
 
     @androidx.annotation.VisibleForTesting(otherwise = androidx.annotation.VisibleForTesting.PRIVATE)
     internal var lastPolishClickTime: Long
@@ -132,6 +136,9 @@ class FloatingBubbleService : Service() {
         }
         Log.d(TAG, "FloatingBubbleService onCreate")
         CustomVocabularyRepository.init(this)
+        RetryClipStore.init(this)
+        FloatingBubbleManager.onOfflineRetry = { onRetryClicked() }
+        FloatingBubbleManager.onOfflineDiscard = { onDiscardClicked() }
 
         overlayWindowManager = FloatingOverlayWindowManager(this)
         sessionManager = FloatingDictationSessionManager(
@@ -158,6 +165,7 @@ class FloatingBubbleService : Service() {
                     pendingCompletionTimeoutJob = null
                     performInjectionAndClose()
                 }
+                refreshRetryOffer()
             },
             onAmplitudeChanged = { amp ->
                 overlayWindowManager.overlayAudioAmplitude.value = amp
@@ -171,10 +179,21 @@ class FloatingBubbleService : Service() {
                     err
                 )
                 if (sessionManager.isRecording) {
-                    stopVoiceTyping(endedReason = endedReasonTag)
+                    stopVoiceTyping(endedReason = endedReasonTag, discardRetryClip = false)
+                    serviceScope.launch {
+                        sessionManager.awaitRetryClip()
+                        if (RetryClipStore.peekDataBytes() > 0L) {
+                            offlineRetry.holdAfterFailure()
+                        }
+                        refreshRetryOffer()
+                    }
                 }
             },
-            onDurationTicked = { _ -> },
+            onDurationTicked = { _ ->
+                if (sessionManager.isRecording && FloatingBubbleManager.isNetworkProblem.value) {
+                    refreshRetryOffer()
+                }
+            },
             onSessionLimit = { _, finalizeNow ->
                 serviceScope.launch(Dispatchers.Main) {
                     if (!finalizeNow) {
@@ -205,8 +224,12 @@ class FloatingBubbleService : Service() {
                 onRingClick = { onRingClicked() },
                 onCancelClick = { onCancelClicked() },
                 onPolishClick = { onPolishClicked() },
-                onCompleteClick = { onConfirmClicked() }
-            )
+            onCompleteClick = { onConfirmClicked() }
+        )
+        offlineRetry.restorePending(this)
+        if (FloatingBubbleManager.offlineRetry.value != null && FloatingBubbleManager.isKeyboardVisible.value) {
+            overlayWindowManager.expandPanel()
+        }
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing overlay window", e)
         }
@@ -312,11 +335,16 @@ class FloatingBubbleService : Service() {
             dropMicrophoneForegroundNow()
             val text = sessionManager.finishActivityAndAwaitTranscript().trim()
             if (text.isBlank()) {
-                if (sessionManager.sessionBytesSent > 32_000L) {
+                if (RetryClipStore.peekDataBytes() > 0L) {
+                    offlineRetry.holdAfterFailure()
+                    refreshRetryOffer()
+                } else if (sessionManager.sessionBytesSent > 32_000L) {
                     DictationAlerts.finalTextLost(this)
                 }
                 return
             }
+            withContext(Dispatchers.IO) { sessionManager.settleRetryClip(discard = true) }
+            offlineRetry.clearHold()
             val durationSec = sessionManager.durationSeconds
             val lockedCtx = FloatingBubbleManager.lockedSessionContext.value ?: "Rapcha"
             HistoryRepository.addHistoryItem(
@@ -353,6 +381,11 @@ class FloatingBubbleService : Service() {
     fun onSensitiveAppExited() {
         if (!componentsReady()) return
         serviceScope.launch(Dispatchers.Main) {
+            if (offlineRetry.isHolding()) {
+                refreshRetryOffer()
+                overlayWindowManager.expandToFullSize()
+                overlayWindowManager.expandPanel()
+            }
             val isKeyboardOpen = FloatingBubbleManager.isKeyboardVisible.value
             overlayWindowManager.restoreOverlayVisibility(isKeyboardOpen = isKeyboardOpen)
         }
@@ -369,6 +402,11 @@ class FloatingBubbleService : Service() {
             "keyboard=$keyboard field=$field recording=$recording"
         )
         if (FloatingBubbleManager.isCurrentAppSensitive.value) {
+            return
+        }
+        if (FloatingBubbleManager.offlineRetry.value != null && !recording) {
+            overlayWindowManager.expandToFullSize()
+            overlayWindowManager.expandPanel()
             return
         }
         if (decideRingTap(recording, keyboard, field) == RingTap.HIDE) {
@@ -407,6 +445,8 @@ class FloatingBubbleService : Service() {
             Toast.makeText(this, "Gemini API key is required. Please set it in Rapcha app first.", Toast.LENGTH_LONG).show()
             return
         }
+
+        offlineRetry.onNewSession()
 
         if (!startMicrophoneForeground()) {
             DictationAlerts.microphoneFailed(this)
@@ -493,14 +533,14 @@ class FloatingBubbleService : Service() {
         )
     }
 
-    private fun stopVoiceTyping(endedReason: String = "completed") {
+    private fun stopVoiceTyping(endedReason: String = "completed", discardRetryClip: Boolean = false) {
         if (!sessionManager.isRecording) return
         FloatingHapticManager.trigger(this, FloatingHapticType.TRANSCRIPTION_STOP)
         FloatingBubbleManager.setRecordingState(false)
         overlayWindowManager.overlayRecording.value = false
         overlayWindowManager.resetInactivityTimer()
 
-        sessionManager.stopSession(serviceScope, endedReason)
+        sessionManager.stopSession(serviceScope, endedReason, discardRetryClip)
         downgradeMicrophoneForeground()
     }
 
@@ -553,10 +593,89 @@ class FloatingBubbleService : Service() {
         pendingCompletionTimeoutJob?.cancel()
         pendingCompletionTimeoutJob = serviceScope.launch {
             val textToInject = sessionManager.finishActivityAndAwaitTranscript()
-            if (isActive) {
-                performInjectionAndClose(textToInject)
+            if (!isActive) return@launch
+            if (textToInject.isBlank()) {
+                if (RetryClipStore.peekDataBytes() > 0L) {
+                    offlineRetry.holdAfterFailure()
+                    overlayWindowManager.overlayPendingFinalizing.value = false
+                    sessionLimitAutoFinish = false
+                    refreshRetryOffer()
+                } else {
+                    withContext(Dispatchers.IO) { sessionManager.settleRetryClip(discard = true) }
+                    sessionLimitAutoFinish = false
+                    resetAndCollapse()
+                }
+                return@launch
             }
+            withContext(Dispatchers.IO) { sessionManager.settleRetryClip(discard = true) }
+            offlineRetry.clearHold()
+            performInjectionAndClose(textToInject)
         }
+    }
+
+    private fun onRetryClicked() {
+        serviceScope.launch {
+            offlineRetry.runRetry(
+                context = this@FloatingBubbleService,
+                apiKey = getEffectiveApiKey(),
+                vocabulary = CustomVocabularyRepository.getVocabulary(),
+                prepareClip = {
+                    if (sessionManager.isRecording) {
+                        stopVoiceTyping(endedReason = "offline_retry", discardRetryClip = false)
+                    }
+                    sessionManager.awaitRetryClip()
+                    RetryClipStore.sessionWavFile()
+                },
+                onAcceptedText = { text ->
+                    withContext(Dispatchers.IO) { sessionManager.settleRetryClip(discard = true) }
+                    performInjectionAndClose(text)
+                }
+            )
+        }
+    }
+
+    private fun onDiscardClicked() {
+        val durationMs = RetryClipStore.durationMsForBytes(RetryClipStore.peekDataBytes())
+        AppLogRepository.logEvent(
+            DiagnosticSource.BUBBLE,
+            DiagnosticType.RETRY_DISCARDED,
+            "duration_ms=$durationMs"
+        )
+        serviceScope.launch {
+            if (sessionManager.isRecording) {
+                stopVoiceTyping(endedReason = "retry_discarded", discardRetryClip = true)
+                sessionManager.awaitRetryClip()
+            } else {
+                withContext(Dispatchers.IO) { sessionManager.settleRetryClip(discard = true) }
+            }
+            offlineRetry.clearHold()
+            pendingCompletionTimeoutJob?.cancel()
+            pendingCompletionTimeoutJob = null
+            overlayWindowManager.overlayPendingFinalizing.value = false
+            isPendingInjectionOnSmartCompletion = false
+            Toast.makeText(this@FloatingBubbleService, "Dictation discarded", Toast.LENGTH_SHORT).show()
+            resetAndCollapse()
+        }
+    }
+
+    private fun refreshRetryOffer() {
+        if (!::sessionManager.isInitialized || !::overlayWindowManager.isInitialized) return
+        val showing = offlineRetry.publish(
+            context = this,
+            recording = sessionManager.isRecording,
+            networkProblem = FloatingBubbleManager.isNetworkProblem.value
+        )
+        if (showing && !overlayWindowManager.overlayExpanded.value) {
+            overlayWindowManager.expandPanel()
+        }
+    }
+
+    private fun isBubbleSessionActive(): Boolean {
+        if (!::sessionManager.isInitialized || !::overlayWindowManager.isInitialized) return false
+        return sessionManager.isRecording ||
+            overlayWindowManager.overlayPendingFinalizing.value ||
+            polishCoordinator.isPolishingInProgress.get() ||
+            FloatingBubbleManager.offlineRetry.value != null
     }
 
     private fun performInjectionAndClose(textOverride: String? = null) {
@@ -565,7 +684,7 @@ class FloatingBubbleService : Service() {
             ?: sessionManager.getFullTranscriptText()
         val durationSec = sessionManager.durationSeconds
         if (sessionManager.isRecording) {
-            stopVoiceTyping()
+            stopVoiceTyping(discardRetryClip = true)
         }
 
         if (textToInject.isBlank()) {
@@ -620,8 +739,11 @@ class FloatingBubbleService : Service() {
         val rawTranscript = sessionManager.getFullTranscriptText()
         val apiKey = getEffectiveApiKey()
         if (sessionManager.isRecording) {
-            stopVoiceTyping()
+            stopVoiceTyping(endedReason = "polished", discardRetryClip = true)
+        } else if (FloatingBubbleManager.offlineRetry.value == null) {
+            sessionManager.settleRetryClip(discard = true)
         }
+        offlineRetry.clearHold()
 
         polishCoordinator.handlePolishRequest(
             context = this,
@@ -639,6 +761,10 @@ class FloatingBubbleService : Service() {
     }
 
     private fun onCancelClicked() {
+        if (FloatingBubbleManager.offlineRetry.value != null || offlineRetry.isHolding()) {
+            onDiscardClicked()
+            return
+        }
         val durationAtEnd = sessionManager.durationSeconds
         val chunksAtEnd = sessionManager.sessionChunksSent
 
@@ -649,13 +775,15 @@ class FloatingBubbleService : Service() {
 
         val wasRecording = sessionManager.isRecording
         if (wasRecording) {
-            stopVoiceTyping(endedReason = "user_cancelled")
+            stopVoiceTyping(endedReason = "user_cancelled", discardRetryClip = true)
         } else if (::sessionManager.isInitialized) {
+            sessionManager.settleRetryClip(discard = true)
             sessionManager.logSessionEndOnce(
                 "ended_reason: user_cancelled | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd"
             )
         }
 
+        offlineRetry.clearHold()
         Toast.makeText(this, "Voice typing cancelled", Toast.LENGTH_SHORT).show()
         resetAndCollapse()
     }
@@ -683,10 +811,11 @@ class FloatingBubbleService : Service() {
 
     fun onKeyboardVisibilityChanged(isVisible: Boolean) {
         if (!componentsReady()) return
-        val isSessionActive = sessionManager.isRecording ||
-                             overlayWindowManager.overlayPendingFinalizing.value ||
-                             polishCoordinator.isPolishingInProgress.get()
-        overlayWindowManager.onKeyboardVisibilityChanged(isVisible, isSessionActive)
+        if (isVisible && FloatingBubbleManager.offlineRetry.value != null) {
+            overlayWindowManager.expandToFullSize()
+            overlayWindowManager.expandPanel()
+        }
+        overlayWindowManager.onKeyboardVisibilityChanged(isVisible, isBubbleSessionActive())
     }
 
     fun onFieldFocusChanged(isFocused: Boolean) {
@@ -697,10 +826,7 @@ class FloatingBubbleService : Service() {
             }
             return
         }
-        val sessionActive = sessionManager.isRecording ||
-            overlayWindowManager.overlayPendingFinalizing.value ||
-            polishCoordinator.isPolishingInProgress.get()
-        if (keyboardRecheckShouldHide(FloatingBubbleManager.isKeyboardVisible.value, sessionActive)) {
+        if (keyboardRecheckShouldHide(FloatingBubbleManager.isKeyboardVisible.value, isBubbleSessionActive())) {
             overlayWindowManager.onKeyboardVisibilityChanged(isVisible = false, isSessionActive = false)
         }
     }
@@ -710,10 +836,7 @@ class FloatingBubbleService : Service() {
      */
     fun onKeyboardWatch(imeVisible: Boolean) {
         if (!componentsReady()) return
-        val sessionActive = sessionManager.isRecording ||
-            overlayWindowManager.overlayPendingFinalizing.value ||
-            polishCoordinator.isPolishingInProgress.get()
-        if (keyboardRecheckShouldHide(imeVisible, sessionActive)) {
+        if (keyboardRecheckShouldHide(imeVisible, isBubbleSessionActive())) {
             FloatingBubbleManager.noteBubbleHideSignal()
             overlayWindowManager.onKeyboardVisibilityChanged(isVisible = false, isSessionActive = false)
         }
@@ -893,6 +1016,9 @@ class FloatingBubbleService : Service() {
             sessionManager.release()
         }
         FloatingBubbleManager.setNetworkProblem(false)
+        FloatingBubbleManager.onOfflineRetry = null
+        FloatingBubbleManager.onOfflineDiscard = null
+        FloatingBubbleManager.setOfflineRetry(null)
         if (::overlayWindowManager.isInitialized) {
             overlayWindowManager.onDestroy()
         }

@@ -30,6 +30,12 @@ object RapchaConfig {
     /** Primary Gemini REST/Polish Model */
     const val POLISH_PRIMARY_MODEL: String = "gemini-3.5-flash-lite"
 
+    /** Non-live model used when Live fails and the user taps Retry. */
+    const val TRANSCRIBE_MODEL: String = "gemini-3.5-transcribe"
+
+    /** Same debounce as Polish so a double tap cannot spend two free-tier retries. */
+    const val RETRY_DEBOUNCE_MS: Long = POLISH_DEBOUNCE_MS
+
     /** Placeholder API key template value */
     const val PLACEHOLDER_API_KEY: String = "MY_GEMINI_API_KEY"
 
