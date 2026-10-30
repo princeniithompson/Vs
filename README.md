@@ -1,19 +1,13 @@
 # Rapcha
 
+![Lifesaver](docs/assets/lifesaver-icon.png)
+
 Floating voice typing over every app. Kotlin and Gemini Live.
 
-<p align="center">
-  <img src="docs/assets/lifesaver-icon.png" alt="Lifesaver" width="72" />
-</p>
+![Rapcha floating dictation](docs/assets/rapcha-hero.png)
 
-<p align="center">
-  <img src="docs/assets/rapcha-hero.png" alt="Rapcha floating dictation" width="320" />
-</p>
-
-<p align="center">
-  <a href="https://github.com/princeniithompson/Vs/releases/latest"><strong>↓ Download latest APK</strong></a><br />
-  Releases will hold the newest APK.
-</p>
+**[↓ Download latest APK](https://github.com/princeniithompson/Vs/releases/latest)**  
+Releases will hold the newest APK.
 
 ## What it does
 
