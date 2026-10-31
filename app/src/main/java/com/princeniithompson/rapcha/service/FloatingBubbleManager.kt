@@ -14,6 +14,7 @@ import android.widget.Toast
 import com.princeniithompson.rapcha.data.AppLogRepository
 import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
+import com.princeniithompson.rapcha.service.floating.RetryClipLength
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -92,6 +93,27 @@ object FloatingBubbleManager {
 
     private val _isNetworkProblem = MutableStateFlow(false)
     val isNetworkProblem: StateFlow<Boolean> = _isNetworkProblem.asStateFlow()
+
+    data class OfflineRetryOffer(
+        val retriesLeft: Int,
+        val durationMs: Long,
+        val length: RetryClipLength,
+        val busy: Boolean,
+        val message: String?
+    )
+
+    private val _offlineRetry = MutableStateFlow<OfflineRetryOffer?>(null)
+    val offlineRetry: StateFlow<OfflineRetryOffer?> = _offlineRetry.asStateFlow()
+
+    @Volatile
+    var onOfflineRetry: (() -> Unit)? = null
+
+    @Volatile
+    var onOfflineDiscard: (() -> Unit)? = null
+
+    fun setOfflineRetry(offer: OfflineRetryOffer?) {
+        _offlineRetry.value = offer
+    }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val _isClipboardFallbackIndicator = MutableStateFlow(false)

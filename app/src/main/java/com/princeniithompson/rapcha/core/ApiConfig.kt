@@ -80,6 +80,32 @@ object ApiConfig {
         return "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
     }
 
+    /** Files API resumable upload start. The API key stays in the header. */
+    fun geminiFilesUploadUrl(): String {
+        return "https://generativelanguage.googleapis.com/upload/v1beta/files"
+    }
+
+    /** v1beta resource URL, for example files/{id}. */
+    fun geminiV1betaUrl(resource: String): String {
+        val path = resource.trim().trimStart('/')
+        return "https://generativelanguage.googleapis.com/v1beta/$path"
+    }
+
+    /** Drops a key query parameter if a Files API upload URL includes one. */
+    fun withoutApiKeyQuery(url: String): String {
+        val trimmed = url.trim()
+        val queryStart = trimmed.indexOf('?')
+        if (queryStart < 0) return trimmed
+        val base = trimmed.substring(0, queryStart)
+        val kept = trimmed.substring(queryStart + 1)
+            .split('&')
+            .filter { part ->
+                val name = part.substringBefore('=').lowercase()
+                name != "key" && name != "api_key"
+            }
+        return if (kept.isEmpty()) base else "$base?${kept.joinToString("&")}"
+    }
+
     fun createOkHttpClient(): OkHttpClient {
         return OkHttpClient.Builder()
             .connectTimeout(60, TimeUnit.SECONDS)

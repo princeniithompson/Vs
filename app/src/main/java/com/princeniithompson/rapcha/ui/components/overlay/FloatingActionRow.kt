@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -27,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -38,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.princeniithompson.rapcha.service.AppContextResolver
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
+import com.princeniithompson.rapcha.service.floating.OfflineRetryRules
 
 @Composable
 fun PillActionButton(
@@ -78,8 +81,14 @@ fun FloatingActionRow(
 ) {
     val isAiApp by FloatingBubbleManager.isCurrentAppAi.collectAsState()
     val selectedAiMode by FloatingBubbleManager.selectedAiPolishMode.collectAsState()
+    val offlineRetry by FloatingBubbleManager.offlineRetry.collectAsState()
 
     Column(modifier = modifier.fillMaxWidth()) {
+        val retryOffer = offlineRetry
+        if (retryOffer != null) {
+            OfflineRetryActions(offer = retryOffer)
+            return@Column
+        }
         // AI-Aware Mode Toggle (Displayed strictly inside AI apps)
         if (isAiApp) {
             Row(
@@ -291,5 +300,105 @@ fun FloatingActionRow(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun OfflineRetryActions(offer: FloatingBubbleManager.OfflineRetryOffer) {
+    val retryEnabled = OfflineRetryRules.retryEnabled(
+        retriesLeft = offer.retriesLeft,
+        length = offer.length,
+        busy = offer.busy,
+        durationMs = offer.durationMs
+    )
+    val status = OfflineRetryRules.statusLine(
+        retriesLeft = offer.retriesLeft,
+        length = offer.length,
+        busy = offer.busy,
+        message = offer.message
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        PillActionButton(
+            onClick = { FloatingBubbleManager.onOfflineDiscard?.invoke() },
+            backgroundColor = Color(0x381E1E24),
+            borderColor = Color(0x26FF5252),
+            enabled = !offer.busy,
+            modifier = Modifier.weight(1f)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Discard",
+                    tint = Color(0xFFFF5252),
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = "Discard",
+                    color = Color(0xFFFF7B7B),
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        PillActionButton(
+            onClick = { FloatingBubbleManager.onOfflineRetry?.invoke() },
+            backgroundColor = Color(0xFFFF5252),
+            borderColor = Color.Transparent,
+            enabled = retryEnabled,
+            modifier = Modifier
+                .weight(1.4f)
+                .alpha(if (retryEnabled) 1f else 0.45f)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                if (!offer.busy) {
+                    Icon(
+                        imageVector = Icons.Filled.Refresh,
+                        contentDescription = "Retry",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                }
+                Text(
+                    text = if (offer.busy) "Retrying..." else "Retry",
+                    color = Color.White,
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(5.dp))
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(28.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = status,
+            style = TextStyle(
+                color = Color(0xFFFF5252),
+                fontSize = 10.5.sp,
+                fontFamily = FontFamily.SansSerif,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.2.sp
+            ),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }

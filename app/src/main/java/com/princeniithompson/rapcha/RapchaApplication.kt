@@ -14,6 +14,7 @@ class RapchaApplication : Application() {
         super.onCreate()
         installCrashHandler()
         AppLogRepository.init(this)
+        com.princeniithompson.rapcha.data.RetryClipStore.init(this)
         publishPendingCrash(this)
         ProcessExitDiagnostics.recordHistoricalExits(this)
     }
