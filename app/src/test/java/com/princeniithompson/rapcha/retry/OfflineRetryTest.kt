@@ -7,6 +7,7 @@ import com.princeniithompson.rapcha.core.ApiConfig
 import com.princeniithompson.rapcha.data.AudioRecordingRepository
 import com.princeniithompson.rapcha.data.HistoryOverflowMenu
 import com.princeniithompson.rapcha.data.HistoryRepository
+import com.princeniithompson.rapcha.data.PcmSilenceTrim
 import com.princeniithompson.rapcha.data.RetryClipStore
 import com.princeniithompson.rapcha.data.RetryQuota
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
@@ -18,6 +19,8 @@ import com.princeniithompson.rapcha.service.floating.OfflineRetryRules
 import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.data.AppLogRepository
 import com.princeniithompson.rapcha.service.floating.RetryClipLength
+import com.princeniithompson.rapcha.service.floating.RetryTransport
+import com.princeniithompson.rapcha.service.floating.WavIdentityEncoder
 import com.princeniithompson.rapcha.service.floating.RetryTapGate
 import com.princeniithompson.rapcha.service.floating.TranscribeFallbackClient
 import com.princeniithompson.rapcha.service.floating.TranscribeResult
@@ -276,7 +279,7 @@ class OfflineRetryTest {
     @Test
     fun transcribeUploadsThenGeneratesAndDeletesRemoteFile() {
         val transport = ScriptedTransport()
-        val client = TranscribeFallbackClient(transport) { }
+        val client = filesClient(transport)
         val wav = tempWav(3200)
         val result = client.transcribe("test-key", wav, listOf("Rapcha", " rapcha ", "Gemini"))
         assertTrue(result is TranscribeResult.Success)
@@ -307,7 +310,7 @@ class OfflineRetryTest {
     @Test
     fun transcribeKeepsGoingUntilFileIsActive() {
         val transport = ScriptedTransport(startState = "PROCESSING")
-        val client = TranscribeFallbackClient(transport) { }
+        val client = filesClient(transport)
         val result = client.transcribe("test-key", tempWav(100), emptyList())
         assertTrue(result is TranscribeResult.Success)
         assertTrue(transport.calls.any { it.method == "GET" && it.url.endsWith("/v1beta/files/abc") })
@@ -321,7 +324,7 @@ class OfflineRetryTest {
     fun httpFailuresDoNotDeleteLocalAudio() {
         val wav = tempWav(800)
         val badRequest = ScriptedTransport(generateMode = "400")
-        val denied = TranscribeFallbackClient(badRequest) { }.transcribe("test-key", wav, emptyList())
+        val denied = filesClient(badRequest).transcribe("test-key", wav, emptyList())
         assertTrue(denied is TranscribeResult.Failure)
         denied as TranscribeResult.Failure
         assertEquals(TranscribeResult.Kind.BAD_REQUEST, denied.kind)
@@ -332,21 +335,21 @@ class OfflineRetryTest {
         assertTrue(badRequest.calls.any { it.method == "DELETE" })
 
         val daily = ScriptedTransport(generateMode = "429d")
-        val limited = TranscribeFallbackClient(daily) { }.transcribe("test-key", wav, emptyList()) as TranscribeResult.Failure
+        val limited = filesClient(daily).transcribe("test-key", wav, emptyList()) as TranscribeResult.Failure
         assertEquals(TranscribeResult.Kind.QUOTA_DAILY, limited.kind)
         assertTrue(wav.exists())
 
         val rate = ScriptedTransport(generateMode = "429m")
-        val rpm = TranscribeFallbackClient(rate) { }.transcribe("test-key", wav, emptyList()) as TranscribeResult.Failure
+        val rpm = filesClient(rate).transcribe("test-key", wav, emptyList()) as TranscribeResult.Failure
         assertEquals(TranscribeResult.Kind.RATE_LIMIT, rpm.kind)
 
         val server = ScriptedTransport(generateMode = "500")
-        val failed = TranscribeFallbackClient(server) { }.transcribe("test-key", wav, emptyList()) as TranscribeResult.Failure
+        val failed = filesClient(server).transcribe("test-key", wav, emptyList()) as TranscribeResult.Failure
         assertEquals(TranscribeResult.Kind.SERVER, failed.kind)
         assertTrue(wav.exists())
 
         val broken = ScriptedTransport(generateMode = "io")
-        val io = TranscribeFallbackClient(broken) { }.transcribe("test-key", wav, emptyList()) as TranscribeResult.Failure
+        val io = filesClient(broken).transcribe("test-key", wav, emptyList()) as TranscribeResult.Failure
         assertEquals(TranscribeResult.Kind.IO, io.kind)
         assertFalse(io.quotaCharge)
         assertTrue(wav.exists())
@@ -481,6 +484,79 @@ class OfflineRetryTest {
         } finally {
             server.stop(0)
         }
+    }
+
+    @Test
+    fun inlineRequestStaysSmartAndFilesIsUsedPastTheCeiling() {
+        assertTrue(RetryTransport.preferInline(259_200))
+        assertFalse(RetryTransport.preferInline(12 * 1024 * 1024))
+        val json = TranscribeFallbackClient.buildInlineGenerateContentJson(
+            base64 = "AAAA",
+            mimeType = "audio/ogg",
+            vocabulary = listOf("Rapcha")
+        )
+        val part = json.getJSONArray("contents").getJSONObject(0).getJSONArray("parts").getJSONObject(0)
+        assertEquals("audio/ogg", part.getJSONObject("inlineData").getString("mimeType"))
+        assertEquals("AAAA", part.getJSONObject("inlineData").getString("data"))
+        val config = json.getJSONObject("generationConfig").getJSONObject("audioTranscriptionConfig")
+        assertEquals(setOf("mode", "customVocabulary"), config.keys().asSequence().toSet())
+        assertEquals("SMART", config.getString("mode"))
+        assertFalse(json.toString().contains("wordTimestamp"))
+        assertFalse(json.toString().contains("diarization"))
+
+        val inlineTransport = ScriptedTransport()
+        val inline = TranscribeFallbackClient(http = inlineTransport, encoder = WavIdentityEncoder, sleeper = {})
+        val inlineResult = inline.transcribe("test-key", tempWav(800), listOf("Rapcha"))
+        assertTrue(inlineResult is TranscribeResult.Success)
+        assertEquals("inline", (inlineResult as TranscribeResult.Success).timing?.path)
+        assertEquals("wav", inlineResult.timing?.format)
+        assertTrue(inlineTransport.calls.none { it.url.contains("/upload/") })
+        val inlineBody = JSONObject(String(inlineTransport.calls.single().body!!))
+        assertTrue(inlineBody.toString().contains("inlineData"))
+
+        val tooBig = ScriptedTransport(generateMode = "413")
+        val fallback = TranscribeFallbackClient(http = tooBig, encoder = WavIdentityEncoder, sleeper = {})
+        val fallbackResult = fallback.transcribe("test-key", tempWav(800), emptyList())
+        assertTrue(fallbackResult is TranscribeResult.Success)
+        assertEquals("files", (fallbackResult as TranscribeResult.Success).timing?.path)
+        assertTrue(fallbackResult.timing?.inlineRejected == true)
+        assertTrue(tooBig.calls.any { it.url == ApiConfig.geminiFilesUploadUrl() })
+    }
+
+    @Test
+    fun freezeStopsDeadAirFromJoiningTheUploadClip() {
+        RetryClipStore.begin(context)
+        val speech = ByteArray(6400) { 0x70 }
+        RetryClipStore.append(speech)
+        val frozen = RetryClipStore.freezeForUpload()
+        assertEquals(speech.size.toLong(), frozen)
+        RetryClipStore.append(ByteArray(32_000))
+        val clip = RetryClipStore.finalizeKeepSession()
+        assertNotNull(clip)
+        assertEquals(speech.size.toLong(), clip!!.dataBytes)
+        assertEquals(44L + speech.size, clip.wavFile.length())
+        assertTrue(RetryClipStore.isUploadFrozen())
+    }
+
+    @Test
+    fun silenceTrimKeepsAShortPadAroundSpeech() {
+        val frame = 16_000 * 20 / 1000 * 2
+        val silenceFrames = 50
+        val speechFrames = 5
+        val silence = ByteArray(frame)
+        val loud = ByteArray(frame) { 0x70 }
+        val pcm = ByteArray(frame * (silenceFrames * 2 + speechFrames))
+        var offset = silenceFrames * frame
+        repeat(speechFrames) {
+            loud.copyInto(pcm, offset)
+            offset += frame
+        }
+        val trimmed = PcmSilenceTrim.trim(pcm)
+        val padFrames = (PcmSilenceTrim.PAD_MS + 19) / 20
+        val expected = frame * (speechFrames + padFrames * 2)
+        assertEquals(expected, trimmed.size)
+        assertTrue(trimmed.size < pcm.size)
+        assertTrue(silence.isEmpty() || trimmed.isNotEmpty())
     }
 
     @Test
@@ -623,6 +699,15 @@ class OfflineRetryTest {
         assertTrue(HistoryRepository.historyItems.value.none { it.retryClipId == "clip-b" })
     }
 
+    private fun filesClient(http: GeminiHttpTransport): TranscribeFallbackClient {
+        return TranscribeFallbackClient(
+            http = http,
+            encoder = WavIdentityEncoder,
+            inlineBase64Limit = 1,
+            sleeper = {}
+        )
+    }
+
     private fun storedClip(pcmBytes: Int): File {
         RetryClipStore.begin(context)
         RetryClipStore.append(ByteArray(minOf(pcmBytes, 64).coerceAtLeast(1)))
@@ -655,6 +740,7 @@ class OfflineRetryTest {
     ) : GeminiHttpTransport {
         val calls = mutableListOf<GeminiHttpRequest>()
         private var polls = 0
+        private var generateCalls = 0
 
         override fun execute(request: GeminiHttpRequest): GeminiHttpResponse {
             calls.add(request)
@@ -712,6 +798,18 @@ class OfflineRetryTest {
                         """{"candidates":[{"finishReason":"STOP","content":{"parts":[{}]}}]}""",
                         emptyMap()
                     )
+                    "413" -> {
+                        generateCalls += 1
+                        if (generateCalls == 1) {
+                            GeminiHttpResponse(413, """{"error":{"message":"payload too large"}}""", emptyMap())
+                        } else {
+                            GeminiHttpResponse(
+                                200,
+                                """{"candidates":[{"content":{"parts":[{"text":"Hello from retry."}]}}]}""",
+                                emptyMap()
+                            )
+                        }
+                    }
                     else -> GeminiHttpResponse(
                         200,
                         """{"candidates":[{"content":{"parts":[{"text":"Hello from retry."}]}}]}""",

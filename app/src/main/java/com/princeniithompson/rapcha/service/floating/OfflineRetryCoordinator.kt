@@ -137,6 +137,11 @@ class OfflineRetryCoordinator(
     @Volatile
     private var loggedOffer = false
 
+    @Volatile
+    private var networkBackAt = 0L
+
+    private val offlineArmed = AtomicBoolean(false)
+
     fun isHolding(): Boolean = holding.get() || sticky.get()
 
     fun isSticky(): Boolean = sticky.get()
@@ -160,6 +165,8 @@ class OfflineRetryCoordinator(
         sticky.set(false)
         statusMessage = null
         loggedOffer = false
+        offlineArmed.set(false)
+        networkBackAt = 0L
         FloatingBubbleManager.setOfflineRetry(null)
     }
 
@@ -173,8 +180,16 @@ class OfflineRetryCoordinator(
         sticky.set(false)
         statusMessage = null
         loggedOffer = false
+        offlineArmed.set(false)
+        networkBackAt = 0L
         FloatingBubbleManager.setOfflineRetry(null)
     }
+
+    fun noteNetworkBack(atElapsedMs: Long) {
+        if (networkBackAt == 0L) networkBackAt = atElapsedMs
+    }
+
+    fun takeOfflineArm(): Boolean = offlineArmed.getAndSet(false)
 
     fun restorePending(context: Context) {
         val pending = RetryClipStore.latestPending(nowWall()) ?: return
@@ -238,11 +253,12 @@ class OfflineRetryCoordinator(
         stick()
         if (!isOnline(context)) {
             gate.finish()
+            offlineArmed.set(true)
             statusMessage = OfflineRetryRules.OFFLINE_TAP_MESSAGE
             AppLogRepository.logEvent(
                 DiagnosticSource.BUBBLE,
                 DiagnosticType.RETRY_OFFLINE,
-                "tap_while_offline"
+                "tap_while_offline armed=1"
             )
             publish(context, recording = true, networkProblem = true)
             return
@@ -273,10 +289,11 @@ class OfflineRetryCoordinator(
                 return
             }
             val vocabCount = TranscribeFallbackClient.prepareCustomVocabulary(vocabulary).size
+            val netBack = networkBackAt.takeIf { it > 0L }?.let { " net_back_to_start_ms=${(nowElapsed() - it).coerceAtLeast(0L)}" }.orEmpty()
             AppLogRepository.logEvent(
                 DiagnosticSource.BUBBLE,
                 DiagnosticType.RETRY_STARTED,
-                "model=${RapchaConfig.TRANSCRIBE_MODEL} mode=SMART vocab=$vocabCount duration_ms=$duration bytes=${file.length()} left=$left"
+                "model=${RapchaConfig.TRANSCRIBE_MODEL} mode=SMART vocab=$vocabCount speech_ms=$duration raw_bytes=${file.length()} sent_ms=$duration left=$left$netBack"
             )
             val result = withContext(Dispatchers.IO) {
                 client.transcribe(apiKey, file, vocabulary)
@@ -292,7 +309,7 @@ class OfflineRetryCoordinator(
                         AppLogRepository.logEvent(
                             DiagnosticSource.BUBBLE,
                             DiagnosticType.RETRY_SUCCESS,
-                            "words=${TranscriptPrivacy.wordCount(text)} chars=${text.length}"
+                            "words=${TranscriptPrivacy.wordCount(text)} chars=${text.length} ${result.timing?.toLog().orEmpty()}".trim()
                         )
                         accepted = true
                         holding.set(false)
@@ -310,7 +327,8 @@ class OfflineRetryCoordinator(
                     }
                     statusMessage = OfflineRetryRules.messageFor(result.kind)
                     val status = result.status?.let { " status=$it" }.orEmpty()
-                    logFailure("kind=${result.kind.name.lowercase()} http=${result.httpCode ?: 0}$status")
+                    val timing = result.timing?.let { " ${it.toLog()}" }.orEmpty()
+                    logFailure("kind=${result.kind.name.lowercase()} http=${result.httpCode ?: 0}$status$timing")
                 }
             }
         } catch (t: Throwable) {

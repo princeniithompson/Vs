@@ -738,6 +738,9 @@ class FloatingBubbleService : Service() {
             dataBytes = bytes,
             sticky = false
         )
+        if ((shouldStick || offlineRetry.isHolding()) && bytes > 0L && !RetryClipStore.isUploadFrozen()) {
+            RetryClipStore.freezeForUpload()
+        }
         if (shouldStick) {
             offlineRetry.stick()
             sessionManager.abandonLiveKeepMicrophone()
@@ -768,6 +771,19 @@ class FloatingBubbleService : Service() {
         if (!offlineRetry.isSticky() && FloatingBubbleManager.offlineRetry.value == null) return
         val clipId = RetryClipStore.currentId() ?: return
         if (RetryClipStore.clipFile(clipId) == null && RetryClipStore.peekDataBytes() <= 0L) return
+        offlineRetry.noteNetworkBack(android.os.SystemClock.elapsedRealtime())
+        serviceScope.launch(Dispatchers.IO) {
+            com.princeniithompson.rapcha.service.floating.TranscribeFallbackClient().warm(getEffectiveApiKey())
+        }
+        if (offlineRetry.takeOfflineArm()) {
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.RETRY_NETWORK_BACK,
+                "notify=auto_start"
+            )
+            onRetryClicked(clipId)
+            return
+        }
         if (networkBackNotifiedFor == clipId) return
         networkBackNotifiedFor = clipId
         val retryIntent = Intent(this, FloatingBubbleService::class.java).apply {

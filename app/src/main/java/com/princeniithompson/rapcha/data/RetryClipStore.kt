@@ -59,6 +59,8 @@ object RetryClipStore {
     private var peekBytes: Long = 0L
     @Volatile
     private var writeFailureLogged = false
+    @Volatile
+    private var uploadFrozen = false
 
     fun durationMsForBytes(dataBytes: Long): Long {
         if (dataBytes <= 0L) return 0L
@@ -100,6 +102,7 @@ object RetryClipStore {
             peekBytes = 0L
             sessionClip = null
             writeFailureLogged = false
+            uploadFrozen = false
             writeMetaLocked(id, activeCreatedAt, 0L, "open")
             created = id
         }
@@ -116,12 +119,46 @@ object RetryClipStore {
         return if (file.exists() && file.length() > 44L) file else null
     }
 
+    fun isUploadFrozen(): Boolean = uploadFrozen
+
+    /**
+     * Keep only the audio captured up to the Live drop, with a short silence pad.
+     * Later microphone chunks stay off this file so Retry does not upload dead air.
+     */
+    fun freezeForUpload(): Long {
+        var frozen = 0L
+        runWriter {
+            if (uploadFrozen) {
+                frozen = peekBytes
+                return@runWriter
+            }
+            try {
+                activeStream?.flush()
+            } catch (_: Exception) {
+            }
+            val pcm = readActivePcmLocked()
+            val trimmed = PcmSilenceTrim.trim(pcm)
+            uploadFrozen = true
+            closeActiveStreamLocked()
+            val file = activeFile
+            if (file != null) {
+                file.writeBytes(pcmWavHeader(trimmed.size) + trimmed)
+            }
+            activeBytes = trimmed.size.toLong()
+            peekBytes = activeBytes
+            frozen = activeBytes
+            val id = activeId
+            if (id != null) writeMetaLocked(id, activeCreatedAt, activeBytes, "frozen")
+        }
+        return frozen
+    }
+
     fun append(chunk: ByteArray) {
-        if (chunk.isEmpty()) return
+        if (chunk.isEmpty() || uploadFrozen) return
         val id = activeId ?: return
         val copy = chunk.copyOf()
         writer.execute {
-            if (activeId != id) return@execute
+            if (uploadFrozen || activeId != id) return@execute
             val stream = activeStream ?: return@execute
             try {
                 stream.write(copy)
@@ -191,6 +228,7 @@ object RetryClipStore {
             sessionClip = null
             peekBytes = 0L
             writeFailureLogged = false
+            uploadFrozen = false
         }
     }
 
@@ -237,6 +275,21 @@ object RetryClipStore {
         }
         if (sessionClip?.id == id) sessionClip = null
         if (activeId == null) peekBytes = 0L
+    }
+
+    private fun readActivePcmLocked(): ByteArray {
+        val file = activeFile ?: return ByteArray(0)
+        val count = activeBytes.toInt().coerceAtLeast(0)
+        if (!file.exists() || count <= 0) return ByteArray(0)
+        return try {
+            val all = file.readBytes()
+            val start = 44
+            val end = (start + count).coerceAtMost(all.size)
+            if (end <= start) ByteArray(0) else all.copyOfRange(start, end)
+        } catch (e: Exception) {
+            Log.w(TAG, "Retry clip read failed: ${e.javaClass.simpleName}")
+            ByteArray(0)
+        }
     }
 
     private fun closeActiveStreamLocked() {

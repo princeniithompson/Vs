@@ -1,8 +1,14 @@
 package com.princeniithompson.rapcha.service.floating
 
+import android.os.SystemClock
+import android.util.Base64
 import android.util.Log
 import com.princeniithompson.rapcha.config.RapchaConfig
 import com.princeniithompson.rapcha.core.ApiConfig
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -10,6 +16,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 data class GeminiHttpRequest(
     val method: String,
@@ -37,6 +44,38 @@ data class GeminiHttpResponse(
 
 interface GeminiHttpTransport {
     fun execute(request: GeminiHttpRequest): GeminiHttpResponse
+}
+
+object SharedGeminiHttp {
+    val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(120, TimeUnit.SECONDS)
+        .build()
+
+    val transport: GeminiHttpTransport = OkHttpGeminiHttp(client)
+}
+
+class OkHttpGeminiHttp(
+    private val client: OkHttpClient = SharedGeminiHttp.client
+) : GeminiHttpTransport {
+    override fun execute(request: GeminiHttpRequest): GeminiHttpResponse {
+        val call = client.newBuilder()
+            .connectTimeout(request.connectTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(request.readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .build()
+        val body = request.body?.toRequestBody(request.contentType?.toMediaType())
+        val builder = Request.Builder().url(request.url)
+        request.headers.forEach { (key, value) -> builder.header(key, value) }
+        builder.method(request.method, if (request.method == "GET" || request.method == "DELETE") null else body)
+        call.newCall(builder.build()).execute().use { response ->
+            val headers = LinkedHashMap<String, String>()
+            for (i in 0 until response.headers.size) {
+                headers[response.headers.name(i).lowercase(Locale.US)] = response.headers.value(i)
+            }
+            return GeminiHttpResponse(response.code, response.body?.string().orEmpty(), headers)
+        }
+    }
 }
 
 class UrlConnectionGeminiHttp : GeminiHttpTransport {
@@ -86,13 +125,37 @@ class UrlConnectionGeminiHttp : GeminiHttpTransport {
     }
 }
 
+data class TranscribeTiming(
+    val path: String,
+    val format: String,
+    val rawBytes: Long,
+    val encodedBytes: Long,
+    val durationMs: Long,
+    val encodeMs: Long,
+    val uploadMs: Long,
+    val pollMs: Long,
+    val generateMs: Long,
+    val totalMs: Long,
+    val inlineRejected: Boolean = false
+) {
+    fun toLog(): String {
+        val rejected = if (inlineRejected) " inline_rejected=1" else ""
+        return "path=$path format=$format raw_bytes=$rawBytes encoded_bytes=$encodedBytes duration_ms=$durationMs encode_ms=$encodeMs upload_ms=$uploadMs poll_ms=$pollMs generate_ms=$generateMs total_ms=$totalMs$rejected"
+    }
+}
+
 sealed class TranscribeResult {
-    data class Success(val text: String, val quotaCharge: Boolean) : TranscribeResult()
+    data class Success(
+        val text: String,
+        val quotaCharge: Boolean,
+        val timing: TranscribeTiming? = null
+    ) : TranscribeResult()
     data class Failure(
         val kind: Kind,
         val httpCode: Int?,
         val quotaCharge: Boolean,
-        val status: String?
+        val status: String?,
+        val timing: TranscribeTiming? = null
     ) : TranscribeResult()
 
     enum class Kind {
@@ -108,13 +171,33 @@ sealed class TranscribeResult {
 }
 
 /**
- * Offline Retry: Files API upload, then generateContent on gemini-3.5-transcribe.
- * SMART + custom vocabulary only. wordTimestamp and diarization are never sent.
+ * Offline Retry for gemini-3.5-transcribe. SMART + vocabulary only.
+ * Short clips go inline in one generateContent call. The Files API is the fallback.
  */
 class TranscribeFallbackClient(
-    private val http: GeminiHttpTransport = UrlConnectionGeminiHttp(),
+    private val http: GeminiHttpTransport = SharedGeminiHttp.transport,
+    private val encoder: RetryAudioEncoder = AndroidRetryAudioEncoder(),
+    private val inlineBase64Limit: Int = RetryTransport.INLINE_BASE64_LIMIT,
+    private val nowMs: () -> Long = { SystemClock.elapsedRealtime() },
     private val sleeper: (Long) -> Unit = { Thread.sleep(it) }
 ) {
+    fun warm(apiKey: String) {
+        if (ApiConfig.isPlaceholder(apiKey)) return
+        try {
+            http.execute(
+                GeminiHttpRequest(
+                    method = "GET",
+                    url = ApiConfig.geminiV1betaUrl("models/${RapchaConfig.TRANSCRIBE_MODEL}"),
+                    headers = authHeaders(apiKey),
+                    connectTimeoutMs = 5_000,
+                    readTimeoutMs = 5_000
+                )
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Transcribe warm-up failed: ${e.javaClass.simpleName}")
+        }
+    }
+
     fun transcribe(apiKey: String, wavFile: File, vocabulary: List<String>): TranscribeResult {
         if (ApiConfig.isPlaceholder(apiKey)) {
             return failure(TranscribeResult.Kind.BAD_KEY, null, quotaCharge = false, status = null)
@@ -122,35 +205,57 @@ class TranscribeFallbackClient(
         if (!wavFile.exists() || wavFile.length() <= WAV_HEADER_BYTES) {
             return failure(TranscribeResult.Kind.EMPTY_AUDIO, null, quotaCharge = false, status = null)
         }
+        val started = nowMs()
+        val wavBytes = wavFile.readBytes()
+        val encodeStarted = nowMs()
+        val encoded = try {
+            encoder.encode(wavBytes)
+        } catch (e: Exception) {
+            Log.w(TAG, "Encoder failed: ${e.javaClass.simpleName}")
+            WavIdentityEncoder.encode(wavBytes)
+        }
+        val encodeMs = (nowMs() - encodeStarted).coerceAtLeast(0L)
+        val durationMs = com.princeniithompson.rapcha.data.RetryClipStore.durationMsForBytes(
+            (wavBytes.size - WAV_HEADER_BYTES).coerceAtLeast(0).toLong()
+        )
         val key = apiKey.trim()
-        var remoteName: String? = null
-        return try {
-            val uploaded = uploadWav(key, wavFile)
-            remoteName = uploaded.name
-            val ready = if (uploaded.state.equals("ACTIVE", ignoreCase = true)) {
-                uploaded
+        val vocab = prepareCustomVocabulary(vocabulary)
+        val inline = RetryTransport.preferInline(encoded.bytes.size, inlineBase64Limit)
+        var uploadMs = 0L
+        var pollMs = 0L
+        var generateMs = 0L
+        var path = if (inline) "inline" else "files"
+        var inlineRejected = false
+        val outcome = try {
+            if (inline) {
+                val generateStarted = nowMs()
+                val inlineResult = try {
+                    generateInline(key, encoded, vocab)
+                } catch (e: IOException) {
+                    Log.w(TAG, "Inline transcribe failed: ${e.javaClass.simpleName}")
+                    null
+                }
+                generateMs = (nowMs() - generateStarted).coerceAtLeast(0L)
+                if (inlineResult is TranscribeResult.Success) {
+                    inlineResult
+                } else if (inlineResult is TranscribeResult.Failure && !shouldFallback(inlineResult)) {
+                    inlineResult
+                } else {
+                    inlineRejected = true
+                    path = "files"
+                    val files = transcribeWithFiles(key, encoded, vocab)
+                    uploadMs = files.uploadMs
+                    pollMs = files.pollMs
+                    generateMs = files.generateMs
+                    files.result
+                }
             } else {
-                waitUntilActive(key, uploaded) ?: return failure(
-                    TranscribeResult.Kind.SERVER,
-                    null,
-                    quotaCharge = false,
-                    status = "FILE_NOT_READY"
-                )
+                val files = transcribeWithFiles(key, encoded, vocab)
+                uploadMs = files.uploadMs
+                pollMs = files.pollMs
+                generateMs = files.generateMs
+                files.result
             }
-            val vocab = prepareCustomVocabulary(vocabulary)
-            val payload = buildGenerateContentJson(ready.uri, MIME_WAV, vocab)
-            val response = http.execute(
-                GeminiHttpRequest(
-                    method = "POST",
-                    url = ApiConfig.geminiGenerateContentUrl(RapchaConfig.TRANSCRIBE_MODEL),
-                    headers = authHeaders(key),
-                    body = payload.toString().toByteArray(Charsets.UTF_8),
-                    contentType = "application/json; charset=UTF-8",
-                    connectTimeoutMs = 15_000,
-                    readTimeoutMs = 120_000
-                )
-            )
-            interpretGenerate(response)
         } catch (e: TranscribeHttpException) {
             val failed = e.result
             if (failed is TranscribeResult.Failure && failed.quotaCharge) {
@@ -161,16 +266,114 @@ class TranscribeFallbackClient(
         } catch (e: IOException) {
             Log.w(TAG, "Transcribe I/O failure: ${e.javaClass.simpleName}")
             failure(TranscribeResult.Kind.IO, null, quotaCharge = false, status = null)
+        }
+        val timing = TranscribeTiming(
+            path = path,
+            format = encoded.format,
+            rawBytes = wavBytes.size.toLong(),
+            encodedBytes = encoded.bytes.size.toLong(),
+            durationMs = durationMs,
+            encodeMs = encodeMs,
+            uploadMs = uploadMs,
+            pollMs = pollMs,
+            generateMs = generateMs,
+            totalMs = (nowMs() - started).coerceAtLeast(0L),
+            inlineRejected = inlineRejected
+        )
+        return attachTiming(outcome, timing)
+    }
+
+    private fun generateInline(
+        apiKey: String,
+        audio: EncodedAudio,
+        vocabulary: List<String>
+    ): TranscribeResult {
+        val payload = buildInlineGenerateContentJson(
+            base64 = Base64.encodeToString(audio.bytes, Base64.NO_WRAP),
+            mimeType = audio.mimeType,
+            vocabulary = vocabulary
+        )
+        val response = http.execute(
+            GeminiHttpRequest(
+                method = "POST",
+                url = ApiConfig.geminiGenerateContentUrl(RapchaConfig.TRANSCRIBE_MODEL),
+                headers = authHeaders(apiKey),
+                body = payload.toString().toByteArray(Charsets.UTF_8),
+                contentType = "application/json; charset=UTF-8",
+                connectTimeoutMs = 15_000,
+                readTimeoutMs = 120_000
+            )
+        )
+        if (isPayloadTooLarge(response)) {
+            return failure(TranscribeResult.Kind.BAD_REQUEST, response.code, quotaCharge = false, status = "PAYLOAD_TOO_LARGE")
+        }
+        return interpretGenerate(response)
+    }
+
+    private data class FilesAttempt(
+        val result: TranscribeResult,
+        val uploadMs: Long,
+        val pollMs: Long,
+        val generateMs: Long
+    )
+
+    private fun transcribeWithFiles(
+        apiKey: String,
+        audio: EncodedAudio,
+        vocabulary: List<String>
+    ): FilesAttempt {
+        var remoteName: String? = null
+        var uploadMs = 0L
+        var pollMs = 0L
+        var generateMs = 0L
+        try {
+            val uploadStarted = nowMs()
+            val uploaded = uploadAudio(apiKey, audio.bytes, audio.mimeType)
+            uploadMs = (nowMs() - uploadStarted).coerceAtLeast(0L)
+            remoteName = uploaded.name
+            val ready = if (uploaded.state.equals("ACTIVE", ignoreCase = true)) {
+                uploaded
+            } else {
+                val pollStarted = nowMs()
+                val active = waitUntilActive(apiKey, uploaded)
+                pollMs = (nowMs() - pollStarted).coerceAtLeast(0L)
+                active ?: return FilesAttempt(
+                    failure(TranscribeResult.Kind.SERVER, null, quotaCharge = false, status = "FILE_NOT_READY"),
+                    uploadMs,
+                    pollMs,
+                    0L
+                )
+            }
+            val generateStarted = nowMs()
+            val payload = buildGenerateContentJson(ready.uri, audio.mimeType, vocabulary)
+            val response = http.execute(
+                GeminiHttpRequest(
+                    method = "POST",
+                    url = ApiConfig.geminiGenerateContentUrl(RapchaConfig.TRANSCRIBE_MODEL),
+                    headers = authHeaders(apiKey),
+                    body = payload.toString().toByteArray(Charsets.UTF_8),
+                    contentType = "application/json; charset=UTF-8",
+                    connectTimeoutMs = 15_000,
+                    readTimeoutMs = 120_000
+                )
+            )
+            generateMs = (nowMs() - generateStarted).coerceAtLeast(0L)
+            return FilesAttempt(interpretGenerate(response), uploadMs, pollMs, generateMs)
+        } catch (e: TranscribeHttpException) {
+            val failed = e.result
+            val result = if (failed is TranscribeResult.Failure && failed.quotaCharge) {
+                failed.copy(quotaCharge = false)
+            } else {
+                failed
+            }
+            return FilesAttempt(result, uploadMs, pollMs, generateMs)
         } finally {
             val name = remoteName
-            if (!name.isNullOrBlank()) {
-                bestEffortDelete(key, name)
-            }
+            if (!name.isNullOrBlank()) bestEffortDelete(apiKey, name)
         }
     }
 
-    private fun uploadWav(apiKey: String, wavFile: File): RemoteFile {
-        val bytes = wavFile.readBytes()
+    private fun uploadAudio(apiKey: String, bytes: ByteArray, mimeType: String): RemoteFile {
         val startBody = JSONObject().put("file", JSONObject().put("display_name", "rapcha-retry")).toString()
         val start = http.execute(
             GeminiHttpRequest(
@@ -180,7 +383,7 @@ class TranscribeFallbackClient(
                     "X-Goog-Upload-Protocol" to "resumable",
                     "X-Goog-Upload-Command" to "start",
                     "X-Goog-Upload-Header-Content-Length" to bytes.size.toString(),
-                    "X-Goog-Upload-Header-Content-Type" to MIME_WAV
+                    "X-Goog-Upload-Header-Content-Type" to mimeType
                 ),
                 body = startBody.toByteArray(Charsets.UTF_8),
                 contentType = "application/json; charset=UTF-8",
@@ -208,7 +411,7 @@ class TranscribeFallbackClient(
                     "X-Goog-Upload-Command" to "upload, finalize"
                 ),
                 body = bytes,
-                contentType = MIME_WAV,
+                contentType = mimeType,
                 connectTimeoutMs = 20_000,
                 readTimeoutMs = 120_000
             )
@@ -290,6 +493,32 @@ class TranscribeFallbackClient(
         return mapOf("x-goog-api-key" to apiKey.trim())
     }
 
+    private fun shouldFallback(result: TranscribeResult.Failure): Boolean {
+        if (result.kind == TranscribeResult.Kind.IO) return true
+        return isPayloadStatus(result.httpCode, result.status)
+    }
+
+    private fun isPayloadTooLarge(response: GeminiHttpResponse): Boolean {
+        if (response.code == 413) return true
+        if (response.code != 400) return false
+        val compact = response.body.lowercase(Locale.US)
+        return compact.contains("payload") || compact.contains("too large") ||
+            compact.contains("request size") || compact.contains("exceeds")
+    }
+
+    private fun isPayloadStatus(code: Int?, status: String?): Boolean {
+        if (code == 413) return true
+        val compact = status.orEmpty().lowercase(Locale.US)
+        return code == 400 && (compact.contains("payload") || compact.contains("too_large") || compact.contains("request_size"))
+    }
+
+    private fun attachTiming(result: TranscribeResult, timing: TranscribeTiming): TranscribeResult {
+        return when (result) {
+            is TranscribeResult.Success -> result.copy(timing = timing)
+            is TranscribeResult.Failure -> result.copy(timing = timing)
+        }
+    }
+
     private fun failure(
         kind: TranscribeResult.Kind,
         httpCode: Int?,
@@ -326,20 +555,39 @@ class TranscribeFallbackClient(
         }
 
         fun buildGenerateContentJson(fileUri: String, mimeType: String, vocabulary: List<String>): JSONObject {
-            val audioConfig = JSONObject().put("mode", "SMART")
-            if (vocabulary.isNotEmpty()) {
-                val vocab = JSONArray()
-                vocabulary.forEach { vocab.put(it) }
-                audioConfig.put("customVocabulary", vocab)
-            }
             val fileData = JSONObject()
                 .put("mimeType", mimeType)
                 .put("fileUri", fileUri)
             val part = JSONObject().put("fileData", fileData)
-            val content = JSONObject().put("parts", JSONArray().put(part))
+            return requestBody(JSONObject().put("parts", JSONArray().put(part)), vocabulary)
+        }
+
+        fun buildInlineGenerateContentJson(
+            base64: String,
+            mimeType: String,
+            vocabulary: List<String>
+        ): JSONObject {
+            val inline = JSONObject()
+                .put("mimeType", mimeType)
+                .put("data", base64)
+            val part = JSONObject().put("inlineData", inline)
+            return requestBody(JSONObject().put("parts", JSONArray().put(part)), vocabulary)
+        }
+
+        private fun requestBody(content: JSONObject, vocabulary: List<String>): JSONObject {
             return JSONObject()
                 .put("contents", JSONArray().put(content))
-                .put("generationConfig", JSONObject().put("audioTranscriptionConfig", audioConfig))
+                .put("generationConfig", JSONObject().put("audioTranscriptionConfig", audioConfig(vocabulary)))
+        }
+
+        private fun audioConfig(vocabulary: List<String>): JSONObject {
+            val config = JSONObject().put("mode", "SMART")
+            if (vocabulary.isNotEmpty()) {
+                val vocab = JSONArray()
+                vocabulary.forEach { vocab.put(it) }
+                config.put("customVocabulary", vocab)
+            }
+            return config
         }
 
         fun parseTranscript(body: String): String {
