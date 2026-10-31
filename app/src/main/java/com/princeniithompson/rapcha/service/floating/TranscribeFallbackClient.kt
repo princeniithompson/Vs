@@ -245,11 +245,12 @@ class TranscribeFallbackClient(
         val status = safeErrorStatus(response.body)
         if (response.code in 200..299) {
             val text = parseTranscript(response.body)
-            return if (text.isBlank()) {
-                failure(TranscribeResult.Kind.EMPTY, response.code, quotaCharge = true, status = status)
-            } else {
-                TranscribeResult.Success(text, quotaCharge = true)
+            if (text.isBlank()) {
+                val hint = responseShapeHint(response.body)
+                Log.w(TAG, "Transcribe HTTP 200 empty $hint")
+                return failure(TranscribeResult.Kind.EMPTY, response.code, quotaCharge = true, status = hint)
             }
+            return TranscribeResult.Success(text, quotaCharge = true)
         }
         val kind = when (response.code) {
             400 -> TranscribeResult.Kind.BAD_REQUEST
@@ -346,33 +347,97 @@ class TranscribeFallbackClient(
             return try {
                 val root = JSONObject(body)
                 val candidates = root.optJSONArray("candidates") ?: return ""
-                val text = StringBuilder()
+                val pieces = ArrayList<String>()
                 for (i in 0 until candidates.length()) {
                     val parts = candidates.optJSONObject(i)
                         ?.optJSONObject("content")
                         ?.optJSONArray("parts") ?: continue
                     for (p in 0 until parts.length()) {
                         val part = parts.optJSONObject(p) ?: continue
-                        val direct = part.optString("text", "")
-                        if (direct.isNotBlank()) {
-                            if (text.isNotEmpty()) text.append('\n')
-                            text.append(direct.trim())
-                        }
+                        val piece = transcriptFromPart(part)
+                        if (piece.isNotBlank()) pieces.add(piece.trim())
                     }
                 }
-                var result = text.toString().trim()
-                if (result.startsWith("```") && result.endsWith("```")) {
-                    result = result.removeSurrounding("```").trim()
-                    if (result.startsWith("text") || result.startsWith("markdown")) {
-                        result = result.substringAfter("\n").trim()
-                    }
-                }
-                result
+                cleanTranscript(pieces.joinToString("\n"))
             } catch (e: Exception) {
                 Log.w(TAG, "Transcript parse failed: ${e.javaClass.simpleName}")
                 ""
             }
         }
+
+        /**
+         * Counts response fields only. Never includes transcript text.
+         */
+        fun responseShapeHint(body: String): String {
+            if (body.isBlank()) {
+                return "candidates=0 audio_transcription=0 text=0 words=0 finish=none"
+            }
+            return try {
+                val root = JSONObject(body)
+                val candidates = root.optJSONArray("candidates")
+                var audio = false
+                var text = false
+                var words = false
+                var finish = "none"
+                if (candidates != null) {
+                    for (i in 0 until candidates.length()) {
+                        val candidate = candidates.optJSONObject(i) ?: continue
+                        val reason = candidate.optString("finishReason", "")
+                            .filter { it.isLetterOrDigit() || it == '_' }
+                            .take(24)
+                        if (reason.isNotBlank()) finish = reason
+                        val parts = candidate.optJSONObject("content")?.optJSONArray("parts") ?: continue
+                        for (p in 0 until parts.length()) {
+                            val part = parts.optJSONObject(p) ?: continue
+                            if (part.optString("text", "").isNotBlank()) text = true
+                            val transcription = audioObject(part) ?: continue
+                            audio = true
+                            if (transcription.optString("text", "").isNotBlank()) text = true
+                            val wordList = transcription.optJSONArray("words")
+                            if (wordList != null && wordList.length() > 0) words = true
+                        }
+                    }
+                }
+                val count = candidates?.length() ?: 0
+                "candidates=$count audio_transcription=${flag(audio)} text=${flag(text)} words=${flag(words)} finish=$finish"
+            } catch (_: Exception) {
+                "candidates=0 audio_transcription=0 text=0 words=0 finish=unparsed"
+            }
+        }
+
+        private fun transcriptFromPart(part: JSONObject): String {
+            val audio = audioObject(part)
+            val audioText = audio?.optString("text", "").orEmpty().trim()
+            if (audioText.isNotBlank()) return audioText
+            val direct = part.optString("text", "").trim()
+            if (direct.isNotBlank()) return direct
+            val wordList = audio?.optJSONArray("words") ?: return ""
+            val joined = StringBuilder()
+            for (index in 0 until wordList.length()) {
+                val word = wordList.optJSONObject(index)?.optString("word", "").orEmpty().trim()
+                if (word.isEmpty()) continue
+                if (joined.isNotEmpty()) joined.append(' ')
+                joined.append(word)
+            }
+            return joined.toString()
+        }
+
+        private fun audioObject(part: JSONObject): JSONObject? {
+            return part.optJSONObject("audioTranscription") ?: part.optJSONObject("audio_transcription")
+        }
+
+        private fun cleanTranscript(raw: String): String {
+            var result = raw.trim()
+            if (result.startsWith("```") && result.endsWith("```")) {
+                result = result.removeSurrounding("```").trim()
+                if (result.startsWith("text") || result.startsWith("markdown")) {
+                    result = result.substringAfter("\n").trim()
+                }
+            }
+            return result
+        }
+
+        private fun flag(present: Boolean): Int = if (present) 1 else 0
 
         fun isDailyQuotaBody(body: String): Boolean {
             val compact = body.lowercase(Locale.US).replace("_", "").replace("-", "")

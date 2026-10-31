@@ -484,6 +484,56 @@ class OfflineRetryTest {
     }
 
     @Test
+    fun parseTranscriptReadsAudioTranscriptionBeforePlainText() {
+        val smartOnly = """
+            {"candidates":[{"finishReason":"STOP","content":{"parts":[{"audioTranscription":{"text":"Hello from SMART."}}]}}]}
+        """.trim()
+        assertEquals("Hello from SMART.", TranscribeFallbackClient.parseTranscript(smartOnly))
+
+        val plainOnly = """
+            {"candidates":[{"content":{"parts":[{"text":"Hello from text."}]}}]}
+        """.trim()
+        assertEquals("Hello from text.", TranscribeFallbackClient.parseTranscript(plainOnly))
+
+        val both = """
+            {"candidates":[{"content":{"parts":[{"text":"plain","audioTranscription":{"text":"smart"}}]}}]}
+        """.trim()
+        assertEquals("smart", TranscribeFallbackClient.parseTranscript(both))
+
+        val wordsOnly = """
+            {"candidates":[{"content":{"parts":[{"audioTranscription":{"words":[{"word":"Hello"},{"word":"there"}]}}]}}]}
+        """.trim()
+        assertEquals("Hello there", TranscribeFallbackClient.parseTranscript(wordsOnly))
+
+        val empty = """
+            {"candidates":[{"finishReason":"STOP","content":{"parts":[{"audioTranscription":{}}]}}]}
+        """.trim()
+        assertEquals("", TranscribeFallbackClient.parseTranscript(empty))
+        val hint = TranscribeFallbackClient.responseShapeHint(empty)
+        assertEquals("candidates=1 audio_transcription=1 text=0 words=0 finish=STOP", hint)
+        assertFalse(hint.contains("Hello"))
+        assertFalse(hint.contains("smart"))
+    }
+
+    @Test
+    fun transcribeAcceptsAudioTranscriptionTextAndHintsEmpty200() {
+        val audio = ScriptedTransport(generateMode = "audio")
+        val client = TranscribeFallbackClient(audio) { }
+        val result = client.transcribe("test-key", tempWav(400), listOf("Rapcha"))
+        assertTrue(result is TranscribeResult.Success)
+        assertEquals("Heard from audioTranscription.", (result as TranscribeResult.Success).text)
+
+        val empty = ScriptedTransport(generateMode = "empty")
+        val failed = TranscribeFallbackClient(empty) { }.transcribe("test-key", tempWav(400), emptyList())
+        assertTrue(failed is TranscribeResult.Failure)
+        failed as TranscribeResult.Failure
+        assertEquals(TranscribeResult.Kind.EMPTY, failed.kind)
+        assertEquals(200, failed.httpCode)
+        assertEquals("candidates=1 audio_transcription=0 text=0 words=0 finish=STOP", failed.status)
+        assertTrue(failed.quotaCharge)
+    }
+
+    @Test
     fun stickyRetryStaysUpWhenNetworkProblemClears() {
         storedClip(1600)
         val coordinator = OfflineRetryCoordinator(
@@ -650,6 +700,16 @@ class OfflineRetryTest {
                     "429m" -> GeminiHttpResponse(
                         429,
                         """{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"quotaId":"GenerateRequestsPerMinutePerProjectPerModel"}]}}""",
+                        emptyMap()
+                    )
+                    "audio" -> GeminiHttpResponse(
+                        200,
+                        """{"candidates":[{"finishReason":"STOP","content":{"parts":[{"audioTranscription":{"text":"Heard from audioTranscription."}}]}}]}""",
+                        emptyMap()
+                    )
+                    "empty" -> GeminiHttpResponse(
+                        200,
+                        """{"candidates":[{"finishReason":"STOP","content":{"parts":[{}]}}]}""",
                         emptyMap()
                     )
                     else -> GeminiHttpResponse(
