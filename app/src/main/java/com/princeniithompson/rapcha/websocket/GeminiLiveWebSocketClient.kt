@@ -774,7 +774,7 @@ class GeminiLiveWebSocketClient(
                 rawOrphan,
                 audio.rmsMean,
                 audio.rmsMax,
-                com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
+                com.princeniithompson.rapcha.data.CustomVocabularyRepository.recognitionVocabulary(),
                 audio.samples
             )
             noteSilenceDrop(rawOrphan, orphan, audio.rmsMean, audio.rmsMax)
@@ -965,7 +965,7 @@ class GeminiLiveWebSocketClient(
             raw,
             audio.rmsMean,
             audio.rmsMax,
-            com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
+            com.princeniithompson.rapcha.data.CustomVocabularyRepository.recognitionVocabulary(),
             audio.samples
         )
         noteSilenceDrop(raw, piece, audio.rmsMean, audio.rmsMax)
@@ -1169,7 +1169,7 @@ class GeminiLiveWebSocketClient(
             raw,
             audioMean,
             audioMax,
-            com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
+            com.princeniithompson.rapcha.data.CustomVocabularyRepository.recognitionVocabulary(),
             samples = if (split == null) planner.pieceAudio().samples else 1
         )
         noteSilenceDrop(raw, accepted, audioMean, audioMax)
@@ -1225,7 +1225,7 @@ class GeminiLiveWebSocketClient(
             rawOrphan,
             audio.rmsMean,
             audio.rmsMax,
-            com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
+            com.princeniithompson.rapcha.data.CustomVocabularyRepository.recognitionVocabulary(),
             audio.samples
         )
         noteSilenceDrop(rawOrphan, orphan, audio.rmsMean, audio.rmsMax)

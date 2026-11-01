@@ -651,7 +651,7 @@ class FloatingBubbleService : Service() {
             offlineRetry.runRetry(
                 context = this@FloatingBubbleService,
                 apiKey = getEffectiveApiKey(),
-                vocabulary = CustomVocabularyRepository.getVocabulary(),
+                vocabulary = CustomVocabularyRepository.recognitionVocabulary(),
                 prepareClip = {
                     val target = clipId ?: RetryClipStore.currentId()
                     val recordingThisClip = sessionManager.isRecording &&

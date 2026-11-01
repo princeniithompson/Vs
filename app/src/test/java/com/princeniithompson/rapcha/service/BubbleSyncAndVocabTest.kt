@@ -2,6 +2,7 @@ package com.princeniithompson.rapcha.service
 
 import android.app.Application
 import android.content.Context
+import com.princeniithompson.rapcha.data.BuiltInVocabulary
 import com.princeniithompson.rapcha.data.CustomVocabularyRepository
 import com.princeniithompson.rapcha.data.HistoryRepository
 import com.princeniithompson.rapcha.service.floating.BubbleSignalLog
@@ -72,6 +73,50 @@ class BubbleSyncAndVocabTest {
         CustomVocabularyRepository.init(app)
         assertTrue(CustomVocabularyRepository.getVocabulary().contains("prince niithompson"))
         assertTrue(CustomVocabularyRepository.getVocabulary().contains("Keep This"))
+    }
+
+    @Test
+    fun `recognition vocabulary appends tech seeds and keeps user spellings`() {
+        val app = RuntimeEnvironment.getApplication()
+        val prefs = app.getSharedPreferences("custom_vocabulary_prefs", Context.MODE_PRIVATE)
+        prefs.edit().clear().putBoolean("seeded_identity_removed_v1", true).commit()
+        CustomVocabularyRepository.clearForTest()
+        CustomVocabularyRepository.init(app)
+
+        assertTrue(CustomVocabularyRepository.getVocabulary().isEmpty())
+        assertEquals(BuiltInVocabulary.seeds, CustomVocabularyRepository.recognitionVocabulary())
+        assertEquals(
+            listOf(
+                "MCP",
+                "API",
+                "API key",
+                "VPN",
+                "APK",
+                "DNS",
+                "HTTP",
+                "HTTPS",
+                "Gemini",
+                "Grok",
+                "WhatsApp"
+            ),
+            BuiltInVocabulary.seeds
+        )
+
+        CustomVocabularyRepository.addTerm("api")
+        CustomVocabularyRepository.addTerm("My Tool")
+        val boosted = CustomVocabularyRepository.recognitionVocabulary()
+        assertEquals(listOf("My Tool", "api"), CustomVocabularyRepository.getVocabulary())
+        assertEquals(listOf("My Tool", "api"), boosted.take(2))
+        assertFalse(boosted.any { it == "API" })
+        assertTrue(boosted.contains("API key"))
+        assertTrue(boosted.contains("MCP"))
+        assertTrue(boosted.contains("HTTPS"))
+        assertEquals(BuiltInVocabulary.seeds.size + 1, boosted.size)
+
+        val clause = TranscriptAcceptance.vocabularyClause(boosted)
+        assertTrue(clause.contains("MCP"))
+        assertTrue(clause.contains("API key"))
+        assertTrue(clause.contains("Never insert a term that was not spoken"))
     }
 
     @Test

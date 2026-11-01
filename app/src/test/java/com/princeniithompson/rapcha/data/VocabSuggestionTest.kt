@@ -294,6 +294,32 @@ class VocabSuggestionTest {
     }
 
     @Test
+    fun `tech seeds are ordinary and a rare spelling in the same sentence still asks`() {
+        val app = RuntimeEnvironment.getApplication()
+        EnglishLexicon.ensureLoaded(app)
+        BuiltInVocabulary.seeds.forEach { seed ->
+            seed.split(Regex("\\s+")).forEach { token ->
+                assertTrue("$token should not be suggested", EnglishLexicon.isOrdinary(token))
+            }
+        }
+        listOf("adns", "dnslookup", "Bonsam", "NCP", "Zalefant").forEach { token ->
+            assertFalse("$token must stay suggestable", EnglishLexicon.isOrdinary(token))
+        }
+
+        val sentence = "use MCP API key VPN APK DNS HTTP HTTPS Gemini Grok WhatsApp and Zalefant"
+        repeat(3) { VocabSuggestions.onOutgoingText(app, sentence) }
+        val text = app.getSystemService(NotificationManager::class.java)
+            .activeNotifications.single().notification.extras
+            .getCharSequence(Notification.EXTRA_TEXT).toString()
+        assertTrue(text.contains("Zalefant"))
+        assertFalse(text.contains("MCP"))
+        assertFalse(text.contains("DNS"))
+        assertFalse(text.contains("API"))
+        assertEquals(setOf("zalefant"), VocabSuggestionStore.load().keys)
+        assertTrue(CustomVocabularyRepository.getVocabulary().isEmpty())
+    }
+
+    @Test
     fun `nickname intro suggests only the following token once`() {
         val app = RuntimeEnvironment.getApplication()
         assertEquals(
