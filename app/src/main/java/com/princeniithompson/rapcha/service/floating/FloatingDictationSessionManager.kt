@@ -70,6 +70,9 @@ class FloatingDictationSessionManager(
 
     @Volatile
     private var liveAbandoned = false
+
+    @Volatile
+    private var stage1Dropped = false
     private val sessionEndLogged = AtomicBoolean(false)
     var durationSeconds: Int = 0
         private set
@@ -211,6 +214,7 @@ class FloatingDictationSessionManager(
         if (isRecording) return
         isRecording = true
         liveAbandoned = false
+        stage1Dropped = false
         sessionEndLogged.set(false)
 
         sessionJob?.cancel()
@@ -360,6 +364,7 @@ class FloatingDictationSessionManager(
             },
             onError = { err ->
                 Log.e(TAG, "WebSocket error: $err")
+                stage1Dropped = true
                 AppLogRepository.updateLiveStats { it.copy(lastError = err) }
                 FloatingBubbleManager.setNetworkProblem(true)
                 onError(err)
@@ -373,6 +378,7 @@ class FloatingDictationSessionManager(
                 connect(apiKey = apiKey, model = model, smartMode = smartMode, customVocabulary = customVocab)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to connect WebSocket: ${e.message}")
+                stage1Dropped = true
                 FloatingBubbleManager.setNetworkProblem(true)
                 onError(e.message ?: "Connection error")
             }
@@ -510,6 +516,16 @@ class FloatingDictationSessionManager(
      * User pressed Complete. Stop the mic, send activityEnd, and wait for the
      * authoritative transcript. Pauses never reach this path.
      */
+    /**
+     * True after Stage 1's Live socket failed. Complete still has the raw buffer
+     * and, when Live two-step is on, that buffer is what Stage 2 polishes.
+     */
+    fun consumeStage1Drop(): Boolean {
+        val dropped = stage1Dropped
+        stage1Dropped = false
+        return dropped
+    }
+
     suspend fun finishActivityAndAwaitTranscript(): String {
         if (!isRecording && webSocketClient == null) return getFullTranscriptText()
         releaseMicrophoneNow()
@@ -540,6 +556,7 @@ class FloatingDictationSessionManager(
             text
         } catch (e: Exception) {
             Log.e(TAG, "Error finishing manual activity", e)
+            stage1Dropped = true
             getFullTranscriptText()
         } finally {
             try {

@@ -33,6 +33,15 @@ object RapchaConfig {
     /** Non-live model used when Live fails and the user taps Retry. */
     const val TRANSCRIBE_MODEL: String = "gemini-3.5-transcribe"
 
+    /**
+     * Stage-2 Live polish model. Text-only turn on the same BidiGenerateContent
+     * socket as transcription. Not used unless the hamburger toggle is Live two-step.
+     */
+    const val STAGE2_LIVE_MODEL: String = "models/gemini-3.8-live"
+
+    /** Hard cap so a Stage-2 failure pastes the raw transcript instead of hanging Complete. */
+    const val STAGE2_LIVE_TIMEOUT_MS: Long = 7_000L
+
     /** Same debounce as Polish so a double tap cannot spend two free-tier retries. */
     const val RETRY_DEBOUNCE_MS: Long = POLISH_DEBOUNCE_MS
 

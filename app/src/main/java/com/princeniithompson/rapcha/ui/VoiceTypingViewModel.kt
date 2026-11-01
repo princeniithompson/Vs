@@ -14,6 +14,15 @@ import com.princeniithompson.rapcha.data.LiveStats
 import com.princeniithompson.rapcha.data.LogEntry
 import com.princeniithompson.rapcha.data.LogLevel
 import com.princeniithompson.rapcha.websocket.GeminiLiveWebSocketClient
+import com.princeniithompson.rapcha.data.DiagnosticSource
+import com.princeniithompson.rapcha.data.DiagnosticType
+import com.princeniithompson.rapcha.service.floating.LiveTextPolishClient
+import com.princeniithompson.rapcha.service.floating.Stage2CategoryMapper
+import com.princeniithompson.rapcha.service.floating.Stage2LivePolish
+import com.princeniithompson.rapcha.service.floating.Stage2PolishBackend
+import com.princeniithompson.rapcha.service.floating.Stage2PolishSettings
+import com.princeniithompson.rapcha.service.floating.Stage2SessionPolicy
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -22,8 +31,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 class VoiceTypingViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -32,6 +44,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         private const val MAX_LOGS = 120
         private const val PREFS_NAME = "voxstream_settings"
         private const val KEY_SMART_MODE = "smart_mode"
+        private const val IN_APP_STOP_TIMEOUT_MS = 12_000L
         private const val KEY_CUSTOM_API_KEY = "custom_api_key"
         private const val KEY_LAST_WEEKLY_CHECK_TIME = "last_weekly_smart_vocab_check_time"
         private const val KEY_WEEKLY_VOCAB_REMOVED = "removed_weekly_smart_vocab_v1"
@@ -136,6 +149,18 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     private val _isSmartMode = MutableStateFlow(prefs.getBoolean(KEY_SMART_MODE, false))
     val isSmartMode: StateFlow<Boolean> = _isSmartMode.asStateFlow()
 
+    private val _liveTwoStepPolish = MutableStateFlow(
+        Stage2PolishSettings.read(prefs) == Stage2PolishBackend.LIVE
+    )
+    val liveTwoStepPolish: StateFlow<Boolean> = _liveTwoStepPolish.asStateFlow()
+
+    /** Smart as the next session will actually run it. Live two-step forces verbatim. */
+    val effectiveSmartMode: Boolean
+        get() = Stage2SessionPolicy.effectiveSmartMode(
+            _isSmartMode.value,
+            if (_liveTwoStepPolish.value) Stage2PolishBackend.LIVE else Stage2PolishBackend.NON_LIVE
+        )
+
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
@@ -167,6 +192,8 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     private var sessionStartedAtMs = 0L
     private var durationJob: Job? = null
     private var drainJob: Job? = null
+    private val stopResult = AtomicReference<CompletableDeferred<String>?>(null)
+    @Volatile private var inAppStage1Dropped = false
 
     private val webSocketClient = GeminiLiveWebSocketClient(
             onSetupComplete = {
@@ -215,6 +242,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             addLog(level, tag, msg, payload)
         },
         onError = { errorMsg ->
+            inAppStage1Dropped = true
             val endedReasonTag = com.princeniithompson.rapcha.data.DictationEndedReason.fromMessage(errorMsg)
 
             com.princeniithompson.rapcha.data.AppLogRepository.updateLiveStats { it.copy(source = com.princeniithompson.rapcha.data.DiagnosticSource.APP, lastError = errorMsg) }
@@ -314,6 +342,25 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         addLog(LogLevel.INFO, TAG, "Smart Mode set to $enabled (saved to preferences, takes effect next session)")
     }
 
+    fun setLiveTwoStepPolish(enabled: Boolean) {
+        if (_isRecording.value) {
+            addLog(LogLevel.INFO, TAG, "Cannot change Stage-2 polish while a session is recording")
+            return
+        }
+        val backend = if (enabled) Stage2PolishBackend.LIVE else Stage2PolishBackend.NON_LIVE
+        Stage2PolishSettings.write(prefs, backend)
+        _liveTwoStepPolish.value = enabled
+        addLog(
+            LogLevel.INFO,
+            TAG,
+            if (enabled) {
+                "Stage-2 polish set to Live two-step. Smart stays off for that path so Stage 1 is verbatim."
+            } else {
+                "Stage-2 polish set to non-live. Complete keeps the current behavior."
+            }
+        )
+    }
+
     fun toggleRecording() {
         if (_isRecording.value) {
             stopRecording()
@@ -327,6 +374,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
         sessionEndLogged.set(false)
         connectionLostHapticSent = false
+        inAppStage1Dropped = false
         finishAtNextPause = false
         sessionClock = com.princeniithompson.rapcha.websocket.DictationSessionClock()
         sessionStartedAtMs = System.currentTimeMillis()
@@ -358,12 +406,14 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         }
 
         val apiKey = effectiveApiKey
-        val modeLabel = if (_isSmartMode.value) "SMART" else "VERBATIM"
-        addLog(LogLevel.INFO, TAG, "Starting voice typing session ($modeLabel mode). Key configured: ${isApiKeyConfigured()}")
+        val smartForSession = effectiveSmartMode
+        val modeLabel = if (smartForSession) "SMART" else "VERBATIM"
+        val stage2Label = if (_liveTwoStepPolish.value) "live" else "non_live"
+        addLog(LogLevel.INFO, TAG, "Starting voice typing session ($modeLabel mode, stage2=$stage2Label). Key configured: ${isApiKeyConfigured()}")
         com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
             com.princeniithompson.rapcha.data.DiagnosticSource.APP,
             com.princeniithompson.rapcha.data.DiagnosticType.SESSION_START,
-            "Mode: $modeLabel, Model: ${_selectedModel.value}"
+            "Mode: $modeLabel, Model: ${_selectedModel.value}, stage2=$stage2Label"
         )
 
         // 1. Immediately start AudioRecord on Dispatchers.IO to capture speech without clipping
@@ -375,7 +425,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         // 2. Open Gemini Live WebSocket connection
         val customVocab = com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary()
         try {
-            webSocketClient.connect(apiKey, _selectedModel.value, _isSmartMode.value, customVocabulary = customVocab)
+            webSocketClient.connect(apiKey, _selectedModel.value, smartForSession, customVocabulary = customVocab)
         } catch (e: Exception) {
             Log.e(TAG, "Failed connecting WebSocket: ${e.message}")
             addLog(LogLevel.ERROR, TAG, "Connection failed: ${e.message}")
@@ -415,7 +465,10 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun stopRecording(endedReason: String = "completed") {
-        if (!_isRecording.value) return
+        if (!_isRecording.value) {
+            stopResult.getAndSet(null)?.complete(currentTranscript())
+            return
+        }
         _isRecording.value = false
         val shouldLogEnd = sessionEndLogged.compareAndSet(false, true)
         val sessionLimitStop = endedReason == "session_limit"
@@ -488,8 +541,69 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                 } catch (e: Exception) {
                     Log.w(TAG, "Error releasing WakeLock in ViewModel", e)
                 }
+                val waiter = stopResult.getAndSet(null)
+                if (waiter != null && !waiter.isCompleted) {
+                    waiter.complete(currentTranscript())
+                }
             }
         }
+    }
+
+    /**
+     * In-app Complete while Live two-step is on. Waits for the raw Stage-1 text,
+     * polishes it, and falls back to that raw text if Stage 2 fails.
+     * Callers on the non-live path keep using [stopRecording] directly.
+     */
+    suspend fun finishInAppComplete(): String {
+        val raw = if (_isRecording.value) {
+            val deferred = CompletableDeferred<String>()
+            stopResult.set(deferred)
+            stopRecording(endedReason = "completed")
+            withTimeoutOrNull(IN_APP_STOP_TIMEOUT_MS) { deferred.await() } ?: currentTranscript()
+        } else {
+            currentTranscript()
+        }
+        if (raw.isBlank() || !_liveTwoStepPolish.value) return raw
+        val dropped = inAppStage1Dropped
+        inAppStage1Dropped = false
+        return try {
+            withContext(Dispatchers.IO) {
+                Stage2LivePolish.execute(
+                    rawTranscript = raw,
+                    category = Stage2CategoryMapper.map(getApplication<Application>().packageName, "Rapcha", null),
+                    protectedTerms = com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
+                    stage1Dropped = dropped,
+                    apiKey = effectiveApiKey,
+                    model = LiveTextPolishClient(),
+                    log = { type, message ->
+                        com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
+                            DiagnosticSource.APP,
+                            type,
+                            message
+                        )
+                    }
+                ).text.ifBlank { raw }
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "In-app Stage-2 polish failed closed", t)
+            com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
+                DiagnosticSource.APP,
+                DiagnosticType.STAGE2_LIVE_FALLBACK,
+                "outcome=fallback_raw reason=${t.message?.take(160) ?: t.javaClass.simpleName}"
+            )
+            raw
+        }
+    }
+
+    private fun currentTranscript(): String {
+        return buildString {
+            append(_finalizedTranscript.value.trim())
+            val interim = _interimTranscript.value.trim()
+            if (interim.isNotEmpty()) {
+                if (isNotEmpty()) append(' ')
+                append(interim)
+            }
+        }.trim()
     }
 
     private fun onLiveSetupComplete() {

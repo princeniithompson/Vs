@@ -86,6 +86,7 @@ fun InAppVoiceTypingBubble(
     val scope = rememberCoroutineScope()
 
     val isRecording by viewModel.isRecording.collectAsState()
+    val liveTwoStepPolish by viewModel.liveTwoStepPolish.collectAsState()
     val finalizedTranscript by viewModel.finalizedTranscript.collectAsState()
     val interimTranscript by viewModel.interimTranscript.collectAsState()
     val amplitude by viewModel.audioAmplitude.collectAsState()
@@ -450,16 +451,36 @@ fun InAppVoiceTypingBubble(
                     // 3. Complete Button
                     InAppPillButton(
                         onClick = {
-                            val textToSave = transcriptText
-                            if (textToSave.isNotBlank()) {
-                                viewModel.stopRecording()
-                                HistoryRepository.addHistoryItem(
-                                    text = textToSave,
-                                    appContext = "AI · Rapcha",
-                                    durationSeconds = stats.durationSeconds
-                                )
-                                viewModel.clearTranscript()
-                                Toast.makeText(context, "Saved to history!", Toast.LENGTH_SHORT).show()
+                            if (liveTwoStepPolish) {
+                                if (!isPolishingLocally) {
+                                    isPolishingLocally = true
+                                    val durationSeconds = stats.durationSeconds
+                                    scope.launch {
+                                        val textToSave = viewModel.finishInAppComplete()
+                                        if (textToSave.isNotBlank()) {
+                                            HistoryRepository.addHistoryItem(
+                                                text = textToSave,
+                                                appContext = "AI · Rapcha",
+                                                durationSeconds = durationSeconds
+                                            )
+                                            viewModel.clearTranscript()
+                                            Toast.makeText(context, "Polished", Toast.LENGTH_SHORT).show()
+                                        }
+                                        isPolishingLocally = false
+                                    }
+                                }
+                            } else {
+                                val textToSave = transcriptText
+                                if (textToSave.isNotBlank()) {
+                                    viewModel.stopRecording()
+                                    HistoryRepository.addHistoryItem(
+                                        text = textToSave,
+                                        appContext = "AI · Rapcha",
+                                        durationSeconds = stats.durationSeconds
+                                    )
+                                    viewModel.clearTranscript()
+                                    Toast.makeText(context, "Saved to history!", Toast.LENGTH_SHORT).show()
+                                }
                             }
                         },
                         backgroundColor = palette.primary,

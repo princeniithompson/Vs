@@ -125,6 +125,7 @@ fun VoiceTypingScreen(
 
     val isRecording by viewModel.isRecording.collectAsState()
     val isSmartMode by viewModel.isSmartMode.collectAsState()
+    val liveTwoStepPolish by viewModel.liveTwoStepPolish.collectAsState()
     val isBubbleEnabled by viewModel.isBubbleEnabled.collectAsState()
     val isSmartSafeModeEnabled by viewModel.isSmartSafeModeEnabled.collectAsState()
     val isAccessibilityConnected by viewModel.isAccessibilityConnected.collectAsState()
@@ -457,7 +458,7 @@ fun VoiceTypingScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Smart Mode",
+                            text = "Live two-step polish",
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = FontWeight.SemiBold,
                             color = if (isRecording) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
@@ -465,7 +466,11 @@ fun VoiceTypingScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "On: cleans up filler words and adds punctuation. Off: raw verbatim transcript, fastest.",
+                            text = if (liveTwoStepPolish) {
+                                "On. Stage 1 stays verbatim. Complete polishes with gemini-3.8-live for Messages, Work, AI, or other apps, then inserts it. If polish fails, your raw words are inserted."
+                            } else {
+                                "Off. Complete keeps today's behavior and inserts the Live transcript. Smart Mode can polish while you talk. The Polish button still uses the slower non-live model."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = if (isRecording) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
                                     else MaterialTheme.colorScheme.onSurfaceVariant
@@ -473,9 +478,43 @@ fun VoiceTypingScreen(
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Switch(
-                        checked = isSmartMode,
-                        onCheckedChange = { viewModel.setSmartMode(it) },
+                        checked = liveTwoStepPolish,
+                        onCheckedChange = { viewModel.setLiveTwoStepPolish(it) },
                         enabled = !isRecording,
+                        modifier = Modifier.testTag("live_two_step_polish_switch")
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Smart Mode",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (isRecording || liveTwoStepPolish) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                    else MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (liveTwoStepPolish) {
+                                "Forced off while Live two-step polish is on, so Stage 1 stays verbatim. Your Smart setting is kept for when you switch back."
+                            } else {
+                                "On: cleans up filler words and adds punctuation. Off: raw verbatim transcript, fastest."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isRecording || liveTwoStepPolish) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Switch(
+                        checked = isSmartMode && !liveTwoStepPolish,
+                        onCheckedChange = { viewModel.setSmartMode(it) },
+                        enabled = !isRecording && !liveTwoStepPolish,
                         modifier = Modifier.testTag("smart_mode_switch")
                     )
                 }
