@@ -373,7 +373,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         )
 
         // 2. Open Gemini Live WebSocket connection
-        val customVocab = com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary()
+        val customVocab = com.princeniithompson.rapcha.data.CustomVocabularyRepository.recognitionVocabulary()
         try {
             webSocketClient.connect(apiKey, _selectedModel.value, _isSmartMode.value, customVocabulary = customVocab)
         } catch (e: Exception) {

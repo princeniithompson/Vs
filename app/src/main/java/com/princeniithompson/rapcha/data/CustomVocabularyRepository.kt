@@ -183,6 +183,12 @@ object CustomVocabularyRepository {
         return _vocabulary.value
     }
 
+    /**
+     * Dictionary terms plus [BuiltInVocabulary] seeds, for Live setup and
+     * Retry SMART. The stored dictionary is unchanged.
+     */
+    fun recognitionVocabulary(): List<String> = BuiltInVocabulary.merge(getVocabulary())
+
     fun syncUsageFromHistory(historyItems: List<HistoryItem>) {
         if (historyItems.isEmpty()) return
         val currentItems = _vocabularyItems.value.toMutableList()
