@@ -78,6 +78,23 @@ class GeminiLiveWebSocketClient(
         const val FINAL_TRANSCRIPT_TIMEOUT_MS = 8_000L
         const val GO_AWAY_FINALIZE_THRESHOLD_MS = 45_000L
 
+        /**
+         * OkHttp 4.10 dials DNS answers one address at a time and does not apply
+         * connectTimeout to a stuck lookup. A Live dial that has not reached
+         * [WebSocketListener.onOpen] is cancelled after this deadline and retried once.
+         */
+        const val SOCKET_OPEN_DEADLINE_MS = 3_000L
+        const val MAX_SOCKET_OPEN_ATTEMPTS = 2
+
+        fun createDefaultLiveOkHttpClient(): OkHttpClient {
+            return ApiConfig.createOkHttpClient()
+                .newBuilder()
+                .pingInterval(PING_INTERVAL_SECONDS, TimeUnit.SECONDS)
+                .connectTimeout(SOCKET_OPEN_DEADLINE_MS, TimeUnit.MILLISECONDS)
+                .dns(GeminiLiveDns())
+                .build()
+        }
+
         // Single-connection enforcement and instance tracking
         private val activeSocketCount = AtomicInteger(0)
         private val currentActiveClient = AtomicReference<GeminiLiveWebSocketClient?>(null)
@@ -111,10 +128,7 @@ class GeminiLiveWebSocketClient(
         }
     }
 
-    private val client: OkHttpClient = okHttpClient ?: ApiConfig.createOkHttpClient()
-        .newBuilder()
-        .pingInterval(PING_INTERVAL_SECONDS, TimeUnit.SECONDS)
-        .build()
+    private val client: OkHttpClient = okHttpClient ?: createDefaultLiveOkHttpClient()
 
     private var webSocket: WebSocket? = null
     private val isSetupComplete = AtomicBoolean(false)
@@ -122,6 +136,12 @@ class GeminiLiveWebSocketClient(
     private val isExplicitlyClosed = AtomicBoolean(false)
     private val hasDisconnected = AtomicBoolean(false)
     private val reconnectAttempts = AtomicInteger(0)
+    private val socketOpenAttempts = AtomicInteger(0)
+    private val socketOpenedThisSession = AtomicBoolean(false)
+    private val dialLock = Any()
+    private var dialToken = 0
+    private var dialOpened = false
+    @Volatile private var socketOpenWatchdog: Runnable? = null
     private var activeModel: String = DEFAULT_MODEL
     private var lastApiKey: String = ""
 
@@ -236,6 +256,10 @@ class GeminiLiveWebSocketClient(
         hasDisconnected.set(false)
         isExplicitlyClosed.set(false)
         reconnectAttempts.set(0)
+        socketOpenAttempts.set(0)
+        socketOpenedThisSession.set(false)
+        invalidateDial()
+        cancelSocketOpenWatchdog()
         isSetupComplete.set(false)
         resetManualEndpointState()
         Log.i(TAG, "[ConnectionState] CONNECTING to $WS_BASE_URL ($activeModel)...")
@@ -267,23 +291,46 @@ class GeminiLiveWebSocketClient(
 
         val modeLabel = if (isSmartMode) "SMART (filler-cleanup + punctuation)" else "VERBATIM (raw fastest)"
         val vocabCount = customVocabularyList.size
-        val attemptNum = reconnectAttempts.get()
-        if (attemptNum == 0) {
-            Log.i(TAG, "[ConnectionState] CONNECTING: Opening socket to $WS_BASE_URL ($activeModel) [mode=$modeLabel, vocab=$vocabCount, pingInterval=${PING_INTERVAL_SECONDS}s]")
-            onLog(LogLevel.INFO, TAG, "Opening WebSocket connection to $WS_BASE_URL ($activeModel) in $modeLabel mode with $vocabCount custom vocabulary terms (pingInterval=${PING_INTERVAL_SECONDS}s)", null)
+        val fastOpen = !socketOpenedThisSession.get()
+        val attempt = if (fastOpen) {
+            socketOpenAttempts.incrementAndGet()
         } else {
-            Log.i(TAG, "[ConnectionState] RECONNECTING: Attempt $attemptNum/$MAX_RECONNECT_ATTEMPTS to $WS_BASE_URL ($activeModel)...")
-            onLog(LogLevel.INFO, TAG, "Reconnecting WebSocket (attempt $attemptNum/$MAX_RECONNECT_ATTEMPTS) to $WS_BASE_URL ($activeModel)...", null)
+            reconnectAttempts.get().coerceAtLeast(1)
         }
+        val limit = if (fastOpen) MAX_SOCKET_OPEN_ATTEMPTS else MAX_RECONNECT_ATTEMPTS
+        val phase = if (fastOpen) "dial" else "redial"
+        val token = beginDial()
+        logConnect(
+            attempt,
+            limit,
+            "phase=$phase dns=ipv4-first deadline_ms=$SOCKET_OPEN_DEADLINE_MS reason=started mode=$modeLabel vocab=$vocabCount",
+            DiagnosticType.WARNING,
+            LogLevel.INFO
+        )
+        cancelSocketOpenWatchdog()
+        val watchdog = Runnable {
+            onSocketOpenStalled(token, attempt, limit, fastOpen, "cancelled no_socket")
+        }
+        socketOpenWatchdog = watchdog
+        mainHandler.postDelayed(watchdog, SOCKET_OPEN_DEADLINE_MS)
 
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
+        val created = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (isExplicitlyClosed.get()) {
                     Log.d(TAG, "[ConnectionState] onOpen received but client explicitly closed, closing socket immediately")
+                    cancelSocketOpenWatchdog()
+                    markDialStalled(token)
                     webSocket.close(1000, "Closed by client")
                     isConnectingGuard.set(false)
                     return
                 }
+                if (!markDialOpened(token)) {
+                    Log.d(TAG, "[ConnectionState] onOpen ignored for stale dial token=$token")
+                    webSocket.close(1000, "Stale connect attempt")
+                    return
+                }
+                cancelSocketOpenWatchdog()
+                socketOpenedThisSession.set(true)
 
                 val currentLiveCount = activeSocketCount.incrementAndGet()
                 socketsOpened += 1
@@ -320,6 +367,17 @@ class GeminiLiveWebSocketClient(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (!isCurrentOpenDial(token)) {
+                    val detail = if (reason.isNotBlank()) reason else "closed_before_open"
+                    onSocketOpenStalled(
+                        token,
+                        attempt,
+                        limit,
+                        fastOpen,
+                        "cancelled no_socket closed_before_open code=$code detail=$detail"
+                    )
+                    return
+                }
                 val drained = this@GeminiLiveWebSocketClient.webSocket != null &&
                     this@GeminiLiveWebSocketClient.webSocket !== webSocket
                 if (drained) {
@@ -342,6 +400,16 @@ class GeminiLiveWebSocketClient(
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 if (this@GeminiLiveWebSocketClient.webSocket != null && this@GeminiLiveWebSocketClient.webSocket !== webSocket) {
+                    return
+                }
+                if (!isCurrentOpenDial(token)) {
+                    onSocketOpenStalled(
+                        token,
+                        attempt,
+                        limit,
+                        fastOpen,
+                        "cancelled no_socket ${socketFailureDetail(t, response)}"
+                    )
                     return
                 }
                 val currentLiveCount = releaseActiveSocket()
@@ -372,6 +440,144 @@ class GeminiLiveWebSocketClient(
                 handleDisconnectOrFailure(errorDetails, t)
             }
         })
+        if (isCurrentDial(token) && !isExplicitlyClosed.get()) {
+            webSocket = created
+        } else {
+            try {
+                created.cancel()
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun beginDial(): Int = synchronized(dialLock) {
+        dialToken += 1
+        dialOpened = false
+        dialToken
+    }
+
+    private fun invalidateDial() = synchronized(dialLock) {
+        dialToken += 1
+        dialOpened = false
+    }
+
+    private fun markDialOpened(token: Int): Boolean = synchronized(dialLock) {
+        if (token != dialToken || dialOpened) return false
+        dialOpened = true
+        true
+    }
+
+    private fun markDialStalled(token: Int): Boolean = synchronized(dialLock) {
+        if (token != dialToken || dialOpened) return false
+        dialToken += 1
+        true
+    }
+
+    private fun isCurrentDial(token: Int): Boolean = synchronized(dialLock) {
+        token == dialToken
+    }
+
+    private fun isCurrentOpenDial(token: Int): Boolean = synchronized(dialLock) {
+        token == dialToken && dialOpened
+    }
+
+    private fun cancelSocketOpenWatchdog() {
+        socketOpenWatchdog?.let { mainHandler.removeCallbacks(it) }
+        socketOpenWatchdog = null
+    }
+
+    /**
+     * The dial never reached onOpen. The first miss is cancelled and retried
+     * once. The second miss surfaces a terminal no_socket error instead of the
+     * exponential reconnect loop, which would otherwise keep the bubble red.
+     * A drop after onOpen still uses [handleDisconnectOrFailure].
+     */
+    private fun onSocketOpenStalled(
+        token: Int,
+        attempt: Int,
+        limit: Int,
+        fastOpen: Boolean,
+        reason: String
+    ) {
+        if (!markDialStalled(token)) return
+        cancelSocketOpenWatchdog()
+        val existing = webSocket
+        webSocket = null
+        try {
+            existing?.cancel()
+        } catch (_: Exception) {}
+
+        if (isExplicitlyClosed.get()) {
+            isConnectingGuard.set(false)
+            return
+        }
+
+        if (!fastOpen) {
+            logConnect(attempt, limit, "reason=$reason", DiagnosticType.WARNING, LogLevel.ERROR)
+            handleDisconnectOrFailure("no_socket $reason", null)
+            return
+        }
+
+        if (!isSessionActive()) {
+            isConnectingGuard.set(false)
+            logConnect(
+                attempt,
+                limit,
+                "reason=$reason retry_suppressed session_idle",
+                DiagnosticType.WARNING,
+                LogLevel.INFO
+            )
+            notifyStateChanged(ConnectionState.Idle)
+            return
+        }
+
+        logConnect(attempt, limit, "reason=$reason", DiagnosticType.WARNING, LogLevel.ERROR)
+        if (attempt < limit) {
+            logConnect(attempt + 1, limit, "reason=retried", DiagnosticType.SESSION_RECONNECT, LogLevel.INFO)
+            mainHandler.post {
+                if (isExplicitlyClosed.get() || !isSessionActive()) {
+                    isConnectingGuard.set(false)
+                    return@post
+                }
+                connectInternal()
+            }
+            return
+        }
+
+        isConnectingGuard.set(false)
+        val failed = logConnect(
+            attempt,
+            limit,
+            "reason=failed no_socket after $limit attempts deadline_ms=$SOCKET_OPEN_DEADLINE_MS",
+            DiagnosticType.ERROR,
+            LogLevel.ERROR
+        )
+        notifyStateChanged(ConnectionState.Error(failed))
+        notifyError(failed, GeminiLiveError.NetworkFailure(failed))
+    }
+
+    private fun socketFailureDetail(t: Throwable, response: Response?): String {
+        val primary = t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
+        val http = if (response != null) " http=${response.code}" else ""
+        return (primary + http).take(180)
+    }
+
+    private fun logConnect(
+        attempt: Int,
+        limit: Int,
+        detail: String,
+        type: DiagnosticType,
+        level: LogLevel
+    ): String {
+        val timeStr = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
+        val message = "[$timeStr][Connect] attempt=$attempt/$limit $detail"
+        if (level == LogLevel.ERROR) {
+            Log.e(TAG, message)
+        } else {
+            Log.i(TAG, message)
+        }
+        onLog(level, TAG, message, null)
+        AppLogRepository.logEvent(diagnosticSource, type, message)
+        return message
     }
 
     private fun handleDisconnectOrFailure(errorDetails: String, throwable: Throwable?) {
@@ -763,6 +969,10 @@ class GeminiLiveWebSocketClient(
         Log.i(TAG, "[ConnectionState] DISCONNECT requested by client (deterministic teardown)")
         isExplicitlyClosed.set(true)
         reconnectAttempts.set(MAX_RECONNECT_ATTEMPTS)
+        socketOpenAttempts.set(0)
+        socketOpenedThisSession.set(false)
+        invalidateDial()
+        cancelSocketOpenWatchdog()
         cancelPendingReconnect()
         pieceTimeout?.let { mainHandler.removeCallbacks(it) }
         pieceTimeout = null
