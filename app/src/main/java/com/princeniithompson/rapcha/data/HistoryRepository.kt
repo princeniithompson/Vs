@@ -19,7 +19,8 @@ data class HistoryItem(
     val timestamp: Long = System.currentTimeMillis(),
     val appContext: String = "AI · Rapcha",
     val wordCount: Int = text.split("\\s+".toRegex()).count { it.isNotBlank() },
-    val durationSeconds: Int = 0
+    val durationSeconds: Int = 0,
+    val retryClipId: String? = null
 ) {
     fun getFormattedTime(): String {
         val sdf = SimpleDateFormat("h:mm a", Locale.getDefault())
@@ -48,10 +49,22 @@ data class HistoryItem(
     }
 }
 
+object HistoryOverflowMenu {
+    enum class Action { COPY, RETRY, DELETE }
+
+    val actions: List<Action> = listOf(Action.COPY, Action.RETRY, Action.DELETE)
+    const val NO_AUDIO = "No audio saved for this section"
+
+    fun retryEnabled(retryClipId: String?, audioExists: Boolean): Boolean {
+        return !retryClipId.isNullOrBlank() && audioExists
+    }
+}
+
 object HistoryRepository {
     private const val TAG = "HistoryRepository"
     private const val PREFS_NAME = "history_repository_prefs"
     private const val KEY_HISTORY = "history_entries"
+    const val PENDING_RETRY_TEXT = "Offline dictation"
 
     private var prefs: SharedPreferences? = null
     private val _historyItems = MutableStateFlow<List<HistoryItem>>(emptyList())
@@ -103,7 +116,8 @@ object HistoryRepository {
                     timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
                     appContext = obj.optString("appContext", "AI · Rapcha"),
                     wordCount = obj.optInt("wordCount", 0),
-                    durationSeconds = obj.optInt("durationSeconds", 0)
+                    durationSeconds = obj.optInt("durationSeconds", 0),
+                    retryClipId = obj.optString("retryClipId", "").ifBlank { null }
                 )
                 list.add(item)
             }
@@ -129,6 +143,9 @@ object HistoryRepository {
                     put("appContext", item.appContext)
                     put("wordCount", item.wordCount)
                     put("durationSeconds", item.durationSeconds)
+                    if (!item.retryClipId.isNullOrBlank()) {
+                        put("retryClipId", item.retryClipId)
+                    }
                 }
                 jsonArray.put(obj)
             }
@@ -164,6 +181,74 @@ object HistoryRepository {
     fun saveEntry(text: String, mode: String = "POLISHED", appName: String = "App", durationSeconds: Int = 0): HistoryItem? {
         val contextTag = if (mode.isNotBlank()) "$appName · $mode" else appName
         return addHistoryItem(text = text, appContext = contextTag, durationSeconds = durationSeconds)
+    }
+
+    /**
+     * Home card for a clip that is waiting on Retry. Reuses the same row if the
+     * clip was already linked.
+     */
+    fun upsertPendingRetry(
+        clipId: String,
+        text: String,
+        appContext: String,
+        durationSeconds: Int
+    ) {
+        if (clipId.isBlank()) return
+        val display = text.trim().ifBlank { PENDING_RETRY_TEXT }
+        val current = _historyItems.value.toMutableList()
+        val index = current.indexOfFirst { it.retryClipId == clipId }
+        val words = display.split("\\s+".toRegex()).count { it.isNotBlank() }
+        if (index >= 0) {
+            val existing = current[index]
+            current[index] = existing.copy(
+                text = display,
+                appContext = appContext.ifBlank { existing.appContext },
+                wordCount = words,
+                durationSeconds = durationSeconds,
+                retryClipId = clipId
+            )
+        } else {
+            current.add(
+                0,
+                HistoryItem(
+                    text = display,
+                    appContext = appContext.ifBlank { "Rapcha" },
+                    wordCount = words,
+                    durationSeconds = durationSeconds,
+                    retryClipId = clipId
+                )
+            )
+        }
+        _historyItems.value = current
+        saveHistory(current)
+    }
+
+    /**
+     * Discard keeps a real partial transcript and drops a placeholder row.
+     * The clip id is cleared either way so Retry cannot point at deleted audio.
+     */
+    fun detachRetryClip(clipId: String) {
+        if (clipId.isBlank()) return
+        val current = _historyItems.value.toMutableList()
+        val index = current.indexOfFirst { it.retryClipId == clipId }
+        if (index < 0) return
+        val item = current[index]
+        if (item.text == PENDING_RETRY_TEXT) {
+            current.removeAt(index)
+        } else {
+            current[index] = item.copy(retryClipId = null)
+        }
+        _historyItems.value = current
+        saveHistory(current)
+    }
+
+    fun removePendingRetry(clipId: String) {
+        if (clipId.isBlank()) return
+        val current = _historyItems.value.toMutableList()
+        val removed = current.removeAll { it.retryClipId == clipId }
+        if (!removed) return
+        _historyItems.value = current
+        saveHistory(current)
     }
 
     fun deleteHistoryItem(id: String): Boolean {

@@ -189,12 +189,23 @@ fun DiagnosticEntryRow(entry: DiagnosticLogEntry, timeFormat: SimpleDateFormat) 
         DiagnosticType.SAFE_MODE_EXITED -> Triple(Color(0xFFF1F5F9), DiagnosticsPalette.muted, "SAFE_OFF")
         DiagnosticType.SILENCE_DROPPED -> Triple(DiagnosticsPalette.amberSoft, DiagnosticsPalette.amber, "SILENCE")
         DiagnosticType.MIC_RELEASED -> Triple(Color(0xFFF1F5F9), DiagnosticsPalette.muted, "MIC")
+        DiagnosticType.RETRY_OFFERED -> Triple(DiagnosticsPalette.amberSoft, DiagnosticsPalette.amber, "RETRY")
+        DiagnosticType.RETRY_STARTED -> Triple(Color(0xFFDBEAFE), Color(0xFF1D4ED8), "RETRY")
+        DiagnosticType.RETRY_SUCCESS -> Triple(DiagnosticsPalette.greenSoft, DiagnosticsPalette.green, "RETRIED")
+        DiagnosticType.RETRY_FAILED -> Triple(DiagnosticsPalette.redSoft, DiagnosticsPalette.red, "RETRY_ERR")
+        DiagnosticType.RETRY_DISCARDED -> Triple(Color(0xFFF1F5F9), DiagnosticsPalette.muted, "DISCARD")
+        DiagnosticType.RETRY_STICKY -> Triple(DiagnosticsPalette.amberSoft, DiagnosticsPalette.amber, "STICKY")
+        DiagnosticType.RETRY_LIVE_CANCELLED -> Triple(Color(0xFFFEF9C3), Color(0xFFA16207), "LIVE_OFF")
+        DiagnosticType.RETRY_OFFLINE -> Triple(DiagnosticsPalette.amberSoft, DiagnosticsPalette.amber, "OFFLINE")
+        DiagnosticType.RETRY_NETWORK_BACK -> Triple(DiagnosticsPalette.greenSoft, DiagnosticsPalette.green, "NET_BACK")
+        DiagnosticType.RETRY_HISTORY -> Triple(Color(0xFFDBEAFE), Color(0xFF1D4ED8), "HIST_RETRY")
     }
 
     val messageColor = if (
         entry.type == DiagnosticType.ERROR ||
         entry.type == DiagnosticType.POLISH_FAILED ||
-        entry.type == DiagnosticType.CRASH
+        entry.type == DiagnosticType.CRASH ||
+        entry.type == DiagnosticType.RETRY_FAILED
     ) {
         DiagnosticsPalette.red
     } else {

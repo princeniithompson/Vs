@@ -89,8 +89,9 @@ fun FloatingDictationPopup(
     modifier: Modifier = Modifier
 ) {
     val isNetworkProblem by com.princeniithompson.rapcha.service.FloatingBubbleManager.isNetworkProblem.collectAsState()
+    val offlineRetry by com.princeniithompson.rapcha.service.FloatingBubbleManager.offlineRetry.collectAsState()
     val basePalette = rememberDynamicAuroraPalette()
-    val palette = if (isNetworkProblem) basePalette.toDangerPalette() else basePalette
+    val palette = if (isNetworkProblem || offlineRetry != null) basePalette.toDangerPalette() else basePalette
     val state = rememberFloatingDictationPopupState(
         transcriptText = transcriptText,
         isRecording = isRecording,

@@ -53,6 +53,31 @@ object DictationAlerts {
         alert(context, "Your text was copied.", FloatingHapticType.ENDED)
     }
 
+    const val RETRY_READY_NOTIFICATION_ID = 2003
+
+    /**
+     * Tells the user the network is back and a dictation can be retried.
+     * Returns false when notification permission is missing.
+     */
+    fun retryNetworkBack(context: Context, tap: PendingIntent): Boolean {
+        if (!canPost(context)) return false
+        createChannel(context)
+        val text = "Network is back. Tap to retry this dictation."
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Rapcha")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setAutoCancel(true)
+            .setContentIntent(tap)
+            .build()
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(RETRY_READY_NOTIFICATION_ID, notification)
+        return true
+    }
+
     /**
      * A normal suggestion with Yes / Edit / No. No haptic: this is not an error.
      * Returns false when notification permission is missing so the caller can ask again later.
