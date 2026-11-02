@@ -467,7 +467,7 @@ fun VoiceTypingScreen(
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = if (liveTwoStepPolish) {
-                                "On. Complete is hidden. Cancel and Polish stay. Polish cleans the words with the fast non-live model. In AI apps that polish follows Lyra and never answers the question. Stage 1 stays verbatim."
+                                "On. Complete is hidden. Polish sends the verbatim transcript to gemini-3.8-live. In AI apps that polish follows Lyra and never answers the question. Stage 1 stays verbatim."
                             } else {
                                 "Off. Complete stays, and it inserts the Live transcript. Smart Mode can polish while you talk. The Polish button still uses the non-live model."
                             },

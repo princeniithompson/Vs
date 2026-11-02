@@ -116,11 +116,11 @@ class Stage2LivePolishTest {
         assertEquals(
             listOf(
                 DiagnosticType.STAGE2_LIVE_START,
-                DiagnosticType.STAGE2_LIVE_FAILED,
-                DiagnosticType.STAGE2_LIVE_FALLBACK
+                DiagnosticType.STAGE2_LIVE_FAILED
             ),
             events
         )
+        assertFalse(events.contains(DiagnosticType.POLISH_CALLED))
 
         var stage2CalledAfterDrop = false
         val timedOut = Stage2LivePolish.execute(
@@ -200,6 +200,7 @@ class Stage2LivePolishTest {
             assembler.absorb("""{"setupComplete":{}}""")
         )
         assembler.absorb("""{"serverContent":{"modelTurn":{"parts":[{"text":"Äh "}]}}}""")
+        assembler.absorb("""{"serverContent":{"modelTurn":{"parts":[{"thought":true,"text":"hidden"}]}}}""")
         assembler.absorb("""{"serverContent":{"modelTurn":{"parts":[{"text":"hallo."}]},"turnComplete":true}}""")
         assertTrue(assembler.turnComplete)
         assertEquals("Äh hallo.", assembler.text())

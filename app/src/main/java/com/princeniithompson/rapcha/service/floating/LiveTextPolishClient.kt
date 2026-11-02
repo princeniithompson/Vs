@@ -87,17 +87,13 @@ class LiveTextPolishClient(
             })
 
             val finished = latch.await(timeoutMs, TimeUnit.MILLISECONDS)
-            if (!finished) {
-                return LivePolishResponse(null, "Stage-2 Live polish timed out", timedOut = true)
-            }
-            val socketError = failure.get()
-            val protocolError = assembler.error
-            val polished = assembler.text()
-            if (socketError != null || protocolError != null || polished.isBlank()) {
-                val reason = socketError ?: protocolError ?: "Stage-2 Live polish returned no text"
-                return LivePolishResponse(null, reason, timedOut = false)
-            }
-            return LivePolishResponse(polished, null, timedOut = false)
+            return LivePolishOutcome.decide(
+                finished = finished,
+                assembledText = assembler.text(),
+                socketError = failure.get(),
+                protocolError = assembler.error,
+                setupCompleted = assembler.setupComplete
+            )
         } catch (e: Exception) {
             Log.w(TAG, "Stage-2 Live polish failed: ${e.message}")
             return LivePolishResponse(null, e.message ?: e.javaClass.simpleName, timedOut = false)
@@ -115,5 +111,34 @@ class LiveTextPolishClient(
 
     companion object {
         private const val TAG = "LiveTextPolish"
+    }
+}
+
+/**
+ * A late turn marker must not throw away text the model already sent.
+ * An empty timeout stays a failure so the caller can fall back.
+ */
+object LivePolishOutcome {
+    fun decide(
+        finished: Boolean,
+        assembledText: String,
+        socketError: String?,
+        protocolError: String?,
+        setupCompleted: Boolean
+    ): LivePolishResponse {
+        val text = assembledText.trim()
+        if (text.isNotEmpty() && protocolError == null && socketError == null) {
+            return LivePolishResponse(text, null, timedOut = false)
+        }
+        if (!finished) {
+            val why = if (setupCompleted) {
+                "Stage-2 Live polish timed out after setup"
+            } else {
+                "Stage-2 Live polish timed out before setup"
+            }
+            return LivePolishResponse(null, why, timedOut = true)
+        }
+        val reason = socketError ?: protocolError ?: "Stage-2 Live polish returned no text"
+        return LivePolishResponse(null, reason, timedOut = false)
     }
 }

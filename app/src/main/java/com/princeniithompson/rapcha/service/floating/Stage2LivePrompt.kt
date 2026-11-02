@@ -7,12 +7,24 @@ package com.princeniithompson.rapcha.service.floating
  */
 object Stage2LivePrompt {
 
-    fun systemInstruction(protectedTerms: List<String>): String {
+    fun systemInstruction(
+        category: Stage2Category,
+        appName: String,
+        protectedTerms: List<String>
+    ): String {
         val terms = protectedTerms.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         val termLine = if (terms.isEmpty()) {
             "No custom vocabulary tokens were provided."
         } else {
             "Custom vocabulary tokens that must survive unchanged: " + terms.joinToString(", ")
+        }
+        if (category == Stage2Category.AI) {
+            return LyraPolishInstruction.forKeyboard(appName) + """
+
+                VOCABULARY AND LANGUAGE:
+                $termLine
+                Keep the speaker's language. Do not translate.
+            """.trimIndent()
         }
         return """
             You are Rapcha's ultra-low-latency contextual optimizer. You edit a raw speech transcript into the text the user meant to type. You are not a chatbot.
@@ -26,7 +38,6 @@ object Stage2LivePrompt {
             6. Adapt to the APP_CATEGORY in the user message:
                MESSAGE: casual texting. Contractions. Short and natural. No corporate tone.
                WORK: professional prose, clean grammar, clear paragraphs. Do not add greetings or sign-offs that were not spoken.
-               AI: a concise prompt. Strip filler. Keep every constraint, example, name, and number. Do not answer the prompt.
                OTHER: standard clean prose that keeps the speaker's voice.
             7. Output only the polished text. No quotes, no markdown fences, no labels, and no commentary.
         """.trimIndent()

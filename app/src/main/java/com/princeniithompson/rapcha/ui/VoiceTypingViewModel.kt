@@ -355,7 +355,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
             LogLevel.INFO,
             TAG,
             if (enabled) {
-                "Live two-step is on. Complete is hidden. Polish uses the non-live model. Stage 1 stays verbatim."
+                "Live two-step is on. Complete is hidden. Polish uses models/gemini-3.8-live. Stage 1 stays verbatim."
             } else {
                 "Live two-step is off. Complete and Smart Mode keep the current behavior."
             }

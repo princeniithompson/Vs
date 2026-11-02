@@ -1,5 +1,7 @@
 package com.princeniithompson.rapcha.service.floating
 
+import com.princeniithompson.rapcha.config.RapchaConfig
+import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.data.VocabSuggestionPolicy
 import com.princeniithompson.rapcha.service.AppCategory
 import org.junit.Assert.assertEquals
@@ -37,6 +39,81 @@ class LiveTwoStepFollowUpTest {
         )
         assertEquals("Polishing...", busy.polishLabel)
         assertFalse(busy.showsComplete)
+    }
+
+    @Test
+    fun `toggle on selects gemini-3_8-live and not unary flash`() {
+        assertTrue(Stage2PolishRoute.usesLiveModel(true))
+        assertEquals("models/gemini-3.8-live", Stage2PolishRoute.model(true))
+        assertEquals(22_000L, RapchaConfig.STAGE2_LIVE_TIMEOUT_MS)
+        assertFalse(Stage2PolishRoute.model(true)!!.contains("flash-lite"))
+        assertFalse(Stage2PolishRoute.model(true)!!.contains("gemini-3.8-flash"))
+        assertFalse(Stage2PolishRoute.usesLiveModel(false))
+        assertEquals(null, Stage2PolishRoute.model(false))
+    }
+
+    @Test
+    fun `late live text is kept and an empty timeout stays a failure`() {
+        val kept = LivePolishOutcome.decide(
+            finished = false,
+            assembledText = "Send the note to Jordan.",
+            socketError = null,
+            protocolError = null,
+            setupCompleted = true
+        )
+        assertEquals("Send the note to Jordan.", kept.text)
+        assertFalse(kept.timedOut)
+
+        val empty = LivePolishOutcome.decide(
+            finished = false,
+            assembledText = "",
+            socketError = null,
+            protocolError = null,
+            setupCompleted = false
+        )
+        assertEquals(null, empty.text)
+        assertTrue(empty.timedOut)
+        assertTrue(empty.error!!.contains("before setup"))
+    }
+
+    @Test
+    fun `live stage-2 ai instruction is lyra and message is not`() {
+        val ai = Stage2LivePrompt.systemInstruction(Stage2Category.AI, "Grok Bot", listOf("Niithompson"))
+        assertTrue(ai.contains("Lyra"))
+        assertTrue(ai.contains(LyraPolishInstruction.NEVER_ANSWER_RULE))
+        assertTrue(ai.contains("Niithompson"))
+        assertFalse(ai.contains(LyraPolishInstruction.WELCOME_MESSAGE))
+
+        val message = Stage2LivePrompt.systemInstruction(Stage2Category.MESSAGE, "WhatsApp", emptyList())
+        assertFalse(message.contains("Lyra"))
+        assertTrue(message.contains("MESSAGE"))
+    }
+
+    @Test
+    fun `live failure can fall back without pretending the live model was skipped`() {
+        val events = mutableListOf<DiagnosticType>()
+        val paste = Stage2LivePolish.execute(
+            rawTranscript = "raw words",
+            category = Stage2Category.AI,
+            protectedTerms = emptyList(),
+            stage1Dropped = false,
+            apiKey = "test-key",
+            appName = "Grok Bot",
+            model = { request ->
+                assertTrue(request.systemInstruction.contains("Lyra"))
+                assertFalse(request.systemInstruction.contains("gemini-3.5-flash-lite"))
+                LivePolishResponse(null, "Stage-2 Live polish timed out before setup", timedOut = true)
+            },
+            log = { type, message ->
+                events.add(type)
+                assertTrue(message.contains("models/gemini-3.8-live"))
+                assertFalse(message.contains("gemini-3.5-flash-lite"))
+            }
+        )
+        assertEquals(Stage2Outcome.FALLBACK_RAW, paste.outcome)
+        assertEquals(listOf(DiagnosticType.STAGE2_LIVE_START, DiagnosticType.STAGE2_LIVE_FAILED), events)
+        assertEquals("polished by fallback" to "non_live", Stage2LivePolish.fallbackChoice("raw words", "polished by fallback"))
+        assertEquals("raw words" to "raw", Stage2LivePolish.fallbackChoice("raw words", null))
     }
 
     @Test

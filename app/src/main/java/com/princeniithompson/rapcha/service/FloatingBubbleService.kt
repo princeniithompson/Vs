@@ -30,7 +30,13 @@ import com.princeniithompson.rapcha.service.floating.FloatingHapticManager
 import com.princeniithompson.rapcha.service.floating.FloatingHapticType
 import com.princeniithompson.rapcha.service.floating.FloatingNotificationManager
 import com.princeniithompson.rapcha.service.floating.FloatingOverlayWindowManager
+import com.princeniithompson.rapcha.service.floating.FloatingPolishClient
 import com.princeniithompson.rapcha.service.floating.FloatingPolishCoordinator
+import com.princeniithompson.rapcha.service.floating.LivePolishProtocol
+import com.princeniithompson.rapcha.service.floating.LiveTextPolishClient
+import com.princeniithompson.rapcha.service.floating.Stage2LivePolish
+import com.princeniithompson.rapcha.service.floating.Stage2Outcome
+import com.princeniithompson.rapcha.service.floating.Stage2PolishRoute
 import com.princeniithompson.rapcha.service.floating.Stage2PolishSettings
 import com.princeniithompson.rapcha.service.floating.Stage2SessionPolicy
 import com.princeniithompson.rapcha.service.floating.FloatingTextInjector
@@ -895,6 +901,11 @@ class FloatingBubbleService : Service() {
         }
         offlineRetry.clearHold()
 
+        if (Stage2PolishRoute.usesLiveModel(Stage2PolishSettings.isLive(getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)))) {
+            polishWithLiveStage2(rawTranscript, apiKey)
+            return
+        }
+
         polishCoordinator.handlePolishRequest(
             context = this,
             scope = serviceScope,
@@ -910,6 +921,85 @@ class FloatingBubbleService : Service() {
                 resetAndCollapse()
             }
         )
+    }
+
+    /**
+     * Live two-step Polish. The first call is models/gemini-3.8-live.
+     * Unary flash is only a last resort after that Live turn fails, and it is
+     * not logged as POLISH_CALLED.
+     */
+    private fun polishWithLiveStage2(rawTranscript: String, apiKey: String) {
+        if (rawTranscript.isBlank()) {
+            Toast.makeText(this, "No text to polish", Toast.LENGTH_SHORT).show()
+            resetAndCollapse()
+            return
+        }
+        overlayWindowManager.overlayPolishing.value = true
+        val target = polishCoordinator.stage2Target(
+            context = this,
+            targetPackage = completeTargetPackage,
+            targetHint = FloatingBubbleManager.lockedSessionContext.value
+        )
+        serviceScope.launch {
+            try {
+                val paste = withContext(Dispatchers.IO) {
+                    Stage2LivePolish.execute(
+                        rawTranscript = rawTranscript,
+                        category = target.stage2Category,
+                        appName = target.appName,
+                        protectedTerms = CustomVocabularyRepository.getVocabulary(),
+                        stage1Dropped = sessionManager.consumeStage1Drop(),
+                        apiKey = apiKey,
+                        model = LiveTextPolishClient(),
+                        log = { type, message ->
+                            AppLogRepository.logEvent(DiagnosticSource.BUBBLE, type, message)
+                        }
+                    )
+                }
+                val text = if (paste.outcome == Stage2Outcome.SUCCESS) {
+                    paste.text
+                } else {
+                    val nonLive = withContext(Dispatchers.IO) {
+                        try {
+                            FloatingPolishClient.polishTranscript(
+                                apiKey = apiKey,
+                                rawTranscript = rawTranscript,
+                                category = target.polishCategory,
+                                appName = target.appName
+                            ).text
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "Unary polish fallback failed: ${t.message}")
+                            null
+                        }
+                    }
+                    val (chosen, how) = Stage2LivePolish.fallbackChoice(rawTranscript, nonLive)
+                    AppLogRepository.logEvent(
+                        DiagnosticSource.BUBBLE,
+                        DiagnosticType.STAGE2_LIVE_FALLBACK,
+                        "fallback=$how model=${LivePolishProtocol.MODEL} category=${target.stage2Category}"
+                    )
+                    if (how == "raw") {
+                        Toast.makeText(this@FloatingBubbleService, "Gemini is busy. Your words were inserted.", Toast.LENGTH_SHORT).show()
+                    }
+                    chosen
+                }
+                if (text.isNotBlank()) {
+                    HistoryRepository.saveEntry(
+                        text = text,
+                        mode = if (paste.outcome == Stage2Outcome.SUCCESS) "LIVE_POLISHED" else "POLISHED",
+                        appName = target.appName
+                    )
+                    val placed = FloatingTextInjector.injectReporting(this@FloatingBubbleService, text)
+                    VocabSuggestions.onConfirmedPlacement(this@FloatingBubbleService, text, placed)
+                    if (paste.outcome == Stage2Outcome.SUCCESS || text != rawTranscript) {
+                        Toast.makeText(this@FloatingBubbleService, "Polished ✨", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } finally {
+                overlayWindowManager.overlayPolishing.value = false
+                resetAndCollapse()
+            }
+        }
     }
 
     private fun onCancelClicked() {

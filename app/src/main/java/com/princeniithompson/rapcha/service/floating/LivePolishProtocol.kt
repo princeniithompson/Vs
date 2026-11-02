@@ -25,7 +25,6 @@ object LivePolishProtocol {
                 })
                 put("generationConfig", JSONObject().apply {
                     put("responseModalities", JSONArray().put("TEXT"))
-                    put("temperature", 0.2)
                 })
             })
         }.toString()
@@ -106,6 +105,7 @@ class LivePolishTranscriptAssembler {
         val parts = serverContent.optJSONObject("modelTurn")?.optJSONArray("parts") ?: return
         for (i in 0 until parts.length()) {
             val part = parts.optJSONObject(i) ?: continue
+            if (part.optBoolean("thought", false)) continue
             val chunk = part.optString("text")
             if (chunk.isNotEmpty()) text.append(chunk)
         }

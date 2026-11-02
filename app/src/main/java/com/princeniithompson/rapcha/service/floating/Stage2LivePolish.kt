@@ -40,6 +40,7 @@ object Stage2LivePolish {
         stage1Dropped: Boolean,
         apiKey: String,
         model: Stage2Model,
+        appName: String = "App",
         log: (DiagnosticType, String) -> Unit = { _, _ -> },
         nowMs: () -> Long = { System.currentTimeMillis() }
     ): Stage2Paste {
@@ -54,7 +55,7 @@ object Stage2LivePolish {
             model.polish(
                 Stage2Request(
                     apiKey = apiKey,
-                    systemInstruction = Stage2LivePrompt.systemInstruction(protectedTerms),
+                    systemInstruction = Stage2LivePrompt.systemInstruction(category, appName, protectedTerms),
                     userText = Stage2LivePrompt.userTurn(category, raw, protectedTerms)
                 )
             )
@@ -93,6 +94,15 @@ object Stage2LivePolish {
         return paste
     }
 
+    /**
+     * Live is the primary Stage-2 call. A failed Live turn may use one unary
+     * polish result, and otherwise the raw transcript.
+     */
+    fun fallbackChoice(rawTranscript: String, nonLiveText: String?): Pair<String, String> {
+        val alternate = nonLiveText?.trim().orEmpty()
+        return if (alternate.isNotEmpty()) alternate to "non_live" else rawTranscript to "raw"
+    }
+
     fun nonAsciiHint(text: String): String {
         val nonAscii = text.any { it.isLetter() && it.code > 127 }
         return if (nonAscii) "non_ascii=yes" else "non_ascii=no"
@@ -101,17 +111,13 @@ object Stage2LivePolish {
     private fun logResult(paste: Stage2Paste, script: String, log: (DiagnosticType, String) -> Unit) {
         val base = "category=${paste.category} latency_ms=${paste.latencyMs} stage1_flush=${yesNo(paste.stage1Flushed)} $script"
         if (paste.outcome == Stage2Outcome.SUCCESS) {
-            log(DiagnosticType.STAGE2_LIVE_SUCCESS, base)
+            log(DiagnosticType.STAGE2_LIVE_SUCCESS, "$base model=${LivePolishProtocol.MODEL}")
             return
         }
         val reason = paste.error?.take(180) ?: "unknown"
         log(
             DiagnosticType.STAGE2_LIVE_FAILED,
-            "$base reason=$reason timed_out=${yesNo(paste.timedOut)}"
-        )
-        log(
-            DiagnosticType.STAGE2_LIVE_FALLBACK,
-            "$base outcome=fallback_raw"
+            "$base model=${LivePolishProtocol.MODEL} reason=$reason timed_out=${yesNo(paste.timedOut)}"
         )
     }
 

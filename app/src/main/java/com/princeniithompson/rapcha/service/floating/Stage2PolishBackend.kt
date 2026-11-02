@@ -23,6 +23,18 @@ enum class Stage2PolishBackend {
     fun storedValue(): String = if (this == LIVE) STORED_LIVE else "non_live"
 }
 
+/**
+ * Toggle ON uses the Live model. Toggle OFF stays on the unary flash chain.
+ * gemini-3.8-live is never a fallback for the off path, and flash is not the on path.
+ */
+object Stage2PolishRoute {
+    fun usesLiveModel(liveTwoStep: Boolean): Boolean = liveTwoStep
+
+    fun model(liveTwoStep: Boolean): String? {
+        return if (liveTwoStep) com.princeniithompson.rapcha.config.RapchaConfig.STAGE2_LIVE_MODEL else null
+    }
+}
+
 object Stage2PolishSettings {
     fun read(prefs: SharedPreferences): Stage2PolishBackend {
         return Stage2PolishBackend.fromStored(prefs.getString(Stage2PolishBackend.PREFS_KEY, null))

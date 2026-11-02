@@ -34,13 +34,18 @@ object RapchaConfig {
     const val TRANSCRIBE_MODEL: String = "gemini-3.5-transcribe"
 
     /**
-     * Stage-2 Live polish model. Text-only turn on the same BidiGenerateContent
-     * socket as transcription. Not used unless the hamburger toggle is Live two-step.
+     * Stage-2 model when Live two-step is on. Text turn on the same
+     * BidiGenerateContent socket as transcription. The Polish button calls this
+     * model directly. It is not a unary flash model.
      */
     const val STAGE2_LIVE_MODEL: String = "models/gemini-3.8-live"
 
-    /** Hard cap so a Stage-2 failure pastes the raw transcript instead of hanging Complete. */
-    const val STAGE2_LIVE_TIMEOUT_MS: Long = 7_000L
+    /**
+     * Phone logs showed the old 7s cap firing at ~7010ms before setup and the
+     * text turn could finish. 22s covers the socket, setup, and a short reply.
+     * Text already received is kept if the turn marker arrives late.
+     */
+    const val STAGE2_LIVE_TIMEOUT_MS: Long = 22_000L
 
     /** Same debounce as Polish so a double tap cannot spend two free-tier retries. */
     const val RETRY_DEBOUNCE_MS: Long = POLISH_DEBOUNCE_MS

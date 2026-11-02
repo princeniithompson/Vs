@@ -180,14 +180,13 @@ class FloatingPolishCoordinator {
         }
     }
 
-    private data class PolishTarget(val category: AppCategory, val appName: String)
+    data class Stage2Target(
+        val stage2Category: Stage2Category,
+        val polishCategory: AppCategory,
+        val appName: String
+    )
 
-    /**
-     * Prefer the package captured when the session started. The locked context
-     * string is a label such as "Detected: ChatGPT -> AI", not a package name.
-     * AI apps use Lyra. Other categories keep the existing spice card.
-     */
-    private fun resolvePolishTarget(context: Context, targetPackage: String?, targetHint: String?): PolishTarget {
+    fun stage2Target(context: Context, targetPackage: String?, targetHint: String?): Stage2Target {
         val hint = targetHint ?: FloatingBubbleManager.lockedSessionContext.value
         val pkg = listOf(targetPackage, FloatingBubbleManager.currentForegroundPackage.value)
             .firstOrNull { looksLikePackage(it) }
@@ -201,14 +200,27 @@ class FloatingPolishCoordinator {
             null
         }
         val registryName = pkg?.let { com.princeniithompson.rapcha.service.AppRegistry.NATIVE_APP_MAP[it]?.appName }
-        val appName = resolvedName ?: registryName ?: "App"
-        val stage2 = Stage2CategoryMapper.map(pkg, if (appName == "App") null else appName, hint)
+        val lookedUp = resolvedName ?: registryName
+        val stage2 = Stage2CategoryMapper.map(pkg, lookedUp, hint)
         val classified = when {
-            pkg != null -> AppClassifier.classify(pkg, if (appName == "App") null else appName)
+            pkg != null -> AppClassifier.classify(pkg, lookedUp)
             else -> AppClassifier.classify(null, hint)
         }
-        val category = if (stage2 == Stage2Category.AI) AppCategory.AI_CHAT else classified
-        return PolishTarget(category, if (appName == "App" && !hint.isNullOrBlank()) hint else appName)
+        val polishCategory = if (stage2 == Stage2Category.AI) AppCategory.AI_CHAT else classified
+        val appName = lookedUp ?: hint?.takeIf { it.isNotBlank() } ?: "App"
+        return Stage2Target(stage2, polishCategory, appName)
+    }
+
+    private data class PolishTarget(val category: AppCategory, val appName: String)
+
+    /**
+     * Prefer the package captured when the session started. The locked context
+     * string is a label such as "Detected: ChatGPT -> AI", not a package name.
+     * AI apps use Lyra. Other categories keep the existing spice card.
+     */
+    private fun resolvePolishTarget(context: Context, targetPackage: String?, targetHint: String?): PolishTarget {
+        val target = stage2Target(context, targetPackage, targetHint)
+        return PolishTarget(target.polishCategory, target.appName)
     }
 
     private fun looksLikePackage(value: String?): Boolean {
