@@ -467,9 +467,9 @@ fun VoiceTypingScreen(
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = if (liveTwoStepPolish) {
-                                "On. Stage 1 stays verbatim. Complete polishes with gemini-3.8-live for Messages, Work, AI, or other apps, then inserts it. If polish fails, your raw words are inserted."
+                                "On. Complete is hidden. Cancel and Polish stay. Polish cleans the words with the fast non-live model. In AI apps that polish follows Lyra and never answers the question. Stage 1 stays verbatim."
                             } else {
-                                "Off. Complete keeps today's behavior and inserts the Live transcript. Smart Mode can polish while you talk. The Polish button still uses the slower non-live model."
+                                "Off. Complete stays, and it inserts the Live transcript. Smart Mode can polish while you talk. The Polish button still uses the non-live model."
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = if (isRecording) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)

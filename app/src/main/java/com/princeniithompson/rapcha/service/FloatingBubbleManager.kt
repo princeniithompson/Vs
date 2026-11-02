@@ -91,6 +91,9 @@ object FloatingBubbleManager {
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
+    private val _liveTwoStepPolish = MutableStateFlow(false)
+    val liveTwoStepPolish: StateFlow<Boolean> = _liveTwoStepPolish.asStateFlow()
+
     private val _isNetworkProblem = MutableStateFlow(false)
     val isNetworkProblem: StateFlow<Boolean> = _isNetworkProblem.asStateFlow()
 
@@ -140,7 +143,13 @@ object FloatingBubbleManager {
         // No-op: Restricted on modern Android SDKs and not required for application features.
     }
 
+    fun refreshLiveTwoStep(context: Context) {
+        val settings = context.getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)
+        _liveTwoStepPolish.value = com.princeniithompson.rapcha.service.floating.Stage2PolishSettings.isLive(settings)
+    }
+
     fun init(context: Context) {
+        refreshLiveTwoStep(context)
         if (initialized) return
         bypassHiddenApiRestrictions()
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

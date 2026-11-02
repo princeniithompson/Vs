@@ -31,10 +31,6 @@ import com.princeniithompson.rapcha.service.floating.FloatingHapticType
 import com.princeniithompson.rapcha.service.floating.FloatingNotificationManager
 import com.princeniithompson.rapcha.service.floating.FloatingOverlayWindowManager
 import com.princeniithompson.rapcha.service.floating.FloatingPolishCoordinator
-import com.princeniithompson.rapcha.service.floating.LiveTextPolishClient
-import com.princeniithompson.rapcha.service.floating.Stage2CategoryMapper
-import com.princeniithompson.rapcha.service.floating.Stage2LivePolish
-import com.princeniithompson.rapcha.service.floating.Stage2Outcome
 import com.princeniithompson.rapcha.service.floating.Stage2PolishSettings
 import com.princeniithompson.rapcha.service.floating.Stage2SessionPolicy
 import com.princeniithompson.rapcha.service.floating.FloatingTextInjector
@@ -162,6 +158,7 @@ class FloatingBubbleService : Service() {
         Log.d(TAG, "FloatingBubbleService onCreate")
         CustomVocabularyRepository.init(this)
         HistoryRepository.init(this)
+        FloatingBubbleManager.refreshLiveTwoStep(this)
         RetryClipStore.init(this)
         FloatingBubbleManager.onOfflineRetry = { onRetryClicked() }
         FloatingBubbleManager.onOfflineDiscard = { onDiscardClicked() }
@@ -228,7 +225,11 @@ class FloatingBubbleService : Service() {
                         DictationAlerts.endingSoon(this@FloatingBubbleService)
                     } else if (sessionManager.isRecording) {
                         sessionLimitAutoFinish = true
-                        onConfirmClicked()
+                        if (Stage2PolishSettings.isLive(getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE))) {
+                            onPolishClicked()
+                        } else {
+                            onConfirmClicked()
+                        }
                     }
                 }
             },
@@ -646,68 +647,8 @@ class FloatingBubbleService : Service() {
             }
             withContext(Dispatchers.IO) { sessionManager.settleRetryClip(discard = true) }
             offlineRetry.clearHold()
-            val stage2Live = Stage2PolishSettings.isLive(getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE))
-            val textForField = if (stage2Live) {
-                polishLiveOrRaw(textToInject, sessionManager.consumeStage1Drop())
-            } else {
-                textToInject
-            }
-            performInjectionAndClose(textForField)
+            performInjectionAndClose(textToInject)
         }
-    }
-
-    /**
-     * Stage 2 for Live two-step. Any timeout or model failure pastes [raw] so Complete cannot stick.
-     */
-    private suspend fun polishLiveOrRaw(raw: String, stage1Dropped: Boolean): String {
-        val category = currentStage2Category()
-        val terms = CustomVocabularyRepository.getVocabulary()
-        return try {
-            val paste = withContext(Dispatchers.IO) {
-                Stage2LivePolish.execute(
-                    rawTranscript = raw,
-                    category = category,
-                    protectedTerms = terms,
-                    stage1Dropped = stage1Dropped,
-                    apiKey = getEffectiveApiKey(),
-                    model = LiveTextPolishClient(),
-                    log = { type, message ->
-                        AppLogRepository.logEvent(DiagnosticSource.BUBBLE, type, message)
-                    }
-                )
-            }
-            if (paste.outcome == Stage2Outcome.FALLBACK_RAW) {
-                Toast.makeText(this, "Inserted your words", Toast.LENGTH_SHORT).show()
-            }
-            paste.text.ifBlank { raw }
-        } catch (t: Throwable) {
-            Log.e(TAG, "Stage-2 Live polish failed closed", t)
-            AppLogRepository.logEvent(
-                DiagnosticSource.BUBBLE,
-                DiagnosticType.STAGE2_LIVE_FAILED,
-                "reason=${t.message?.take(180) ?: t.javaClass.simpleName}"
-            )
-            AppLogRepository.logEvent(
-                DiagnosticSource.BUBBLE,
-                DiagnosticType.STAGE2_LIVE_FALLBACK,
-                "outcome=fallback_raw"
-            )
-            Toast.makeText(this, "Inserted your words", Toast.LENGTH_SHORT).show()
-            raw
-        }
-    }
-
-    private fun currentStage2Category(): com.princeniithompson.rapcha.service.floating.Stage2Category {
-        val pkg = completeTargetPackage
-        val resolvedName = try {
-            if (pkg.isNullOrBlank()) null else AppContextResolver.resolve(this, pkg)?.appName
-        } catch (t: Throwable) {
-            Log.w(TAG, "Stage-2 app name lookup failed: ${t.javaClass.simpleName}")
-            null
-        }
-        val registryName = pkg?.let { com.princeniithompson.rapcha.service.AppRegistry.NATIVE_APP_MAP[it]?.appName }
-        val hint = FloatingBubbleManager.lockedSessionContext.value
-        return Stage2CategoryMapper.map(pkg, resolvedName ?: registryName, hint)
     }
 
     private fun onRetryClicked(clipId: String? = null, fromHistory: Boolean = false) {
@@ -959,6 +900,8 @@ class FloatingBubbleService : Service() {
             scope = serviceScope,
             rawTranscript = rawTranscript,
             apiKey = apiKey,
+            targetPackage = completeTargetPackage,
+            targetHint = FloatingBubbleManager.lockedSessionContext.value,
             onStartPolish = {
                 overlayWindowManager.overlayPolishing.value = true
             },

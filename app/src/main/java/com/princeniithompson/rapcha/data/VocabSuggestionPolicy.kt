@@ -109,7 +109,12 @@ object VocabSuggestionPolicy {
         }
 
         for (token in personalIdentifiers(text)) note(token, personal = true)
-        for (token in countableTokens(text)) note(token, personal = false)
+        val spoken = countableTokens(text)
+        val skip = CommonEnglishCollocations.indexesToSkip(spoken)
+        for ((index, token) in spoken.withIndex()) {
+            if (index in skip) continue
+            note(token, personal = false)
+        }
 
         for (key in seenThisSession) {
             val previous = next[key] ?: SpellingRecord()
@@ -305,11 +310,13 @@ object VocabSuggestionPolicy {
 
     private fun canTrack(token: String): Boolean {
         if (token.isEmpty() || token.length > 80) return false
+        if (CommonEnglishCollocations.shouldSkip(token)) return false
         return token.any { it.isLetter() || it.isDigit() }
     }
 
     private fun isCountable(token: String): Boolean {
         if (token.isEmpty() || token.length > 80) return false
+        if (CommonEnglishCollocations.shouldSkip(token)) return false
         if (!token.any { it.isLetter() }) return false
         if (token.count { it.isLetter() } < 2) return false
         return token.lowercase() !in STOPWORDS

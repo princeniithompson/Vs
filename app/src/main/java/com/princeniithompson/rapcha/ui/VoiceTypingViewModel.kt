@@ -350,13 +350,14 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         val backend = if (enabled) Stage2PolishBackend.LIVE else Stage2PolishBackend.NON_LIVE
         Stage2PolishSettings.write(prefs, backend)
         _liveTwoStepPolish.value = enabled
+        com.princeniithompson.rapcha.service.FloatingBubbleManager.refreshLiveTwoStep(getApplication())
         addLog(
             LogLevel.INFO,
             TAG,
             if (enabled) {
-                "Stage-2 polish set to Live two-step. Smart stays off for that path so Stage 1 is verbatim."
+                "Live two-step is on. Complete is hidden. Polish uses the non-live model. Stage 1 stays verbatim."
             } else {
-                "Stage-2 polish set to non-live. Complete keeps the current behavior."
+                "Live two-step is off. Complete and Smart Mode keep the current behavior."
             }
         )
     }
