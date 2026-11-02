@@ -26,6 +26,9 @@ class HybridPolishPolicyTest {
         assertEquals(SectionPolishMode.TWO_STEP_LIVE, mode("com.deepseek.chat", "DeepSeek"))
         assertEquals(SectionPolishMode.TWO_STEP_LIVE, mode("com.alibaba.qwen", "Qwen"))
         assertEquals(SectionPolishMode.TWO_STEP_LIVE, mode("com.moonshot.kimichat", "Kimi"))
+        assertEquals(SectionPolishMode.TWO_STEP_LIVE, mode("me.rerere.rikkahub", "RikkaHub"))
+        assertEquals(SectionPolishMode.TWO_STEP_LIVE, mode("com.larus.nova", "豆包"))
+        assertEquals(SectionPolishMode.TWO_STEP_LIVE, mode("com.tencent.hunyuan.app.chat", "元宝"))
 
         assertEquals(SectionPolishMode.SMART, mode("com.whatsapp", "WhatsApp"))
         assertEquals(SectionPolishMode.SMART, mode("org.telegram.messenger", "Telegram"))

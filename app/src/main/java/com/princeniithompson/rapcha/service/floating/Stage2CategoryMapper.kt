@@ -20,7 +20,12 @@ object Stage2CategoryMapper {
         "com.anthropic.claude",
         "com.google.android.apps.bard",
         "com.google.android.apps.gemini",
-        "ai.x.grok"
+        "ai.x.grok",
+        "ai.x.grok.bot",
+        "me.rerere.rikkahub",
+        "com.larus.nova",
+        "com.tencent.hunyuan.app.chat",
+        "com.aliyun.tongyi"
     )
 
     private val MESSAGE_PACKAGES = setOf(
@@ -61,14 +66,31 @@ object Stage2CategoryMapper {
         if (pkg in AI_PACKAGES) return true
         if (pkg.contains("chatgpt") || pkg.contains("openai") || pkg.contains("claude") ||
             pkg.contains("anthropic") || pkg.contains("gemini") || pkg.contains(".bard") ||
-            pkg.contains("grok")
+            pkg.contains("grok") || pkg.contains("rikkahub") || pkg.contains("deepseek") ||
+            pkg.contains("qwen") || pkg.contains("kimi") || pkg.contains("doubao") ||
+            pkg.contains("chatglm") || pkg.contains("yuanbao") || pkg.contains("hunyuan") ||
+            pkg.contains("tongyi") || pkg.contains("zhipu")
         ) {
             return true
         }
         return containsToken(name, "chatgpt") ||
             containsToken(name, "claude") ||
             containsToken(name, "gemini") ||
-            name.contains("grok")
+            name.contains("grok") ||
+            containsToken(name, "rikkahub") ||
+            containsToken(name, "deepseek") ||
+            containsToken(name, "qwen") ||
+            containsToken(name, "kimi") ||
+            containsToken(name, "doubao") ||
+            containsToken(name, "chatglm") ||
+            containsToken(name, "yuanbao") ||
+            containsToken(name, "hunyuan") ||
+            containsToken(name, "tongyi") ||
+            name.contains("豆包") ||
+            name.contains("元宝") ||
+            name.contains("通义") ||
+            name.contains("文心") ||
+            name.contains("智谱")
     }
 
     private fun isMessage(pkg: String, name: String): Boolean {

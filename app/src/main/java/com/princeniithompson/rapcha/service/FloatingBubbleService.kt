@@ -32,6 +32,7 @@ import com.princeniithompson.rapcha.service.floating.FloatingNotificationManager
 import com.princeniithompson.rapcha.service.floating.FloatingOverlayWindowManager
 import com.princeniithompson.rapcha.service.floating.FloatingPolishCoordinator
 import com.princeniithompson.rapcha.service.floating.LivePolishOutcome
+import com.princeniithompson.rapcha.service.floating.LiveStreamPaste
 import com.princeniithompson.rapcha.service.floating.LivePolishProtocol
 import com.princeniithompson.rapcha.service.floating.LiveTextPolishClient
 import com.princeniithompson.rapcha.service.floating.HybridPolishPolicy
@@ -1001,15 +1002,49 @@ class FloatingBubbleService : Service() {
                         CustomVocabularyRepository.getVocabulary()
                     )
                 }
+                var committed = ""
                 suspend fun pasteLatest(text: String, final: Boolean): RapchaTextInserter.InsertionResult {
                     if (text.isBlank()) return RapchaTextInserter.InsertionResult.Failed
                     val gen = pasteGen.incrementAndGet()
                     if (final) pasteFinished.set(true)
                     return pasteGate.withLock {
                         if (!final && (pasteFinished.get() || gen != pasteGen.get())) {
-                            RapchaTextInserter.InsertionResult.Failed
-                        } else {
-                            FloatingTextInjector.injectReporting(this@FloatingBubbleService, text)
+                            return@withLock RapchaTextInserter.InsertionResult.Failed
+                        }
+                        when (val edit = LiveStreamPaste.plan(committed, text)) {
+                            LiveStreamPaste.Edit.Skip -> {
+                                if (committed.isNotEmpty()) {
+                                    RapchaTextInserter.InsertionResult.SuccessDirect
+                                } else {
+                                    RapchaTextInserter.InsertionResult.Failed
+                                }
+                            }
+                            is LiveStreamPaste.Edit.Append -> {
+                                val placed = FloatingTextInjector.injectReporting(
+                                    this@FloatingBubbleService,
+                                    edit.suffix,
+                                    clipboardText = text
+                                )
+                                if (placed is RapchaTextInserter.InsertionResult.SuccessDirect ||
+                                    placed is RapchaTextInserter.InsertionResult.SuccessClipboardFallback
+                                ) {
+                                    committed = text
+                                }
+                                placed
+                            }
+                            is LiveStreamPaste.Edit.Replace -> {
+                                val placed = FloatingTextInjector.rewriteReporting(
+                                    this@FloatingBubbleService,
+                                    edit.previousLength,
+                                    edit.full
+                                )
+                                if (placed is RapchaTextInserter.InsertionResult.SuccessDirect ||
+                                    placed is RapchaTextInserter.InsertionResult.SuccessClipboardFallback
+                                ) {
+                                    committed = text
+                                }
+                                placed
+                            }
                         }
                     }
                 }

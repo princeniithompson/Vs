@@ -49,7 +49,9 @@ object AppClassifier {
     private val AI_CHAT_NAMES = setOf(
         "gemini", "chatgpt", "claude", "grok", "copilot", "perplexity",
         "ai studio", "google ai studio", "deepseek", "kimi", "qwen",
-        "poe", "character.ai", "v0", "notebooklm", "google flow"
+        "poe", "character.ai", "v0", "notebooklm", "google flow",
+        "rikkahub", "doubao", "chatglm", "tongyi", "yuanbao", "hunyuan",
+        "wenxin", "zhipu", "豆包", "元宝", "通义", "文心", "智谱"
     )
 
     private val MESSAGING_NAMES = setOf(
@@ -194,7 +196,10 @@ object AppClassifier {
             pkgLower.contains("gemini") || pkgLower.contains("bard") || pkgLower.contains("chatgpt") ||
             pkgLower.contains("openai") || pkgLower.contains("claude") || pkgLower.contains("anthropic") ||
             pkgLower.contains("grok") || pkgLower.contains("perplexity") || pkgLower.contains("deepseek") ||
-            pkgLower.contains("copilot") || pkgLower.contains("qwen") || pkgLower.contains("kimi") -> AppCategory.AI_CHAT
+            pkgLower.contains("copilot") || pkgLower.contains("qwen") || pkgLower.contains("kimi") ||
+            pkgLower.contains("rikkahub") || pkgLower.contains("doubao") || pkgLower.contains("chatglm") ||
+            pkgLower.contains("yuanbao") || pkgLower.contains("hunyuan") || pkgLower.contains("tongyi") ||
+            pkgLower.contains("zhipu") || pkgLower.contains("wenxin") -> AppCategory.AI_CHAT
 
             pkgLower.contains("whatsapp") || pkgLower.contains("telegram") || pkgLower.contains("signal") ||
             pkgLower.contains("messaging") || pkgLower.contains("mms") || pkgLower.contains("discord") ||
