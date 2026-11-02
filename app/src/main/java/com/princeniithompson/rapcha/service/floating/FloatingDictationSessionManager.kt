@@ -67,6 +67,7 @@ class FloatingDictationSessionManager(
 
     private var durationJob: Job? = null
     private var retryStopJob: Job? = null
+    private var liveSocketClosed: kotlinx.coroutines.CompletableDeferred<Unit>? = null
 
     @Volatile
     private var liveAbandoned = false
@@ -450,6 +451,8 @@ class FloatingDictationSessionManager(
         sessionJob?.cancel()
         sessionJob = null
         sessionScope = null
+        val liveClosed = kotlinx.coroutines.CompletableDeferred<Unit>()
+        liveSocketClosed = liveClosed
 
         retryStopJob = scope.launch(Dispatchers.IO) {
             try {
@@ -458,6 +461,7 @@ class FloatingDictationSessionManager(
             } catch (e: Exception) {
                 Log.e(TAG, "Error stopping audio/websocket", e)
             } finally {
+                if (!liveClosed.isCompleted) liveClosed.complete(Unit)
                 try {
                     if (discardRetryClip) {
                         RetryClipStore.discard(retryClipId)
@@ -488,6 +492,14 @@ class FloatingDictationSessionManager(
      */
     suspend fun awaitRetryClip() {
         retryStopJob?.join()
+    }
+
+    /**
+     * Happy-path Polish waits only until the Live socket is closed.
+     * Discarding the retry WAV continues after that and must not block the paste.
+     */
+    suspend fun awaitLiveSocketClosed() {
+        liveSocketClosed?.await()
     }
 
     fun settleRetryClip(discard: Boolean) {

@@ -38,7 +38,8 @@ data class LivePolishResponse(
  */
 class LiveTextPolishClient(
     private val httpClient: OkHttpClient = ApiConfig.createOkHttpClient(),
-    private val clock: () -> Long = { android.os.SystemClock.elapsedRealtime() }
+    private val clock: () -> Long = { android.os.SystemClock.elapsedRealtime() },
+    private val onPartial: ((String) -> Unit)? = null
 ) : Stage2Model {
 
     override fun polish(request: Stage2Request): LivePolishResponse = runSession(request, sendTurn = true)
@@ -58,20 +59,33 @@ class LiveTextPolishClient(
         if (ApiConfig.isPlaceholder(apiKey)) {
             return LivePolishResponse(null, "Gemini API key is missing", timedOut = false)
         }
-        val assembler = LivePolishTranscriptAssembler()
-        val failure = AtomicReference<String?>(null)
-        val contentSent = AtomicBoolean(false)
-        var socket: WebSocket? = null
+        val claimed = if (sendTurn) {
+            Stage2WarmLine.claim(apiKey, request.systemInstruction, waitMs = 4_000)
+        } else {
+            null
+        }
+        if (sendTurn && claimed == null) {
+            Stage2WarmLine.discardMatching(apiKey, request.systemInstruction)
+        }
+        val assembler = claimed?.assembler ?: LivePolishTranscriptAssembler()
+        val failure = claimed?.failure ?: AtomicReference<String?>(null)
+        val contentSent = AtomicBoolean(claimed != null)
+        var socket: WebSocket? = claimed?.socket
         val started = clock()
         var turnSentAt = 0L
         var firstTokenAt = -1L
         var lastGrowthAt = 0L
         var seenChars = 0
+        var postedChars = 0
 
         val setup = LivePolishProtocol.setupMessage(request.systemInstruction)
         val turn = LivePolishProtocol.clientContentMessage(request.userText)
 
         try {
+            if (claimed != null) {
+                if (socket?.send(turn) == true) assembler.mark("turn_sent")
+                else failure.compareAndSet(null, "Could not send the transcript turn")
+            } else {
             val wsRequest = GeminiLiveWebSocketClient.buildWebSocketRequest(apiKey)
             socket = httpClient.newWebSocket(wsRequest, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -125,6 +139,7 @@ class LiveTextPolishClient(
                     }
                 }
             })
+            }
 
             while (true) {
                 val now = clock()
@@ -133,6 +148,10 @@ class LiveTextPolishClient(
                     seenChars = textNow.length
                     lastGrowthAt = now
                     if (firstTokenAt < 0) firstTokenAt = now
+                    if (onPartial != null && textNow.length >= 8 && textNow.length - postedChars >= 8) {
+                        postedChars = textNow.length
+                        onPartial.invoke(textNow)
+                    }
                 }
                 if (!sendTurn && assembler.setupComplete) {
                     return done("setup", null, false, assembler, started, now)
@@ -252,5 +271,148 @@ object LivePolishOutcome {
             return "Live polish could not connect ($short).$tail"
         }
         return "Live polish failed.$tail"
+    }
+}
+
+internal class WarmSocket(
+    val apiKey: String,
+    val instruction: String,
+    val socket: WebSocket,
+    val assembler: LivePolishTranscriptAssembler,
+    val failure: AtomicReference<String?>,
+    val ready: AtomicBoolean
+)
+
+/**
+ * Opens the Stage-2 setup while Stage-1 is still listening.
+ * Polish reuses it only when setup has already completed for the same instruction.
+ */
+object Stage2WarmLine {
+    private val gate = Any()
+    private var generation = 0
+    private var pending = false
+    private var warm: WarmSocket? = null
+
+    fun prewarm(apiKey: String, systemInstruction: String) {
+        if (ApiConfig.isPlaceholder(apiKey)) return
+        val gen = synchronized(gate) {
+            generation += 1
+            pending = true
+            warm?.socket?.let { cancelQuiet(it) }
+            warm = null
+            generation
+        }
+        val assembler = LivePolishTranscriptAssembler()
+        val failure = AtomicReference<String?>(null)
+        val ready = AtomicBoolean(false)
+        val setup = LivePolishProtocol.setupMessage(systemInstruction)
+        val request = try {
+            GeminiLiveWebSocketClient.buildWebSocketRequest(apiKey)
+        } catch (_: Exception) {
+            synchronized(gate) { if (gen == generation) pending = false }
+            return
+        }
+        val socket = ApiConfig.createOkHttpClient().newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (!isCurrent(gen)) {
+                    cancelQuiet(webSocket)
+                    return
+                }
+                assembler.mark("warm_open:${response.code}")
+                if (webSocket.send(setup)) assembler.mark("setup_sent")
+                else failure.set("Could not send Live setup")
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (assembler.absorb(text) == LivePolishSignal.SETUP_COMPLETE) ready.set(true)
+            }
+
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                onMessage(webSocket, bytes.utf8())
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                assembler.mark("warm_fail")
+                failure.set(t.message ?: "Live socket failed")
+            }
+        })
+        synchronized(gate) {
+            if (gen != generation) {
+                cancelQuiet(socket)
+                return
+            }
+            warm = WarmSocket(apiKey, systemInstruction, socket, assembler, failure, ready)
+            pending = false
+        }
+    }
+
+    /**
+     * Returns the warm socket once setup has completed for this instruction.
+     * A missing line returns immediately. An in-flight line is waited on so Polish
+     * does not open a second Stage-2 socket.
+     */
+    internal fun claim(apiKey: String, instruction: String, waitMs: Long = 4_000): WarmSocket? {
+        val deadline = android.os.SystemClock.elapsedRealtime() + waitMs
+        while (true) {
+            val current = synchronized(gate) { warm }
+            val stillPending = synchronized(gate) { pending }
+            if (current == null && !stillPending) return null
+            if (current != null && (current.apiKey != apiKey || current.instruction != instruction)) return null
+            if (current != null && current.failure.get() != null) return null
+            if (current != null && current.ready.get()) {
+                synchronized(gate) {
+                    if (warm === current && current.ready.get()) {
+                        warm = null
+                        pending = false
+                        generation += 1
+                        return current
+                    }
+                }
+                continue
+            }
+            if (android.os.SystemClock.elapsedRealtime() >= deadline) return null
+            try {
+                Thread.sleep(40)
+            } catch (_: InterruptedException) {
+                return null
+            }
+        }
+    }
+
+    /** Drops a warm line for this instruction so a fresh socket can replace a failed one. */
+    fun discardMatching(apiKey: String, instruction: String) {
+        val old = synchronized(gate) {
+            val current = warm
+            if (current != null && (current.apiKey != apiKey || current.instruction != instruction)) {
+                return
+            }
+            generation += 1
+            pending = false
+            warm = null
+            current?.socket
+        }
+        if (old != null) cancelQuiet(old)
+    }
+
+    fun close() {
+        val old = synchronized(gate) {
+            generation += 1
+            pending = false
+            warm?.socket.also { warm = null }
+        } ?: return
+        cancelQuiet(old)
+    }
+
+    private fun isCurrent(gen: Int): Boolean = synchronized(gate) { gen == generation }
+
+    private fun cancelQuiet(socket: WebSocket) {
+        try {
+            socket.close(1000, "warm done")
+        } catch (_: Exception) {
+        }
+        try {
+            socket.cancel()
+        } catch (_: Exception) {
+        }
     }
 }

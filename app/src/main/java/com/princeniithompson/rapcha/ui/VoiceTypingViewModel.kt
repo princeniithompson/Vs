@@ -149,16 +149,17 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     private val _isSmartMode = MutableStateFlow(prefs.getBoolean(KEY_SMART_MODE, false))
     val isSmartMode: StateFlow<Boolean> = _isSmartMode.asStateFlow()
 
-    private val _liveTwoStepPolish = MutableStateFlow(
-        Stage2PolishSettings.read(prefs) == Stage2PolishBackend.LIVE
-    )
+    private val _polishOverride = MutableStateFlow(Stage2PolishSettings.read(prefs))
+    val polishOverride: StateFlow<Stage2PolishBackend> = _polishOverride.asStateFlow()
+
+    private val _liveTwoStepPolish = MutableStateFlow(_polishOverride.value == Stage2PolishBackend.LIVE)
     val liveTwoStepPolish: StateFlow<Boolean> = _liveTwoStepPolish.asStateFlow()
 
     /** Smart as the next session will actually run it. Live two-step forces verbatim. */
     val effectiveSmartMode: Boolean
         get() = Stage2SessionPolicy.effectiveSmartMode(
             _isSmartMode.value,
-            if (_liveTwoStepPolish.value) Stage2PolishBackend.LIVE else Stage2PolishBackend.NON_LIVE
+            if (_polishOverride.value == Stage2PolishBackend.LIVE) Stage2PolishBackend.LIVE else Stage2PolishBackend.NON_LIVE
         )
 
     private val _isRecording = MutableStateFlow(false)
@@ -342,24 +343,16 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         addLog(LogLevel.INFO, TAG, "Smart Mode set to $enabled (saved to preferences, takes effect next session)")
     }
 
-    fun setLiveTwoStepPolish(enabled: Boolean) {
+    fun setPolishOverride(mode: Stage2PolishBackend) {
         if (_isRecording.value) {
-            addLog(LogLevel.INFO, TAG, "Cannot change Stage-2 polish while a session is recording")
+            addLog(LogLevel.INFO, TAG, "Polish route changes on the next section, not while recording")
             return
         }
-        val backend = if (enabled) Stage2PolishBackend.LIVE else Stage2PolishBackend.NON_LIVE
-        Stage2PolishSettings.write(prefs, backend)
-        _liveTwoStepPolish.value = enabled
+        Stage2PolishSettings.write(prefs, mode)
+        _polishOverride.value = mode
+        _liveTwoStepPolish.value = mode == Stage2PolishBackend.LIVE
         com.princeniithompson.rapcha.service.FloatingBubbleManager.refreshLiveTwoStep(getApplication())
-        addLog(
-            LogLevel.INFO,
-            TAG,
-            if (enabled) {
-                "Live two-step is on. Complete is hidden. Polish uses models/gemini-3.8-live. Stage 1 stays verbatim."
-            } else {
-                "Live two-step is off. Complete and Smart Mode keep the current behavior."
-            }
-        )
+        addLog(LogLevel.INFO, TAG, "Polish route set to ${mode.storedValue()} for the next section")
     }
 
     fun toggleRecording() {

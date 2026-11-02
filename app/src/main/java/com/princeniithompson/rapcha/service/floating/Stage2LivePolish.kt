@@ -41,6 +41,7 @@ object Stage2LivePolish {
         apiKey: String,
         model: Stage2Model,
         appName: String = "App",
+        systemInstruction: String? = null,
         log: (DiagnosticType, String) -> Unit = { _, _ -> },
         nowMs: () -> Long = { System.currentTimeMillis() }
     ): Stage2Paste {
@@ -55,7 +56,11 @@ object Stage2LivePolish {
             model.polish(
                 Stage2Request(
                     apiKey = apiKey,
-                    systemInstruction = Stage2LivePrompt.systemInstruction(category, appName, protectedTerms),
+                    systemInstruction = systemInstruction ?: Stage2LivePrompt.systemInstruction(
+                        category,
+                        appName,
+                        protectedTerms
+                    ),
                     userText = Stage2LivePrompt.userTurn(category, raw, protectedTerms)
                 )
             )

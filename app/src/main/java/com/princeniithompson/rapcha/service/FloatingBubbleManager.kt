@@ -91,8 +91,18 @@ object FloatingBubbleManager {
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
+    private val _polishOverride = MutableStateFlow(com.princeniithompson.rapcha.service.floating.Stage2PolishBackend.AUTO)
+    val polishOverride: StateFlow<com.princeniithompson.rapcha.service.floating.Stage2PolishBackend> = _polishOverride.asStateFlow()
+
+    /** True only while the locked section is two-step Live. Smart sections stay false. */
     private val _liveTwoStepPolish = MutableStateFlow(false)
     val liveTwoStepPolish: StateFlow<Boolean> = _liveTwoStepPolish.asStateFlow()
+
+    private val _sectionPolishMode = MutableStateFlow<com.princeniithompson.rapcha.service.floating.SectionPolishMode?>(null)
+    val sectionPolishMode: StateFlow<com.princeniithompson.rapcha.service.floating.SectionPolishMode?> = _sectionPolishMode.asStateFlow()
+
+    private val _lockedPolishSection = MutableStateFlow<com.princeniithompson.rapcha.service.floating.LockedPolishSection?>(null)
+    val lockedPolishSection: StateFlow<com.princeniithompson.rapcha.service.floating.LockedPolishSection?> = _lockedPolishSection.asStateFlow()
 
     private val _isNetworkProblem = MutableStateFlow(false)
     val isNetworkProblem: StateFlow<Boolean> = _isNetworkProblem.asStateFlow()
@@ -145,7 +155,20 @@ object FloatingBubbleManager {
 
     fun refreshLiveTwoStep(context: Context) {
         val settings = context.getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)
-        _liveTwoStepPolish.value = com.princeniithompson.rapcha.service.floating.Stage2PolishSettings.isLive(settings)
+        _polishOverride.value = com.princeniithompson.rapcha.service.floating.Stage2PolishSettings.read(settings)
+    }
+
+    fun lockSection(section: com.princeniithompson.rapcha.service.floating.LockedPolishSection) {
+        _lockedPolishSection.value = section
+        _sectionPolishMode.value = section.mode
+        _liveTwoStepPolish.value = section.mode == com.princeniithompson.rapcha.service.floating.SectionPolishMode.TWO_STEP_LIVE
+    }
+
+    fun unlockSection() {
+        _lockedPolishSection.value = null
+        _sectionPolishMode.value = null
+        _liveTwoStepPolish.value = false
+        com.princeniithompson.rapcha.service.floating.Stage2WarmLine.close()
     }
 
     fun init(context: Context) {

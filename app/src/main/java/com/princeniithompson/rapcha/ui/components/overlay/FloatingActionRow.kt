@@ -80,10 +80,15 @@ fun FloatingActionRow(
     onCompleteClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isAiApp by FloatingBubbleManager.isCurrentAppAi.collectAsState()
+    val foregroundAi by FloatingBubbleManager.isCurrentAppAi.collectAsState()
     val selectedAiMode by FloatingBubbleManager.selectedAiPolishMode.collectAsState()
     val offlineRetry by FloatingBubbleManager.offlineRetry.collectAsState()
-    val liveTwoStep by FloatingBubbleManager.liveTwoStepPolish.collectAsState()
+    val sectionMode by FloatingBubbleManager.sectionPolishMode.collectAsState()
+    val lockedSection by FloatingBubbleManager.lockedPolishSection.collectAsState()
+    val liveTwoStep = sectionMode == com.princeniithompson.rapcha.service.floating.SectionPolishMode.TWO_STEP_LIVE
+    val isAiApp = lockedSection?.let {
+        it.polishCategory == com.princeniithompson.rapcha.service.AppCategory.AI_CHAT
+    } ?: foregroundAi
     val actionPlan = BubbleActionPlan.resolve(
         liveTwoStep = liveTwoStep,
         polishing = isPolishing,

@@ -53,7 +53,9 @@ class FloatingPolishCoordinator {
         onStartPolish: () -> Unit,
         onFinishPolish: () -> Unit,
         targetPackage: String? = null,
-        targetHint: String? = null
+        targetHint: String? = null,
+        lockedCategory: AppCategory? = null,
+        lockedAppName: String? = null
     ) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastPolishClickTime < POLISH_DEBOUNCE_MS) {
@@ -94,10 +96,11 @@ class FloatingPolishCoordinator {
                     "Transcript length: ${rawTranscript.length} chars"
                 )
 
-                val resolved = if (com.princeniithompson.rapcha.config.RapchaConfig.IS_APP_DETECTION_ENABLED) {
-                    resolvePolishTarget(context, targetPackage, targetHint)
-                } else {
-                    PolishTarget(AppCategory.OTHER, "App")
+                val resolved = when {
+                    lockedCategory != null -> PolishTarget(lockedCategory, lockedAppName ?: "App")
+                    com.princeniithompson.rapcha.config.RapchaConfig.IS_APP_DETECTION_ENABLED ->
+                        resolvePolishTarget(context, targetPackage, targetHint)
+                    else -> PolishTarget(AppCategory.OTHER, "App")
                 }
                 val category = resolved.category
                 val targetAppName = resolved.appName
@@ -186,10 +189,24 @@ class FloatingPolishCoordinator {
         val appName: String
     )
 
-    fun stage2Target(context: Context, targetPackage: String?, targetHint: String?): Stage2Target {
-        val hint = targetHint ?: FloatingBubbleManager.lockedSessionContext.value
-        val pkg = listOf(targetPackage, FloatingBubbleManager.currentForegroundPackage.value)
-            .firstOrNull { looksLikePackage(it) }
+    fun stage2Target(
+        context: Context,
+        targetPackage: String?,
+        targetHint: String?,
+        allowLiveHint: Boolean = true
+    ): Stage2Target {
+        val hint = when {
+            targetHint != null -> targetHint
+            allowLiveHint -> FloatingBubbleManager.lockedSessionContext.value
+            else -> null
+        }
+        val pkg = if (looksLikePackage(targetPackage)) {
+            targetPackage
+        } else if (allowLiveHint) {
+            listOf(FloatingBubbleManager.currentForegroundPackage.value).firstOrNull { looksLikePackage(it) }
+        } else {
+            null
+        }
         val resolvedName = if (pkg != null) {
             try {
                 AppContextResolver.resolve(context, pkg)?.appName

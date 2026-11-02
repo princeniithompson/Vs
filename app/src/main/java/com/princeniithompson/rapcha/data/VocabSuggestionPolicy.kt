@@ -76,6 +76,9 @@ object VocabSuggestionPolicy {
      * [isOrdinaryWord] is SCOWL size 60 plus the supplementary common list.
      * Ordinary words and [dictionaryTerms] are not counted. A snoozed key is
      * quiet for both the three-session path and the one-session personal path.
+     *
+     * Never suggest numbers, ordinals, or list markers such as 10, 10., 10), 1., or #10.
+     * [VocabTermFilter] drops those after the token is parsed.
      */
     fun observe(
         text: String,
@@ -140,9 +143,11 @@ object VocabSuggestionPolicy {
         var best: Suggestion? = null
         for (key in pool) {
             val record = next[key] ?: continue
+            val display = record.display.ifBlank { key }
+            if (!VocabTermFilter.isUsable(display)) continue
             val candidate = Suggestion(
                 key = key,
-                display = record.display.ifBlank { key },
+                display = display,
                 sessionCount = record.sessionCount
             )
             val currentBest = best
@@ -310,7 +315,7 @@ object VocabSuggestionPolicy {
 
     private fun canTrack(token: String): Boolean {
         if (token.isEmpty() || token.length > 80) return false
-        if (CommonEnglishCollocations.shouldSkip(token)) return false
+        if (!VocabTermFilter.isUsable(token)) return false
         return token.any { it.isLetter() || it.isDigit() }
     }
 

@@ -126,6 +126,7 @@ fun VoiceTypingScreen(
     val isRecording by viewModel.isRecording.collectAsState()
     val isSmartMode by viewModel.isSmartMode.collectAsState()
     val liveTwoStepPolish by viewModel.liveTwoStepPolish.collectAsState()
+    val polishOverride by viewModel.polishOverride.collectAsState()
     val isBubbleEnabled by viewModel.isBubbleEnabled.collectAsState()
     val isSmartSafeModeEnabled by viewModel.isSmartSafeModeEnabled.collectAsState()
     val isAccessibilityConnected by viewModel.isAccessibilityConnected.collectAsState()
@@ -450,39 +451,37 @@ fun VoiceTypingScreen(
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Live two-step polish",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (isRecording) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                                    else MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (liveTwoStepPolish) {
-                                "On. Complete is hidden. Polish sends the verbatim transcript to gemini-3.8-live. In AI apps that polish follows Lyra and never answers the question. Stage 1 stays verbatim."
-                            } else {
-                                "Off. Complete stays, and it inserts the Live transcript. Smart Mode can polish while you talk. The Polish button still uses the non-live model."
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (isRecording) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                                    else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Switch(
-                        checked = liveTwoStepPolish,
-                        onCheckedChange = { viewModel.setLiveTwoStepPolish(it) },
-                        enabled = !isRecording,
-                        modifier = Modifier.testTag("live_two_step_polish_switch")
+                    Text(
+                        text = "Polish route",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Auto uses two-step Live in AI apps and Smart everywhere else. Force Live or Force Smart applies on the next dictation, not while you are speaking.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    listOf(
+                        com.princeniithompson.rapcha.service.floating.Stage2PolishBackend.AUTO to "Auto",
+                        com.princeniithompson.rapcha.service.floating.Stage2PolishBackend.LIVE to "Force two-step Live",
+                        com.princeniithompson.rapcha.service.floating.Stage2PolishBackend.NON_LIVE to "Force Smart"
+                    ).forEach { (mode, label) ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = polishOverride == mode,
+                                onClick = { viewModel.setPolishOverride(mode) },
+                                enabled = !isRecording
+                            )
+                            Text(text = label, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
                 }
                 Row(
                     modifier = Modifier

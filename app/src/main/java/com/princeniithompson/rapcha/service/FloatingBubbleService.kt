@@ -34,11 +34,14 @@ import com.princeniithompson.rapcha.service.floating.FloatingPolishCoordinator
 import com.princeniithompson.rapcha.service.floating.LivePolishOutcome
 import com.princeniithompson.rapcha.service.floating.LivePolishProtocol
 import com.princeniithompson.rapcha.service.floating.LiveTextPolishClient
+import com.princeniithompson.rapcha.service.floating.HybridPolishPolicy
+import com.princeniithompson.rapcha.service.floating.LockedPolishSection
+import com.princeniithompson.rapcha.service.floating.SectionPolishMode
 import com.princeniithompson.rapcha.service.floating.Stage2LivePolish
+import com.princeniithompson.rapcha.service.floating.Stage2LivePrompt
 import com.princeniithompson.rapcha.service.floating.Stage2Outcome
-import com.princeniithompson.rapcha.service.floating.Stage2PolishRoute
 import com.princeniithompson.rapcha.service.floating.Stage2PolishSettings
-import com.princeniithompson.rapcha.service.floating.Stage2SessionPolicy
+import com.princeniithompson.rapcha.service.floating.Stage2WarmLine
 import com.princeniithompson.rapcha.service.floating.FloatingTextInjector
 import com.princeniithompson.rapcha.service.floating.RapchaTextInserter
 import com.princeniithompson.rapcha.service.floating.OfflineRetryRules
@@ -54,7 +57,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Thin coordinator service for the floating voice bubble overlay.
@@ -231,7 +238,7 @@ class FloatingBubbleService : Service() {
                         DictationAlerts.endingSoon(this@FloatingBubbleService)
                     } else if (sessionManager.isRecording) {
                         sessionLimitAutoFinish = true
-                        if (Stage2PolishSettings.isLive(getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE))) {
+                        if (FloatingBubbleManager.sectionPolishMode.value == SectionPolishMode.TWO_STEP_LIVE) {
                             onPolishClicked()
                         } else {
                             onConfirmClicked()
@@ -552,6 +559,48 @@ class FloatingBubbleService : Service() {
             FloatingBubbleManager.setLockedSessionContext(null)
         }
 
+        val prefs = getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)
+        val savedSmartMode = prefs.getBoolean("smart_mode", false)
+        val override = Stage2PolishSettings.read(prefs)
+        val target = polishCoordinator.stage2Target(
+            this,
+            completeTargetPackage,
+            null,
+            allowLiveHint = false
+        )
+        val aiApp = HybridPolishPolicy.isAiTarget(target.stage2Category, target.polishCategory)
+        val mode = HybridPolishPolicy.lock(override, aiApp)
+        val liveCategory = HybridPolishPolicy.liveCategory(target.stage2Category, aiApp)
+        val instruction = if (mode == SectionPolishMode.TWO_STEP_LIVE) {
+            Stage2LivePrompt.systemInstruction(
+                liveCategory,
+                target.appName,
+                CustomVocabularyRepository.getVocabulary()
+            )
+        } else {
+            ""
+        }
+        val section = LockedPolishSection(
+            mode = mode,
+            stage2Category = if (mode == SectionPolishMode.TWO_STEP_LIVE) liveCategory else target.stage2Category,
+            polishCategory = target.polishCategory,
+            appName = target.appName,
+            systemInstruction = instruction
+        )
+        FloatingBubbleManager.lockSection(section)
+        AppLogRepository.logEvent(
+            DiagnosticSource.BUBBLE,
+            DiagnosticType.SESSION_START,
+            "section_lock=${mode.name} category=${section.stage2Category.name} app=${section.appName} override=${override.storedValue()}"
+        )
+        if (mode == SectionPolishMode.TWO_STEP_LIVE) {
+            serviceScope.launch(Dispatchers.IO) {
+                Stage2WarmLine.prewarm(apiKey, instruction)
+            }
+        } else {
+            Stage2WarmLine.close()
+        }
+
         FloatingBubbleManager.setRecordingState(true)
         FloatingHapticManager.trigger(this, FloatingHapticType.TRANSCRIPTION_START)
         overlayWindowManager.expandPanel()
@@ -562,10 +611,7 @@ class FloatingBubbleService : Service() {
         pendingCompletionTimeoutJob = null
         overlayWindowManager.overlayRecording.value = true
 
-        val prefs = getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)
-        val savedSmartMode = prefs.getBoolean("smart_mode", false)
-        val stage2 = Stage2PolishSettings.read(prefs)
-        val isSmartMode = Stage2SessionPolicy.effectiveSmartMode(savedSmartMode, stage2)
+        val isSmartMode = mode == SectionPolishMode.SMART && savedSmartMode
         val selectedModel = prefs.getString("selected_model", GeminiLiveWebSocketClient.DEFAULT_MODEL) ?: GeminiLiveWebSocketClient.DEFAULT_MODEL
 
         sessionManager.startSession(
@@ -901,8 +947,9 @@ class FloatingBubbleService : Service() {
         }
         offlineRetry.clearHold()
 
-        if (Stage2PolishRoute.usesLiveModel(Stage2PolishSettings.isLive(getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)))) {
-            polishWithLiveStage2(rawTranscript, apiKey)
+        val locked = FloatingBubbleManager.lockedPolishSection.value
+        if (locked?.mode == SectionPolishMode.TWO_STEP_LIVE) {
+            polishWithLiveStage2(rawTranscript, apiKey, locked)
             return
         }
 
@@ -913,6 +960,8 @@ class FloatingBubbleService : Service() {
             apiKey = apiKey,
             targetPackage = completeTargetPackage,
             targetHint = FloatingBubbleManager.lockedSessionContext.value,
+            lockedCategory = locked?.polishCategory,
+            lockedAppName = locked?.appName,
             onStartPolish = {
                 overlayWindowManager.overlayPolishing.value = true
             },
@@ -927,31 +976,57 @@ class FloatingBubbleService : Service() {
      * Live two-step Polish. The only model is models/gemini-3.8-live.
      * If that turn returns no text, the raw Stage-1 transcript is inserted.
      */
-    private fun polishWithLiveStage2(rawTranscript: String, apiKey: String) {
+    private fun polishWithLiveStage2(
+        rawTranscript: String,
+        apiKey: String,
+        locked: LockedPolishSection
+    ) {
         if (rawTranscript.isBlank()) {
             Toast.makeText(this, "No text to polish", Toast.LENGTH_SHORT).show()
             resetAndCollapse()
             return
         }
         overlayWindowManager.overlayPolishing.value = true
-        val target = polishCoordinator.stage2Target(
-            context = this,
-            targetPackage = completeTargetPackage,
-            targetHint = FloatingBubbleManager.lockedSessionContext.value
-        )
+        val pasteGate = Mutex()
+        val pasteGen = AtomicInteger(0)
+        val pasteFinished = AtomicBoolean(false)
         serviceScope.launch {
             try {
-                sessionManager.awaitRetryClip()
+                sessionManager.awaitLiveSocketClosed()
                 com.princeniithompson.rapcha.websocket.GeminiLiveWebSocketClient.terminateActiveLiveSockets()
+                val instruction = locked.systemInstruction.ifBlank {
+                    Stage2LivePrompt.systemInstruction(
+                        locked.stage2Category,
+                        locked.appName,
+                        CustomVocabularyRepository.getVocabulary()
+                    )
+                }
+                suspend fun pasteLatest(text: String, final: Boolean): RapchaTextInserter.InsertionResult {
+                    if (text.isBlank()) return RapchaTextInserter.InsertionResult.Failed
+                    val gen = pasteGen.incrementAndGet()
+                    if (final) pasteFinished.set(true)
+                    return pasteGate.withLock {
+                        if (!final && (pasteFinished.get() || gen != pasteGen.get())) {
+                            RapchaTextInserter.InsertionResult.Failed
+                        } else {
+                            FloatingTextInjector.injectReporting(this@FloatingBubbleService, text)
+                        }
+                    }
+                }
                 val paste = withContext(Dispatchers.IO) {
                     Stage2LivePolish.execute(
                         rawTranscript = rawTranscript,
-                        category = target.stage2Category,
-                        appName = target.appName,
+                        category = locked.stage2Category,
+                        appName = locked.appName,
                         protectedTerms = CustomVocabularyRepository.getVocabulary(),
                         stage1Dropped = sessionManager.consumeStage1Drop(),
                         apiKey = apiKey,
-                        model = LiveTextPolishClient(),
+                        model = LiveTextPolishClient(onPartial = { partial ->
+                            serviceScope.launch {
+                                pasteLatest(partial, final = false)
+                            }
+                        }),
+                        systemInstruction = instruction,
                         log = { type, message ->
                             AppLogRepository.logEvent(DiagnosticSource.BUBBLE, type, message)
                         }
@@ -963,7 +1038,7 @@ class FloatingBubbleService : Service() {
                     AppLogRepository.logEvent(
                         DiagnosticSource.BUBBLE,
                         DiagnosticType.STAGE2_LIVE_FALLBACK,
-                        "fallback=raw model=${LivePolishProtocol.MODEL} category=${target.stage2Category}"
+                        "fallback=raw model=${LivePolishProtocol.MODEL} category=${locked.stage2Category}"
                     )
                     Toast.makeText(
                         this@FloatingBubbleService,
@@ -976,9 +1051,9 @@ class FloatingBubbleService : Service() {
                     HistoryRepository.saveEntry(
                         text = text,
                         mode = if (paste.outcome == Stage2Outcome.SUCCESS) "LIVE_POLISHED" else "POLISHED",
-                        appName = target.appName
+                        appName = locked.appName
                     )
-                    val placed = FloatingTextInjector.injectReporting(this@FloatingBubbleService, text)
+                    val placed = pasteLatest(text, final = true)
                     VocabSuggestions.onConfirmedPlacement(this@FloatingBubbleService, text, placed)
                     if (paste.outcome == Stage2Outcome.SUCCESS || text != rawTranscript) {
                         Toast.makeText(this@FloatingBubbleService, "Polished ✨", Toast.LENGTH_SHORT).show()
@@ -1025,6 +1100,7 @@ class FloatingBubbleService : Service() {
         AppDetector.clearCache()
 
         FloatingBubbleManager.unlockSessionContext()
+        FloatingBubbleManager.unlockSection()
         overlayWindowManager.overlayPendingFinalizing.value = false
         overlayWindowManager.overlayRecording.value = false
         isPendingInjectionOnSmartCompletion = false

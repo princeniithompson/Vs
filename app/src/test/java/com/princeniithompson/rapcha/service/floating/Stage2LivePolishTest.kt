@@ -79,16 +79,18 @@ class Stage2LivePolishTest {
     }
 
     @Test
-    fun `stage-2 backend defaults to non-live`() {
-        assertEquals(Stage2PolishBackend.NON_LIVE, Stage2PolishBackend.fromStored(null))
+    fun `stage-2 backend defaults to auto hybrid`() {
+        assertEquals(Stage2PolishBackend.AUTO, Stage2PolishBackend.fromStored(null))
+        assertEquals(Stage2PolishBackend.AUTO, Stage2PolishBackend.fromStored("auto"))
         assertEquals(Stage2PolishBackend.NON_LIVE, Stage2PolishBackend.fromStored("non_live"))
-        assertEquals(Stage2PolishBackend.NON_LIVE, Stage2PolishBackend.fromStored("unexpected"))
+        assertEquals(Stage2PolishBackend.NON_LIVE, Stage2PolishBackend.fromStored("smart"))
+        assertEquals(Stage2PolishBackend.AUTO, Stage2PolishBackend.fromStored("unexpected"))
         assertEquals(Stage2PolishBackend.LIVE, Stage2PolishBackend.fromStored("live"))
 
         val context = ApplicationProvider.getApplicationContext<Application>()
         val prefs = context.getSharedPreferences("stage2_polish_test", Context.MODE_PRIVATE)
         prefs.edit().clear().commit()
-        assertEquals(Stage2PolishBackend.NON_LIVE, Stage2PolishSettings.read(prefs))
+        assertEquals(Stage2PolishBackend.AUTO, Stage2PolishSettings.read(prefs))
         Stage2PolishSettings.write(prefs, Stage2PolishBackend.LIVE)
         assertTrue(Stage2PolishSettings.isLive(prefs))
         Stage2PolishSettings.write(prefs, Stage2PolishBackend.NON_LIVE)
