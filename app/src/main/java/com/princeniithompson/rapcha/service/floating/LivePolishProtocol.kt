@@ -16,14 +16,20 @@ object LivePolishProtocol {
         return JSONObject().apply {
             put("setup", JSONObject().apply {
                 put("model", model)
-                put("responseModalities", JSONArray().put("AUDIO"))
-                put("outputAudioTranscription", JSONObject())
                 put("systemInstruction", JSONObject().apply {
                     put("parts", JSONArray().put(JSONObject().put("text", systemInstruction)))
                 })
                 put("generationConfig", JSONObject().apply {
                     put("responseModalities", JSONArray().put("AUDIO"))
+                    put("speechConfig", JSONObject().apply {
+                        put("voiceConfig", JSONObject().apply {
+                            put("prebuiltVoiceConfig", JSONObject().apply {
+                                put("voiceName", "Zephyr")
+                            })
+                        })
+                    })
                 })
+                put("outputAudioTranscription", JSONObject())
             })
         }.toString()
     }
@@ -62,6 +68,8 @@ class LivePolishTranscriptAssembler {
     fun text(): String = PolishOutputCleaner.clean(text.toString())
 
     fun trace(): String = frames.joinToString("|").take(420)
+
+    fun mark(kind: String) = note(kind.take(80))
 
     fun absorb(rawJson: String): LivePolishSignal {
         if (turnComplete) return LivePolishSignal.IGNORE

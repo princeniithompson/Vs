@@ -41,10 +41,17 @@ object RapchaConfig {
     const val STAGE2_LIVE_MODEL: String = "models/gemini-3.8-live"
 
     /**
-     * gemini-3.8-live is a native-audio model. After setup, if no transcript
-     * chunk has arrived in this window, the turn is dead and we insert the raw text.
+     * Wait for setupComplete. This is separate from the no-token clock.
+     * live-polish-4 started the 4.5s clock at connect, so a slow handshake
+     * was reported as "timed out before setup" with an empty frame list.
      */
-    const val STAGE2_LIVE_TIMEOUT_MS: Long = 4_500L
+    const val STAGE2_LIVE_SETUP_MS: Long = 12_000L
+
+    /**
+     * After the text turn is sent, give up if no transcript chunk arrives.
+     * Chunks that are already flowing are not cut by this clock.
+     */
+    const val STAGE2_LIVE_TIMEOUT_MS: Long = 6_000L
 
     /** Return accumulated transcript this long after the last chunk if turnComplete is late. */
     const val STAGE2_LIVE_IDLE_MS: Long = 700L

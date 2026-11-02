@@ -31,6 +31,7 @@ import com.princeniithompson.rapcha.service.floating.FloatingHapticType
 import com.princeniithompson.rapcha.service.floating.FloatingNotificationManager
 import com.princeniithompson.rapcha.service.floating.FloatingOverlayWindowManager
 import com.princeniithompson.rapcha.service.floating.FloatingPolishCoordinator
+import com.princeniithompson.rapcha.service.floating.LivePolishOutcome
 import com.princeniithompson.rapcha.service.floating.LivePolishProtocol
 import com.princeniithompson.rapcha.service.floating.LiveTextPolishClient
 import com.princeniithompson.rapcha.service.floating.Stage2LivePolish
@@ -940,6 +941,8 @@ class FloatingBubbleService : Service() {
         )
         serviceScope.launch {
             try {
+                sessionManager.awaitRetryClip()
+                com.princeniithompson.rapcha.websocket.GeminiLiveWebSocketClient.terminateActiveLiveSockets()
                 val paste = withContext(Dispatchers.IO) {
                     Stage2LivePolish.execute(
                         rawTranscript = rawTranscript,
@@ -964,8 +967,8 @@ class FloatingBubbleService : Service() {
                     )
                     Toast.makeText(
                         this@FloatingBubbleService,
-                        "Gemini is busy. Your words were inserted.",
-                        Toast.LENGTH_SHORT
+                        LivePolishOutcome.userLine(paste.error),
+                        Toast.LENGTH_LONG
                     ).show()
                     Stage2LivePolish.rawOnFailure(rawTranscript)
                 }

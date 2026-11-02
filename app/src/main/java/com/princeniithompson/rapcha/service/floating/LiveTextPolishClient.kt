@@ -41,7 +41,19 @@ class LiveTextPolishClient(
     private val clock: () -> Long = { android.os.SystemClock.elapsedRealtime() }
 ) : Stage2Model {
 
-    override fun polish(request: Stage2Request): LivePolishResponse {
+    override fun polish(request: Stage2Request): LivePolishResponse = runSession(request, sendTurn = true)
+
+    /** Opens the same Stage-2 socket and returns when setupComplete arrives. */
+    fun ping(apiKey: String): LivePolishResponse = runSession(
+        Stage2Request(
+            apiKey = apiKey,
+            systemInstruction = "Reply with the single word ready.",
+            userText = "ready"
+        ),
+        sendTurn = false
+    )
+
+    private fun runSession(request: Stage2Request, sendTurn: Boolean): LivePolishResponse {
         val apiKey = request.apiKey.trim()
         if (ApiConfig.isPlaceholder(apiKey)) {
             return LivePolishResponse(null, "Gemini API key is missing", timedOut = false)
@@ -63,17 +75,25 @@ class LiveTextPolishClient(
             val wsRequest = GeminiLiveWebSocketClient.buildWebSocketRequest(apiKey)
             socket = httpClient.newWebSocket(wsRequest, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
+                    assembler.mark("open:${response.code}")
                     if (!webSocket.send(setup)) {
+                        assembler.mark("setup_send_fail")
                         failure.compareAndSet(null, "Could not send Live setup")
+                    } else {
+                        assembler.mark("setup_sent")
                     }
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
-                    if (assembler.absorb(text) == LivePolishSignal.SETUP_COMPLETE &&
-                        contentSent.compareAndSet(false, true) &&
-                        !webSocket.send(turn)
-                    ) {
-                        failure.compareAndSet(null, "Could not send the transcript turn")
+                    val signal = assembler.absorb(text)
+                    if (signal == LivePolishSignal.SETUP_COMPLETE && contentSent.compareAndSet(false, true)) {
+                        if (!sendTurn) return
+                        if (webSocket.send(turn)) {
+                            assembler.mark("turn_sent")
+                        } else {
+                            assembler.mark("turn_send_fail")
+                            failure.compareAndSet(null, "Could not send the transcript turn")
+                        }
                     }
                 }
 
@@ -84,13 +104,24 @@ class LiveTextPolishClient(
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     val code = response?.code
                     val detail = t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
-                    val message = if (code != null) "Live socket failed (HTTP $code): $detail" else "Live socket failed: $detail"
+                    val body = try {
+                        response?.body?.string()?.take(120).orEmpty()
+                    } catch (_: Exception) {
+                        ""
+                    }
+                    assembler.mark("fail:${code ?: "-"}:${detail.take(40)}")
+                    val message = buildString {
+                        append(if (code != null) "Live socket failed (HTTP $code): $detail" else "Live socket failed: $detail")
+                        if (body.isNotBlank()) append(" body=").append(body)
+                    }
                     failure.compareAndSet(null, message)
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    assembler.mark("close:$code")
                     if (!assembler.turnComplete && failure.get() == null && !assembler.setupComplete) {
-                        failure.compareAndSet(null, "Live socket closed before setup ($code)")
+                        val why = reason.ifBlank { "no reason" }.take(80)
+                        failure.compareAndSet(null, "Live socket closed before setup ($code $why)")
                     }
                 }
             })
@@ -102,6 +133,9 @@ class LiveTextPolishClient(
                     seenChars = textNow.length
                     lastGrowthAt = now
                     if (firstTokenAt < 0) firstTokenAt = now
+                }
+                if (!sendTurn && assembler.setupComplete) {
+                    return done("setup", null, false, assembler, started, now)
                 }
                 if (contentSent.get() && turnSentAt == 0L) turnSentAt = now
                 val socketError = failure.get()
@@ -121,8 +155,11 @@ class LiveTextPolishClient(
                         setupCompleted = assembler.setupComplete
                     ).withTrace(assembler, started, firstTokenAt, now)
                 }
-                val silentFor = if (turnSentAt == 0L) now - started else now - turnSentAt
-                if (textNow.isBlank() && silentFor >= RapchaConfig.STAGE2_LIVE_TIMEOUT_MS) {
+                val waitingForSetup = !assembler.setupComplete
+                val setupLate = waitingForSetup && now - started >= RapchaConfig.STAGE2_LIVE_SETUP_MS
+                val turnLate = !waitingForSetup && textNow.isBlank() && turnSentAt > 0L &&
+                    now - turnSentAt >= RapchaConfig.STAGE2_LIVE_TIMEOUT_MS
+                if (setupLate || turnLate) {
                     return LivePolishOutcome.decide(
                         finished = false,
                         assembledText = "",
@@ -193,5 +230,27 @@ object LivePolishOutcome {
         }
         val reason = socketError ?: protocolError ?: "Stage-2 Live polish returned no text"
         return LivePolishResponse(null, reason, timedOut = false)
+    }
+
+    fun userLine(error: String?): String {
+        val detail = error.orEmpty()
+        val busy = detail.contains("503") ||
+            detail.contains("high demand", ignoreCase = true) ||
+            detail.contains("UNAVAILABLE")
+        val tail = " Your words were inserted."
+        if (busy) return "Gemini is busy.$tail"
+        if (detail.contains("before setup", ignoreCase = true)) {
+            return "Live polish timed out before setup.$tail"
+        }
+        if (detail.contains("after setup", ignoreCase = true)) {
+            return "Live polish timed out after setup.$tail"
+        }
+        if (detail.contains("HTTP", ignoreCase = true) || detail.contains("closed", ignoreCase = true) ||
+            detail.contains("connect", ignoreCase = true) || detail.contains("failed", ignoreCase = true)
+        ) {
+            val short = detail.substringBefore(" frames=").substringBefore(" elapsed_ms=").take(72)
+            return "Live polish could not connect ($short).$tail"
+        }
+        return "Live polish failed.$tail"
     }
 }
