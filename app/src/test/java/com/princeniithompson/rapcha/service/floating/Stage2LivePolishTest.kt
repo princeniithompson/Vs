@@ -185,7 +185,11 @@ class Stage2LivePolishTest {
             LivePolishProtocol.setupMessage("keep the language", LivePolishProtocol.MODEL)
         ).getJSONObject("setup")
         assertEquals("models/gemini-3.8-live", setup.getString("model"))
-        assertEquals("TEXT", setup.getJSONObject("generationConfig").getJSONArray("responseModalities").getString(0))
+        assertEquals("AUDIO", setup.getJSONArray("responseModalities").getString(0))
+        assertEquals("AUDIO", setup.getJSONObject("generationConfig").getJSONArray("responseModalities").getString(0))
+        assertTrue(setup.has("outputAudioTranscription"))
+        assertFalse(setup.toString().contains("\"TEXT\""))
+        assertFalse(setup.toString().contains("flash-lite"))
         assertFalse(setup.has("inputAudioTranscription"))
         assertFalse(setup.toString().contains("realtimeInput"))
 
@@ -199,10 +203,13 @@ class Stage2LivePolishTest {
             LivePolishSignal.SETUP_COMPLETE,
             assembler.absorb("""{"setupComplete":{}}""")
         )
-        assembler.absorb("""{"serverContent":{"modelTurn":{"parts":[{"text":"Äh "}]}}}""")
-        assembler.absorb("""{"serverContent":{"modelTurn":{"parts":[{"thought":true,"text":"hidden"}]}}}""")
-        assembler.absorb("""{"serverContent":{"modelTurn":{"parts":[{"text":"hallo."}]},"turnComplete":true}}""")
+        assembler.absorb("""{"serverContent":{"outputTranscription":{"text":"Äh "}}}""")
+        assembler.absorb("""{"serverContent":{"modelTurn":{"parts":[{"inlineData":{"mimeType":"audio/pcm","data":"AAAA"}},{"thought":true,"text":"hidden"}]}}}""")
+        assembler.absorb("""{"serverContent":{"outputTranscription":{"text":"hallo."},"turnComplete":true}}""")
         assertTrue(assembler.turnComplete)
         assertEquals("Äh hallo.", assembler.text())
+        assertTrue(assembler.trace().contains("out:"))
+        assertTrue(assembler.trace().contains("audio"))
+        assertFalse(assembler.trace().contains("AAAA"))
     }
 }

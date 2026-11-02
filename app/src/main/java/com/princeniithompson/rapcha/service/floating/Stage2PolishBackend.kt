@@ -24,11 +24,12 @@ enum class Stage2PolishBackend {
 }
 
 /**
- * Toggle ON uses the Live model. Toggle OFF stays on the unary flash chain.
- * gemini-3.8-live is never a fallback for the off path, and flash is not the on path.
+ * Toggle ON uses only models/gemini-3.8-live. Toggle OFF stays on the unary flash chain.
  */
 object Stage2PolishRoute {
     fun usesLiveModel(liveTwoStep: Boolean): Boolean = liveTwoStep
+
+    fun usesUnaryFallback(liveTwoStep: Boolean): Boolean = !liveTwoStep
 
     fun model(liveTwoStep: Boolean): String? {
         return if (liveTwoStep) com.princeniithompson.rapcha.config.RapchaConfig.STAGE2_LIVE_MODEL else null

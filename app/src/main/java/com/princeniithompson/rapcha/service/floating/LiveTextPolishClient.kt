@@ -9,16 +9,28 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 data class LivePolishResponse(
     val text: String?,
     val error: String?,
-    val timedOut: Boolean
-)
+    val timedOut: Boolean,
+    val trace: String = "",
+    val firstTokenMs: Long = -1
+) {
+    fun withTrace(
+        assembler: LivePolishTranscriptAssembler,
+        startedAt: Long,
+        firstTokenAt: Long,
+        now: Long
+    ): LivePolishResponse {
+        val first = if (firstTokenAt < 0) -1 else (firstTokenAt - startedAt).coerceAtLeast(0)
+        val line = "elapsed_ms=${(now - startedAt).coerceAtLeast(0)} first_token_ms=$first frames=${assembler.trace()}"
+        val reason = if (error.isNullOrBlank()) error else "$error $line"
+        return copy(error = reason, trace = line, firstTokenMs = first)
+    }
+}
 
 /**
  * One short text-to-text Live session. The audio transcription client stays untouched.
@@ -26,7 +38,7 @@ data class LivePolishResponse(
  */
 class LiveTextPolishClient(
     private val httpClient: OkHttpClient = ApiConfig.createOkHttpClient(),
-    private val timeoutMs: Long = RapchaConfig.STAGE2_LIVE_TIMEOUT_MS
+    private val clock: () -> Long = { android.os.SystemClock.elapsedRealtime() }
 ) : Stage2Model {
 
     override fun polish(request: Stage2Request): LivePolishResponse {
@@ -35,10 +47,14 @@ class LiveTextPolishClient(
             return LivePolishResponse(null, "Gemini API key is missing", timedOut = false)
         }
         val assembler = LivePolishTranscriptAssembler()
-        val latch = CountDownLatch(1)
         val failure = AtomicReference<String?>(null)
         val contentSent = AtomicBoolean(false)
         var socket: WebSocket? = null
+        val started = clock()
+        var turnSentAt = 0L
+        var firstTokenAt = -1L
+        var lastGrowthAt = 0L
+        var seenChars = 0
 
         val setup = LivePolishProtocol.setupMessage(request.systemInstruction)
         val turn = LivePolishProtocol.clientContentMessage(request.userText)
@@ -49,20 +65,15 @@ class LiveTextPolishClient(
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     if (!webSocket.send(setup)) {
                         failure.compareAndSet(null, "Could not send Live setup")
-                        latch.countDown()
                     }
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
-                    when (assembler.absorb(text)) {
-                        LivePolishSignal.SETUP_COMPLETE -> {
-                            if (contentSent.compareAndSet(false, true) && !webSocket.send(turn)) {
-                                failure.compareAndSet(null, "Could not send the transcript turn")
-                                latch.countDown()
-                            }
-                        }
-                        LivePolishSignal.TURN_COMPLETE, LivePolishSignal.ERROR -> latch.countDown()
-                        LivePolishSignal.TEXT, LivePolishSignal.IGNORE -> Unit
+                    if (assembler.absorb(text) == LivePolishSignal.SETUP_COMPLETE &&
+                        contentSent.compareAndSet(false, true) &&
+                        !webSocket.send(turn)
+                    ) {
+                        failure.compareAndSet(null, "Could not send the transcript turn")
                     }
                 }
 
@@ -75,25 +86,56 @@ class LiveTextPolishClient(
                     val detail = t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
                     val message = if (code != null) "Live socket failed (HTTP $code): $detail" else "Live socket failed: $detail"
                     failure.compareAndSet(null, message)
-                    latch.countDown()
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                     if (!assembler.turnComplete && failure.get() == null && !assembler.setupComplete) {
                         failure.compareAndSet(null, "Live socket closed before setup ($code)")
                     }
-                    latch.countDown()
                 }
             })
 
-            val finished = latch.await(timeoutMs, TimeUnit.MILLISECONDS)
-            return LivePolishOutcome.decide(
-                finished = finished,
-                assembledText = assembler.text(),
-                socketError = failure.get(),
-                protocolError = assembler.error,
-                setupCompleted = assembler.setupComplete
-            )
+            while (true) {
+                val now = clock()
+                val textNow = assembler.text()
+                if (textNow.length > seenChars) {
+                    seenChars = textNow.length
+                    lastGrowthAt = now
+                    if (firstTokenAt < 0) firstTokenAt = now
+                }
+                if (contentSent.get() && turnSentAt == 0L) turnSentAt = now
+                val socketError = failure.get()
+                val protocolError = assembler.error
+                if (textNow.isNotBlank() && protocolError == null && socketError == null) {
+                    val idle = lastGrowthAt > 0L && now - lastGrowthAt >= RapchaConfig.STAGE2_LIVE_IDLE_MS
+                    if (assembler.turnComplete || idle) {
+                        return done(textNow, null, false, assembler, started, firstTokenAt)
+                    }
+                }
+                if (assembler.turnComplete || socketError != null || protocolError != null) {
+                    return LivePolishOutcome.decide(
+                        finished = true,
+                        assembledText = textNow,
+                        socketError = socketError,
+                        protocolError = protocolError,
+                        setupCompleted = assembler.setupComplete
+                    ).withTrace(assembler, started, firstTokenAt, now)
+                }
+                val silentFor = if (turnSentAt == 0L) now - started else now - turnSentAt
+                if (textNow.isBlank() && silentFor >= RapchaConfig.STAGE2_LIVE_TIMEOUT_MS) {
+                    return LivePolishOutcome.decide(
+                        finished = false,
+                        assembledText = "",
+                        socketError = socketError,
+                        protocolError = protocolError,
+                        setupCompleted = assembler.setupComplete
+                    ).withTrace(assembler, started, firstTokenAt, now)
+                }
+                if (now - started >= RapchaConfig.STAGE2_LIVE_HARD_CAP_MS) {
+                    return done(textNow, null, false, assembler, started, firstTokenAt)
+                }
+                Thread.sleep(40)
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Stage-2 Live polish failed: ${e.message}")
             return LivePolishResponse(null, e.message ?: e.javaClass.simpleName, timedOut = false)
@@ -107,6 +149,17 @@ class LiveTextPolishClient(
             } catch (_: Exception) {
             }
         }
+    }
+
+    private fun done(
+        text: String,
+        error: String?,
+        timedOut: Boolean,
+        assembler: LivePolishTranscriptAssembler,
+        started: Long,
+        firstTokenAt: Long
+    ): LivePolishResponse {
+        return LivePolishResponse(text, error, timedOut).withTrace(assembler, started, firstTokenAt, clock())
     }
 
     companion object {

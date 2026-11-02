@@ -41,11 +41,16 @@ object RapchaConfig {
     const val STAGE2_LIVE_MODEL: String = "models/gemini-3.8-live"
 
     /**
-     * Phone logs showed the old 7s cap firing at ~7010ms before setup and the
-     * text turn could finish. 22s covers the socket, setup, and a short reply.
-     * Text already received is kept if the turn marker arrives late.
+     * gemini-3.8-live is a native-audio model. After setup, if no transcript
+     * chunk has arrived in this window, the turn is dead and we insert the raw text.
      */
-    const val STAGE2_LIVE_TIMEOUT_MS: Long = 22_000L
+    const val STAGE2_LIVE_TIMEOUT_MS: Long = 4_500L
+
+    /** Return accumulated transcript this long after the last chunk if turnComplete is late. */
+    const val STAGE2_LIVE_IDLE_MS: Long = 700L
+
+    /** Absolute cap while transcript chunks are still arriving. Not an empty wait. */
+    const val STAGE2_LIVE_HARD_CAP_MS: Long = 12_000L
 
     /** Same debounce as Polish so a double tap cannot spend two free-tier retries. */
     const val RETRY_DEBOUNCE_MS: Long = POLISH_DEBOUNCE_MS

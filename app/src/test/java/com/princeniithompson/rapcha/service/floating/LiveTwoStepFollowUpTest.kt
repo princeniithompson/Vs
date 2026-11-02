@@ -45,7 +45,11 @@ class LiveTwoStepFollowUpTest {
     fun `toggle on selects gemini-3_8-live and not unary flash`() {
         assertTrue(Stage2PolishRoute.usesLiveModel(true))
         assertEquals("models/gemini-3.8-live", Stage2PolishRoute.model(true))
-        assertEquals(22_000L, RapchaConfig.STAGE2_LIVE_TIMEOUT_MS)
+        assertFalse(Stage2PolishRoute.usesUnaryFallback(true))
+        assertTrue(Stage2PolishRoute.usesUnaryFallback(false))
+        assertEquals(4_500L, RapchaConfig.STAGE2_LIVE_TIMEOUT_MS)
+        assertTrue(RapchaConfig.STAGE2_LIVE_HARD_CAP_MS < 15_000L)
+        assertFalse(RapchaConfig.GEMINI_MODEL_FALLBACKS.any { it.contains("3.8-live") })
         assertFalse(Stage2PolishRoute.model(true)!!.contains("flash-lite"))
         assertFalse(Stage2PolishRoute.model(true)!!.contains("gemini-3.8-flash"))
         assertFalse(Stage2PolishRoute.usesLiveModel(false))
@@ -112,8 +116,8 @@ class LiveTwoStepFollowUpTest {
         )
         assertEquals(Stage2Outcome.FALLBACK_RAW, paste.outcome)
         assertEquals(listOf(DiagnosticType.STAGE2_LIVE_START, DiagnosticType.STAGE2_LIVE_FAILED), events)
-        assertEquals("polished by fallback" to "non_live", Stage2LivePolish.fallbackChoice("raw words", "polished by fallback"))
-        assertEquals("raw words" to "raw", Stage2LivePolish.fallbackChoice("raw words", null))
+        assertEquals("raw words", Stage2LivePolish.rawOnFailure("raw words"))
+        assertFalse(events.any { it == DiagnosticType.POLISH_CALLED })
     }
 
     @Test

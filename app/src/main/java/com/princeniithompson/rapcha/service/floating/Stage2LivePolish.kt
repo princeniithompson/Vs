@@ -90,34 +90,34 @@ object Stage2LivePolish {
                 timedOut = false
             )
         }
-        logResult(paste, script, log)
+        logResult(paste, response, script, log)
         return paste
     }
 
-    /**
-     * Live is the primary Stage-2 call. A failed Live turn may use one unary
-     * polish result, and otherwise the raw transcript.
-     */
-    fun fallbackChoice(rawTranscript: String, nonLiveText: String?): Pair<String, String> {
-        val alternate = nonLiveText?.trim().orEmpty()
-        return if (alternate.isNotEmpty()) alternate to "non_live" else rawTranscript to "raw"
-    }
+    /** Two-step Live never calls the unary flash models. A failed turn inserts the raw transcript. */
+    fun rawOnFailure(rawTranscript: String): String = rawTranscript
 
     fun nonAsciiHint(text: String): String {
         val nonAscii = text.any { it.isLetter() && it.code > 127 }
         return if (nonAscii) "non_ascii=yes" else "non_ascii=no"
     }
 
-    private fun logResult(paste: Stage2Paste, script: String, log: (DiagnosticType, String) -> Unit) {
+    private fun logResult(
+        paste: Stage2Paste,
+        response: LivePolishResponse,
+        script: String,
+        log: (DiagnosticType, String) -> Unit
+    ) {
         val base = "category=${paste.category} latency_ms=${paste.latencyMs} stage1_flush=${yesNo(paste.stage1Flushed)} $script"
+        val detail = response.trace.ifBlank { "first_token_ms=${response.firstTokenMs}" }
         if (paste.outcome == Stage2Outcome.SUCCESS) {
-            log(DiagnosticType.STAGE2_LIVE_SUCCESS, "$base model=${LivePolishProtocol.MODEL}")
+            log(DiagnosticType.STAGE2_LIVE_SUCCESS, "$base model=${LivePolishProtocol.MODEL} $detail")
             return
         }
-        val reason = paste.error?.take(180) ?: "unknown"
+        val reason = paste.error?.take(240) ?: "unknown"
         log(
             DiagnosticType.STAGE2_LIVE_FAILED,
-            "$base model=${LivePolishProtocol.MODEL} reason=$reason timed_out=${yesNo(paste.timedOut)}"
+            "$base model=${LivePolishProtocol.MODEL} reason=$reason timed_out=${yesNo(paste.timedOut)} $detail"
         )
     }
 

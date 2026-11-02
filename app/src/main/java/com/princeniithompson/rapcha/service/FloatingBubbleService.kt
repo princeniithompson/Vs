@@ -30,7 +30,6 @@ import com.princeniithompson.rapcha.service.floating.FloatingHapticManager
 import com.princeniithompson.rapcha.service.floating.FloatingHapticType
 import com.princeniithompson.rapcha.service.floating.FloatingNotificationManager
 import com.princeniithompson.rapcha.service.floating.FloatingOverlayWindowManager
-import com.princeniithompson.rapcha.service.floating.FloatingPolishClient
 import com.princeniithompson.rapcha.service.floating.FloatingPolishCoordinator
 import com.princeniithompson.rapcha.service.floating.LivePolishProtocol
 import com.princeniithompson.rapcha.service.floating.LiveTextPolishClient
@@ -924,9 +923,8 @@ class FloatingBubbleService : Service() {
     }
 
     /**
-     * Live two-step Polish. The first call is models/gemini-3.8-live.
-     * Unary flash is only a last resort after that Live turn fails, and it is
-     * not logged as POLISH_CALLED.
+     * Live two-step Polish. The only model is models/gemini-3.8-live.
+     * If that turn returns no text, the raw Stage-1 transcript is inserted.
      */
     private fun polishWithLiveStage2(rawTranscript: String, apiKey: String) {
         if (rawTranscript.isBlank()) {
@@ -959,29 +957,17 @@ class FloatingBubbleService : Service() {
                 val text = if (paste.outcome == Stage2Outcome.SUCCESS) {
                     paste.text
                 } else {
-                    val nonLive = withContext(Dispatchers.IO) {
-                        try {
-                            FloatingPolishClient.polishTranscript(
-                                apiKey = apiKey,
-                                rawTranscript = rawTranscript,
-                                category = target.polishCategory,
-                                appName = target.appName
-                            ).text
-                        } catch (t: Throwable) {
-                            Log.w(TAG, "Unary polish fallback failed: ${t.message}")
-                            null
-                        }
-                    }
-                    val (chosen, how) = Stage2LivePolish.fallbackChoice(rawTranscript, nonLive)
                     AppLogRepository.logEvent(
                         DiagnosticSource.BUBBLE,
                         DiagnosticType.STAGE2_LIVE_FALLBACK,
-                        "fallback=$how model=${LivePolishProtocol.MODEL} category=${target.stage2Category}"
+                        "fallback=raw model=${LivePolishProtocol.MODEL} category=${target.stage2Category}"
                     )
-                    if (how == "raw") {
-                        Toast.makeText(this@FloatingBubbleService, "Gemini is busy. Your words were inserted.", Toast.LENGTH_SHORT).show()
-                    }
-                    chosen
+                    Toast.makeText(
+                        this@FloatingBubbleService,
+                        "Gemini is busy. Your words were inserted.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    Stage2LivePolish.rawOnFailure(rawTranscript)
                 }
                 if (text.isNotBlank()) {
                     HistoryRepository.saveEntry(
