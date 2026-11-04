@@ -51,7 +51,11 @@ class FloatingPolishCoordinator {
         rawTranscript: String,
         apiKey: String,
         onStartPolish: () -> Unit,
-        onFinishPolish: () -> Unit
+        onFinishPolish: () -> Unit,
+        targetPackage: String? = null,
+        targetHint: String? = null,
+        lockedCategory: AppCategory? = null,
+        lockedAppName: String? = null
     ) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastPolishClickTime < POLISH_DEBOUNCE_MS) {
@@ -92,17 +96,14 @@ class FloatingPolishCoordinator {
                     "Transcript length: ${rawTranscript.length} chars"
                 )
 
-                val currentPkg = FloatingBubbleManager.lockedSessionContext.value
-                    ?: FloatingBubbleManager.currentForegroundPackage.value
-                val category = if (com.princeniithompson.rapcha.config.RapchaConfig.IS_APP_DETECTION_ENABLED) {
-                    val appContext = AppContextResolver.resolve(context, currentPkg)
-                    AppClassifier.classify(currentPkg, appContext?.appName)
-                } else {
-                    AppCategory.OTHER
+                val resolved = when {
+                    lockedCategory != null -> PolishTarget(lockedCategory, lockedAppName ?: "App")
+                    com.princeniithompson.rapcha.config.RapchaConfig.IS_APP_DETECTION_ENABLED ->
+                        resolvePolishTarget(context, targetPackage, targetHint)
+                    else -> PolishTarget(AppCategory.OTHER, "App")
                 }
-                val targetAppName = if (com.princeniithompson.rapcha.config.RapchaConfig.IS_APP_DETECTION_ENABLED) {
-                    AppContextResolver.resolve(context, currentPkg)?.appName ?: "App"
-                } else "App"
+                val category = resolved.category
+                val targetAppName = resolved.appName
 
                 if (ApiConfig.isPlaceholder(apiKey)) {
                     val err = "API key is missing or default placeholder. Please set GEMINI_API_KEY in app Settings."
@@ -180,6 +181,69 @@ class FloatingPolishCoordinator {
                 onFinishPolish()
             }
         }
+    }
+
+    data class Stage2Target(
+        val stage2Category: Stage2Category,
+        val polishCategory: AppCategory,
+        val appName: String
+    )
+
+    fun stage2Target(
+        context: Context,
+        targetPackage: String?,
+        targetHint: String?,
+        allowLiveHint: Boolean = true
+    ): Stage2Target {
+        val hint = when {
+            targetHint != null -> targetHint
+            allowLiveHint -> FloatingBubbleManager.lockedSessionContext.value
+            else -> null
+        }
+        val pkg = if (looksLikePackage(targetPackage)) {
+            targetPackage
+        } else if (allowLiveHint) {
+            listOf(FloatingBubbleManager.currentForegroundPackage.value).firstOrNull { looksLikePackage(it) }
+        } else {
+            null
+        }
+        val resolvedName = if (pkg != null) {
+            try {
+                AppContextResolver.resolve(context, pkg)?.appName
+            } catch (_: Throwable) {
+                null
+            }
+        } else {
+            null
+        }
+        val registryName = pkg?.let { com.princeniithompson.rapcha.service.AppRegistry.NATIVE_APP_MAP[it]?.appName }
+        val lookedUp = resolvedName ?: registryName
+        val stage2 = Stage2CategoryMapper.map(pkg, lookedUp, hint)
+        val classified = when {
+            pkg != null -> AppClassifier.classify(pkg, lookedUp)
+            else -> AppClassifier.classify(null, hint)
+        }
+        val polishCategory = if (stage2 == Stage2Category.AI) AppCategory.AI_CHAT else classified
+        val appName = lookedUp ?: hint?.takeIf { it.isNotBlank() } ?: "App"
+        return Stage2Target(stage2, polishCategory, appName)
+    }
+
+    private data class PolishTarget(val category: AppCategory, val appName: String)
+
+    /**
+     * Prefer the package captured when the session started. The locked context
+     * string is a label such as "Detected: ChatGPT -> AI", not a package name.
+     * AI apps use Lyra. Other categories keep the existing spice card.
+     */
+    private fun resolvePolishTarget(context: Context, targetPackage: String?, targetHint: String?): PolishTarget {
+        val target = stage2Target(context, targetPackage, targetHint)
+        return PolishTarget(target.polishCategory, target.appName)
+    }
+
+    private fun looksLikePackage(value: String?): Boolean {
+        if (value.isNullOrBlank()) return false
+        if (value.any { it.isWhitespace() }) return false
+        return value.contains('.')
     }
 
     fun cancel() {

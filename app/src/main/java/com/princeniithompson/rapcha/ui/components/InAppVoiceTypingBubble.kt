@@ -86,6 +86,7 @@ fun InAppVoiceTypingBubble(
     val scope = rememberCoroutineScope()
 
     val isRecording by viewModel.isRecording.collectAsState()
+    val liveTwoStepPolish by viewModel.liveTwoStepPolish.collectAsState()
     val finalizedTranscript by viewModel.finalizedTranscript.collectAsState()
     val interimTranscript by viewModel.interimTranscript.collectAsState()
     val amplitude by viewModel.audioAmplitude.collectAsState()
@@ -401,7 +402,7 @@ fun InAppVoiceTypingBubble(
                         }
                     }
 
-                    // 2. Polish Button
+                    // 2. Polish Button. Live two-step hides Complete and makes Polish the primary action.
                     InAppPillButton(
                         onClick = {
                             if (!isPolishingLocally && transcriptText.isNotBlank()) {
@@ -414,9 +415,9 @@ fun InAppVoiceTypingBubble(
                                 }
                             }
                         },
-                        backgroundColor = Color(0x24FFFFFF),
-                        borderColor = Color(0x24FFFFFF),
-                        modifier = Modifier.weight(1f)
+                        backgroundColor = if (liveTwoStepPolish) palette.primary else Color(0x24FFFFFF),
+                        borderColor = if (liveTwoStepPolish) Color.Transparent else Color(0x24FFFFFF),
+                        modifier = Modifier.weight(if (liveTwoStepPolish) 1.35f else 1f)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -425,21 +426,21 @@ fun InAppVoiceTypingBubble(
                             if (isPolishingLocally) {
                                 Text(
                                     text = "Polishing...",
-                                    color = Color(0xFFE2E8F0),
+                                    color = if (liveTwoStepPolish) Color.White else Color(0xFFE2E8F0),
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Medium
                                 )
                             } else {
                                 Text(
                                     text = "✦",
-                                    color = palette.primaryLight,
+                                    color = if (liveTwoStepPolish) Color.White else palette.primaryLight,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     text = "Polish",
-                                    color = Color(0xFFE2E8F0),
+                                    color = if (liveTwoStepPolish) Color.White else Color(0xFFE2E8F0),
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -447,7 +448,11 @@ fun InAppVoiceTypingBubble(
                         }
                     }
 
-                    // 3. Complete Button
+                    if (liveTwoStepPolish) {
+                        return@Row
+                    }
+
+                    // 3. Complete Button. Hidden while Live two-step polish is on.
                     InAppPillButton(
                         onClick = {
                             val textToSave = transcriptText

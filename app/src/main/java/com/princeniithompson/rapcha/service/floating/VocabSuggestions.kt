@@ -68,6 +68,22 @@ object VocabSuggestions {
                 result.records to result.suggestion
             } ?: return
 
+            val reject = com.princeniithompson.rapcha.data.VocabTermFilter.spellableReason(suggestion.display)
+                ?: com.princeniithompson.rapcha.data.VocabTermFilter.rejectReason(suggestion.display)
+            if (reject != null) {
+                com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
+                    com.princeniithompson.rapcha.data.DiagnosticSource.BUBBLE,
+                    com.princeniithompson.rapcha.data.DiagnosticType.WARNING,
+                    "vocab_reject=$reject term=${suggestion.display.take(24)}"
+                )
+                return
+            }
+            com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
+                com.princeniithompson.rapcha.data.DiagnosticSource.BUBBLE,
+                com.princeniithompson.rapcha.data.DiagnosticType.WARNING,
+                "vocab_accept=${suggestion.display.take(24)}"
+            )
+
             val posted = DictationAlerts.vocabularySuggestion(
                 context = app,
                 notificationId = notificationIdFor(suggestion.key),

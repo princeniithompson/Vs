@@ -716,6 +716,47 @@ open class RapchaAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * Replaces a previous commitText of [previousLength] characters with [newText].
+     * commitText appends, so a streamed polish update must delete that earlier
+     * paste before writing the revised sentence. Returns null when neither the
+     * accessibility input connection nor the companion IME is available.
+     */
+    open suspend fun rewriteLastCommit(previousLength: Int, newText: String): Boolean? {
+        if (newText.isEmpty()) return false
+        val p1 = rewriteWithAccessibilityInputConnection(previousLength, newText)
+        if (p1 != null) return p1
+        return rewriteWithCompanionIme(previousLength, newText)
+    }
+
+    private suspend fun rewriteWithAccessibilityInputConnection(previousLength: Int, newText: String): Boolean? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
+        return withContext(Dispatchers.Main.immediate) {
+            var connectionBound = false
+            try {
+                val connection = inputMethod?.currentInputConnection ?: return@withContext null
+                connectionBound = true
+                if (previousLength > 0) connection.deleteSurroundingText(previousLength, 0)
+                connection.commitText(newText, 1, null)
+                true
+            } catch (e: Throwable) {
+                if (connectionBound) {
+                    Log.w(TAG, "P1 rewrite failed: ${e.message}", e)
+                    false
+                } else {
+                    null
+                }
+            }
+        }
+    }
+
+    private suspend fun rewriteWithCompanionIme(previousLength: Int, newText: String): Boolean? {
+        if (!RapchaInputMethodService.isServiceActive) return null
+        return withContext(Dispatchers.Main.immediate) {
+            RapchaInputMethodService.rewriteText(previousLength, newText)
+        }
+    }
+
+    /**
      * P2. Commits through the headless companion IME when that keyboard is the active one.
      * Returns null when it is not active. Runs on the main looper.
      */

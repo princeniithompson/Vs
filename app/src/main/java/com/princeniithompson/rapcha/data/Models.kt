@@ -73,7 +73,11 @@ enum class DiagnosticType {
     RETRY_LIVE_CANCELLED,
     RETRY_OFFLINE,
     RETRY_NETWORK_BACK,
-    RETRY_HISTORY
+    RETRY_HISTORY,
+    STAGE2_LIVE_START,
+    STAGE2_LIVE_SUCCESS,
+    STAGE2_LIVE_FAILED,
+    STAGE2_LIVE_FALLBACK
 }
 
 data class DiagnosticLogEntry(

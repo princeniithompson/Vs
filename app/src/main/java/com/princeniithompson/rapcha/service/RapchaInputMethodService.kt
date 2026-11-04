@@ -43,6 +43,23 @@ class RapchaInputMethodService : InputMethodService() {
                 false
             }
         }
+
+        /**
+         * Removes the previous Live paste, then commits [text] once.
+         * Returns null when this IME is not the active editor.
+         */
+        fun rewriteText(previousLength: Int, text: String): Boolean? {
+            val ime = instance ?: return null
+            if (!ime.currentInputStarted) return null
+            return try {
+                val ic = ime.currentInputConnection ?: return null
+                if (previousLength > 0 && !ic.deleteSurroundingText(previousLength, 0)) return false
+                ic.commitText(text, 1)
+            } catch (e: Exception) {
+                Log.w(TAG, "RapchaIME rewrite failed: ${e.message}", e)
+                false
+            }
+        }
     }
 
     override fun onCreate() {
