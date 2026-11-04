@@ -68,7 +68,8 @@ object VocabSuggestions {
                 result.records to result.suggestion
             } ?: return
 
-            val reject = com.princeniithompson.rapcha.data.VocabTermFilter.rejectReason(suggestion.display)
+            val reject = com.princeniithompson.rapcha.data.VocabTermFilter.spellableReason(suggestion.display)
+                ?: com.princeniithompson.rapcha.data.VocabTermFilter.rejectReason(suggestion.display)
             if (reject != null) {
                 com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
                     com.princeniithompson.rapcha.data.DiagnosticSource.BUBBLE,

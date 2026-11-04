@@ -30,8 +30,27 @@ object VocabTermFilter {
         return null
     }
 
+    /** Easy words and short abbreviations. Counted internally, never offered. */
+    fun spellableReason(term: String): String? {
+        val core = term.trim().trim { !it.isLetterOrDigit() }
+        if (core.isEmpty()) return null
+        val letters = core.count { it.isLetter() }
+        val digits = core.count { it.isDigit() }
+        if (digits == 0 && letters == core.length && letters <= 5) return "spellable"
+        if (core.lowercase() in EASY_TOKENS) return "spellable"
+        return null
+    }
+
     fun isUsable(term: String): Boolean = rejectReason(term) == null
+
+    fun isSuggestable(term: String): Boolean = isUsable(term) && spellableReason(term) == null
 
     private val LIST_MARKER = Regex("""[#]?\d+[.)\]]?""")
     private val ORDINAL = Regex("""\d+(?:st|nd|rd|th)""", RegexOption.IGNORE_CASE)
+
+    /** Short everyday tokens the lexicon can miss. Not names, emails, or odd spellings. */
+    private val EASY_TOKENS = setOf(
+        "txt", "pdf", "doc", "docs", "csv", "json", "html", "css", "api", "url", "uri",
+        "mcp", "app", "usd", "eur", "gbp", "cedi", "cedis", "naira", "dollar", "dollars"
+    )
 }

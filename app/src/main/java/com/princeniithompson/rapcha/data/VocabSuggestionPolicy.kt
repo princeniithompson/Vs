@@ -144,7 +144,7 @@ object VocabSuggestionPolicy {
         for (key in pool) {
             val record = next[key] ?: continue
             val display = record.display.ifBlank { key }
-            if (!VocabTermFilter.isUsable(display)) continue
+            if (!VocabTermFilter.isSuggestable(display)) continue
             val candidate = Suggestion(
                 key = key,
                 display = display,

@@ -43,15 +43,31 @@ object Stage2LivePrompt {
         """.trimIndent()
     }
 
-    fun userTurn(category: Stage2Category, rawTranscript: String, protectedTerms: List<String>): String {
+    fun userTurn(
+        category: Stage2Category,
+        rawTranscript: String,
+        protectedTerms: List<String>,
+        partIndex: Int = 1,
+        partCount: Int = 1
+    ): String {
         val terms = protectedTerms.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         val termBlock = if (terms.isEmpty()) "(none)" else terms.joinToString("\n")
+        val partBlock = if (partCount > 1) {
+            """
+
+            [PART]
+            $partIndex of $partCount. Polish only this part. Do not summarize other parts. Do not add a heading.
+            """.trimIndent()
+        } else {
+            ""
+        }
         return """
             [APP_CATEGORY]
             ${category.name}
 
             [PROTECTED_TERMS]
             $termBlock
+            $partBlock
 
             [RAW_TRANSCRIPT]
             ${rawTranscript.trim()}

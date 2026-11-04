@@ -79,11 +79,12 @@ class FloatingDragSnapHandler(private val context: Context) {
 
         val topY = (32 * density).toInt()
         val maxY = if (isExpanded) {
-            (screenHeight - (210 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
+            (screenHeight - (320 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
         } else {
             (screenHeight - (80 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
         }
 
+        snapAnimator?.cancel()
         lp.y = (lp.y + dy.toInt()).coerceIn(topY, maxY)
 
         if (!isExpanded) {
@@ -232,7 +233,11 @@ class FloatingDragSnapHandler(private val context: Context) {
                     val currentMainY = startY + totalDistY * mainProgress
                     val finalX = currentMainX + bounceDirX * reboundOffset
 
-                    lp.x = finalX.toInt().coerceIn(0, screenWidth - bubbleSize)
+                    if (lp.width == WindowManager.LayoutParams.MATCH_PARENT) {
+                        lp.x = 0
+                    } else {
+                        lp.x = finalX.toInt().coerceIn(0, screenWidth - bubbleSize)
+                    }
                     lp.y = currentMainY.toInt()
 
                     try {
@@ -243,7 +248,11 @@ class FloatingDragSnapHandler(private val context: Context) {
                 }
                 addListener(object : android.animation.AnimatorListenerAdapter() {
                     override fun onAnimationEnd(animation: android.animation.Animator) {
-                        lp.x = targetX
+                        if (lp.width == WindowManager.LayoutParams.MATCH_PARENT) {
+                            lp.x = 0
+                        } else {
+                            lp.x = targetX
+                        }
                         lp.y = targetY
                         try {
                             windowManager?.updateViewLayout(overlayView, lp)

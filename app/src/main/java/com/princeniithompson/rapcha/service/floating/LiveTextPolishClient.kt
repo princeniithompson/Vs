@@ -80,6 +80,8 @@ class LiveTextPolishClient(
 
         val setup = LivePolishProtocol.setupMessage(request.systemInstruction)
         val turn = LivePolishProtocol.clientContentMessage(request.userText)
+        val firstTokenBudget = Stage2LiveBudget.firstTokenMs(request.userText.length)
+        val hardCap = Stage2LiveBudget.hardCapMs(request.userText.length)
 
         try {
             if (claimed != null) {
@@ -177,7 +179,7 @@ class LiveTextPolishClient(
                 val waitingForSetup = !assembler.setupComplete
                 val setupLate = waitingForSetup && now - started >= RapchaConfig.STAGE2_LIVE_SETUP_MS
                 val turnLate = !waitingForSetup && textNow.isBlank() && turnSentAt > 0L &&
-                    now - turnSentAt >= RapchaConfig.STAGE2_LIVE_TIMEOUT_MS
+                    now - turnSentAt >= firstTokenBudget
                 if (setupLate || turnLate) {
                     return LivePolishOutcome.decide(
                         finished = false,
@@ -187,7 +189,7 @@ class LiveTextPolishClient(
                         setupCompleted = assembler.setupComplete
                     ).withTrace(assembler, started, firstTokenAt, now)
                 }
-                if (now - started >= RapchaConfig.STAGE2_LIVE_HARD_CAP_MS) {
+                if (now - started >= hardCap) {
                     return done(textNow, null, false, assembler, started, firstTokenAt)
                 }
                 Thread.sleep(40)
@@ -280,7 +282,8 @@ internal class WarmSocket(
     val socket: WebSocket,
     val assembler: LivePolishTranscriptAssembler,
     val failure: AtomicReference<String?>,
-    val ready: AtomicBoolean
+    val ready: AtomicBoolean,
+    val openedAt: Long
 )
 
 /**
@@ -341,7 +344,15 @@ object Stage2WarmLine {
                 cancelQuiet(socket)
                 return
             }
-            warm = WarmSocket(apiKey, systemInstruction, socket, assembler, failure, ready)
+            warm = WarmSocket(
+                apiKey,
+                systemInstruction,
+                socket,
+                assembler,
+                failure,
+                ready,
+                android.os.SystemClock.elapsedRealtime()
+            )
             pending = false
         }
     }
@@ -358,6 +369,12 @@ object Stage2WarmLine {
             val stillPending = synchronized(gate) { pending }
             if (current == null && !stillPending) return null
             if (current != null && (current.apiKey != apiKey || current.instruction != instruction)) return null
+            if (current != null && !Stage2LiveBudget.warmEnough(
+                    android.os.SystemClock.elapsedRealtime() - current.openedAt
+                )
+            ) {
+                return null
+            }
             if (current != null && current.failure.get() != null) return null
             if (current != null && current.ready.get()) {
                 synchronized(gate) {

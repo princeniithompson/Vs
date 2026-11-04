@@ -271,6 +271,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
 
     fun expandPanel() {
         if (FloatingBubbleManager.isCurrentAppSensitive.value) return
+        dragSnapHandler.cancel()
         overlayExpanded.value = true
         val lp = layoutParams ?: return
         val displayMetrics = context.resources.displayMetrics
@@ -278,7 +279,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
         val screenHeight = displayMetrics.heightPixels
 
         val topY = (36 * density).toInt()
-        val maxY = (screenHeight - (210 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
+        val maxY = (screenHeight - (320 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
 
         lp.width = WindowManager.LayoutParams.MATCH_PARENT
         lp.height = WindowManager.LayoutParams.WRAP_CONTENT

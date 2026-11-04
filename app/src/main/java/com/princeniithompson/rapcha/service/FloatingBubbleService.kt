@@ -977,6 +977,11 @@ class FloatingBubbleService : Service() {
      * Live two-step Polish. The only model is models/gemini-3.8-live.
      * If that turn returns no text, the raw Stage-1 transcript is inserted.
      */
+    private fun fieldIsReady(): Boolean {
+        val a11y = com.princeniithompson.rapcha.service.RapchaAccessibilityService.instance ?: return false
+        return a11y.hasActiveEditableNode()
+    }
+
     private fun polishWithLiveStage2(
         rawTranscript: String,
         apiKey: String,
@@ -1003,13 +1008,31 @@ class FloatingBubbleService : Service() {
                     )
                 }
                 var committed = ""
-                suspend fun pasteLatest(text: String, final: Boolean): RapchaTextInserter.InsertionResult {
+                var copyInstead = false
+                suspend fun pasteLatest(
+                    text: String,
+                    final: Boolean,
+                    clipboardWhenNoField: Boolean = false
+                ): RapchaTextInserter.InsertionResult {
                     if (text.isBlank()) return RapchaTextInserter.InsertionResult.Failed
                     val gen = pasteGen.incrementAndGet()
                     if (final) pasteFinished.set(true)
                     return pasteGate.withLock {
                         if (!final && (pasteFinished.get() || gen != pasteGen.get())) {
                             return@withLock RapchaTextInserter.InsertionResult.Failed
+                        }
+                        if (!copyInstead && clipboardWhenNoField && !fieldIsReady()) {
+                            copyInstead = true
+                        }
+                        if (copyInstead) {
+                            if (text == committed && committed.isNotEmpty()) {
+                                return@withLock RapchaTextInserter.InsertionResult.SuccessClipboardFallback
+                            }
+                            val placed = RapchaTextInserter.getInstance(this@FloatingBubbleService).copyNoField(text)
+                            if (placed is RapchaTextInserter.InsertionResult.SuccessClipboardFallback) {
+                                committed = text
+                            }
+                            return@withLock placed
                         }
                         when (val edit = LiveStreamPaste.plan(committed, text)) {
                             LiveStreamPaste.Edit.Skip -> {
@@ -1048,49 +1071,101 @@ class FloatingBubbleService : Service() {
                         }
                     }
                 }
-                val paste = withContext(Dispatchers.IO) {
-                    Stage2LivePolish.execute(
-                        rawTranscript = rawTranscript,
-                        category = locked.stage2Category,
-                        appName = locked.appName,
-                        protectedTerms = CustomVocabularyRepository.getVocabulary(),
-                        stage1Dropped = sessionManager.consumeStage1Drop(),
-                        apiKey = apiKey,
-                        model = LiveTextPolishClient(onPartial = { partial ->
-                            serviceScope.launch {
-                                pasteLatest(partial, final = false)
+                val pieces = com.princeniithompson.rapcha.service.floating.Stage2TranscriptChunker.chunks(rawTranscript)
+                val aiPaste = locked.stage2Category == com.princeniithompson.rapcha.service.floating.Stage2Category.AI
+                var assembled = ""
+                var livePieces = 0
+                var failedPieces = 0
+                var lastError: String? = null
+                var lastTimedOut = false
+                val stage1Dropped = sessionManager.consumeStage1Drop()
+                for ((index, piece) in pieces.withIndex()) {
+                    val piecePaste = withContext(Dispatchers.IO) {
+                        Stage2LivePolish.execute(
+                            rawTranscript = piece,
+                            category = locked.stage2Category,
+                            appName = locked.appName,
+                            protectedTerms = CustomVocabularyRepository.getVocabulary(),
+                            stage1Dropped = stage1Dropped,
+                            apiKey = apiKey,
+                            model = LiveTextPolishClient(onPartial = { partial ->
+                                val snapshot = com.princeniithompson.rapcha.service.floating.Stage2TranscriptChunker.join(
+                                    assembled,
+                                    partial
+                                )
+                                serviceScope.launch {
+                                    pasteLatest(snapshot, final = false, clipboardWhenNoField = aiPaste)
+                                }
+                            }),
+                            systemInstruction = instruction,
+                            partIndex = index + 1,
+                            partCount = pieces.size,
+                            sourceChars = rawTranscript.length,
+                            logHeader = index == 0,
+                            log = { type, message ->
+                                AppLogRepository.logEvent(DiagnosticSource.BUBBLE, type, message)
                             }
-                        }),
-                        systemInstruction = instruction,
-                        log = { type, message ->
-                            AppLogRepository.logEvent(DiagnosticSource.BUBBLE, type, message)
-                        }
+                        )
+                    }
+                    val pieceText = if (piecePaste.outcome == Stage2Outcome.SUCCESS) {
+                        livePieces += 1
+                        piecePaste.text
+                    } else {
+                        failedPieces += 1
+                        lastError = piecePaste.error
+                        lastTimedOut = piecePaste.timedOut
+                        piece
+                    }
+                    assembled = com.princeniithompson.rapcha.service.floating.Stage2TranscriptChunker.join(
+                        assembled,
+                        pieceText
                     )
+                    pasteLatest(assembled, final = false, clipboardWhenNoField = aiPaste)
                 }
-                val text = if (paste.outcome == Stage2Outcome.SUCCESS) {
-                    paste.text
-                } else {
+                val text = if (livePieces == 0) {
                     AppLogRepository.logEvent(
                         DiagnosticSource.BUBBLE,
                         DiagnosticType.STAGE2_LIVE_FALLBACK,
-                        "fallback=raw model=${LivePolishProtocol.MODEL} category=${locked.stage2Category}"
+                        "fallback=raw model=${LivePolishProtocol.MODEL} category=${locked.stage2Category} pieces=${pieces.size}"
                     )
                     Toast.makeText(
                         this@FloatingBubbleService,
-                        LivePolishOutcome.userLine(paste.error),
+                        LivePolishOutcome.userLine(lastError),
                         Toast.LENGTH_LONG
                     ).show()
                     Stage2LivePolish.rawOnFailure(rawTranscript)
+                } else {
+                    if (failedPieces > 0) {
+                        AppLogRepository.logEvent(
+                            DiagnosticSource.BUBBLE,
+                            DiagnosticType.STAGE2_LIVE_FALLBACK,
+                            "fallback=partial live=$livePieces failed=$failedPieces timed_out=${lastTimedOut} category=${locked.stage2Category}"
+                        )
+                    }
+                    assembled
                 }
                 if (text.isNotBlank()) {
                     HistoryRepository.saveEntry(
                         text = text,
-                        mode = if (paste.outcome == Stage2Outcome.SUCCESS) "LIVE_POLISHED" else "POLISHED",
+                        mode = if (livePieces > 0) "LIVE_POLISHED" else "POLISHED",
                         appName = locked.appName
                     )
-                    val placed = pasteLatest(text, final = true)
-                    VocabSuggestions.onConfirmedPlacement(this@FloatingBubbleService, text, placed)
-                    if (paste.outcome == Stage2Outcome.SUCCESS || text != rawTranscript) {
+                    val placed = pasteLatest(text, final = true, clipboardWhenNoField = aiPaste)
+                    val delivered = if (
+                        placed is RapchaTextInserter.InsertionResult.Failed && aiPaste
+                    ) {
+                        RapchaTextInserter.getInstance(this@FloatingBubbleService).copyNoField(text)
+                    } else {
+                        placed
+                    }
+                    VocabSuggestions.onConfirmedPlacement(this@FloatingBubbleService, text, delivered)
+                    if (delivered is RapchaTextInserter.InsertionResult.SuccessClipboardFallback) {
+                        Toast.makeText(
+                            this@FloatingBubbleService,
+                            "Copied. No text field was focused.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } else if (livePieces > 0) {
                         Toast.makeText(this@FloatingBubbleService, "Polished ✨", Toast.LENGTH_SHORT).show()
                     }
                 }

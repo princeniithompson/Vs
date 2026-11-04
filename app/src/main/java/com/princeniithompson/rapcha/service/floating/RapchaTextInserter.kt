@@ -141,13 +141,28 @@ class RapchaTextInserter(private val context: Context) {
         }
     }
 
-    private fun logDiagnosticInsertion(method: String, success: Boolean) {
+    /**
+     * Polish had no focused field to land in. The full text replaces the clipboard.
+     */
+    suspend fun copyNoField(text: String): InsertionResult = insertionMutex.withLock {
+        if (text.isBlank()) return@withLock InsertionResult.Failed
+        val copied = fallbackToClipboard(text)
+        logDiagnosticInsertion(
+            method = if (copied) "clipboard" else "failed",
+            success = copied,
+            reason = "no_field"
+        )
+        if (copied) InsertionResult.SuccessClipboardFallback else InsertionResult.Failed
+    }
+
+    private fun logDiagnosticInsertion(method: String, success: Boolean, reason: String? = null) {
         val label = if (success) method else "failed"
         val pkg = FloatingBubbleManager.currentForegroundPackage.value?.takeIf { it.isNotBlank() } ?: "unknown"
+        val why = if (reason.isNullOrBlank()) "" else " reason=$reason"
         AppLogRepository.logEvent(
             DiagnosticSource.BUBBLE,
             DiagnosticType.TEXT_INSERTED,
-            "method=$label package=$pkg"
+            "method=$label package=$pkg$why"
         )
     }
 

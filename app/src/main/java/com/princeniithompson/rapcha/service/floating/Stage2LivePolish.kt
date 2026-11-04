@@ -42,15 +42,22 @@ object Stage2LivePolish {
         model: Stage2Model,
         appName: String = "App",
         systemInstruction: String? = null,
+        partIndex: Int = 1,
+        partCount: Int = 1,
+        sourceChars: Int = -1,
+        logHeader: Boolean = true,
         log: (DiagnosticType, String) -> Unit = { _, _ -> },
         nowMs: () -> Long = { System.currentTimeMillis() }
     ): Stage2Paste {
         val raw = rawTranscript.trim()
-        val script = nonAsciiHint(raw)
-        log(
-            DiagnosticType.STAGE2_LIVE_START,
-            "category=$category model=${LivePolishProtocol.MODEL} stage1_flush=${yesNo(stage1Dropped)} $script"
-        )
+        val piece = if (partCount > 1) "chunk=$partIndex/$partCount" else ""
+        val script = listOf(nonAsciiHint(raw), piece).filter { it.isNotBlank() }.joinToString(" ")
+        if (logHeader) {
+            log(
+                DiagnosticType.STAGE2_LIVE_START,
+                "category=$category model=${LivePolishProtocol.MODEL} stage1_flush=${yesNo(stage1Dropped)} chars=${raw.length} source_chars=${if (sourceChars >= 0) sourceChars else raw.length} pieces=$partCount $piece $script"
+            )
+        }
         val started = nowMs()
         val response = try {
             model.polish(
@@ -61,7 +68,13 @@ object Stage2LivePolish {
                         appName,
                         protectedTerms
                     ),
-                    userText = Stage2LivePrompt.userTurn(category, raw, protectedTerms)
+                    userText = Stage2LivePrompt.userTurn(
+                        category,
+                        raw,
+                        protectedTerms,
+                        partIndex = partIndex,
+                        partCount = partCount
+                    )
                 )
             )
         } catch (t: Throwable) {
@@ -113,7 +126,7 @@ object Stage2LivePolish {
         script: String,
         log: (DiagnosticType, String) -> Unit
     ) {
-        val base = "category=${paste.category} latency_ms=${paste.latencyMs} stage1_flush=${yesNo(paste.stage1Flushed)} $script"
+        val base = "category=${paste.category} latency_ms=${paste.latencyMs} stage1_flush=${yesNo(paste.stage1Flushed)} chars=${paste.text.length} $script"
         val detail = response.trace.ifBlank { "first_token_ms=${response.firstTokenMs}" }
         if (paste.outcome == Stage2Outcome.SUCCESS) {
             log(DiagnosticType.STAGE2_LIVE_SUCCESS, "$base model=${LivePolishProtocol.MODEL} $detail")
