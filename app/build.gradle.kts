@@ -16,14 +16,21 @@ android {
     applicationId = "com.princeniithompson.rapcha"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 9
+    versionName = "live-polish-9"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
     vectorDrawables {
       useSupportLibrary = true
     }
+
+    val gitCommit = runCatching {
+      providers.exec {
+        commandLine("git", "rev-parse", "HEAD")
+      }.standardOutput.asText.get().trim()
+    }.getOrDefault("unknown")
+    buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
   }
 
   val envKeystorePath: String? = System.getenv("KEYSTORE_PATH")

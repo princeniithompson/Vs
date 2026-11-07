@@ -605,7 +605,7 @@ class FloatingBubbleService : Service() {
         AppLogRepository.logEvent(
             DiagnosticSource.BUBBLE,
             DiagnosticType.SESSION_START,
-            "section_lock=${mode.name} category=${section.stage2Category.name} app=${section.appName} override=${override.storedValue()} three_step=${if (plan.threeStep) "yes" else "no"} stage1=${plan.stage1.name} stage1_model=${GeminiLiveWebSocketClient.DEFAULT_MODEL} stage2_model=${com.princeniithompson.rapcha.config.RapchaConfig.STAGE2_LIVE_MODEL}"
+            "build=${com.princeniithompson.rapcha.BuildConfig.VERSION_NAME} code=${com.princeniithompson.rapcha.BuildConfig.VERSION_CODE} commit=${com.princeniithompson.rapcha.BuildConfig.GIT_COMMIT} section_lock=${mode.name} category=${section.stage2Category.name} app=${section.appName} override=${override.storedValue()} three_step=${if (plan.threeStep) "yes" else "no"} stage1=${plan.stage1.name} stage1_model=${GeminiLiveWebSocketClient.DEFAULT_MODEL} stage2_model=${com.princeniithompson.rapcha.config.RapchaConfig.STAGE2_LIVE_MODEL}"
         )
         if (mode == SectionPolishMode.TWO_STEP_LIVE) {
             serviceScope.launch(Dispatchers.IO) {
