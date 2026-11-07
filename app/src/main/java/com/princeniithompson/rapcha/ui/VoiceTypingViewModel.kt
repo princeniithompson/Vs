@@ -21,6 +21,7 @@ import com.princeniithompson.rapcha.service.floating.Stage2CategoryMapper
 import com.princeniithompson.rapcha.service.floating.Stage2LivePolish
 import com.princeniithompson.rapcha.service.floating.Stage2PolishBackend
 import com.princeniithompson.rapcha.service.floating.Stage2PolishSettings
+import com.princeniithompson.rapcha.service.floating.ThreeStepPolishSettings
 import com.princeniithompson.rapcha.service.floating.Stage2SessionPolicy
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -151,6 +152,9 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
     private val _polishOverride = MutableStateFlow(Stage2PolishSettings.read(prefs))
     val polishOverride: StateFlow<Stage2PolishBackend> = _polishOverride.asStateFlow()
+
+    private val _threeStepPolish = MutableStateFlow(ThreeStepPolishSettings.read(prefs))
+    val threeStepPolish: StateFlow<Boolean> = _threeStepPolish.asStateFlow()
 
     private val _liveTwoStepPolish = MutableStateFlow(_polishOverride.value == Stage2PolishBackend.LIVE)
     val liveTwoStepPolish: StateFlow<Boolean> = _liveTwoStepPolish.asStateFlow()
@@ -353,6 +357,16 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         _liveTwoStepPolish.value = mode == Stage2PolishBackend.LIVE
         com.princeniithompson.rapcha.service.FloatingBubbleManager.refreshLiveTwoStep(getApplication())
         addLog(LogLevel.INFO, TAG, "Polish route set to ${mode.storedValue()} for the next section")
+    }
+
+    fun setThreeStepPolish(enabled: Boolean) {
+        if (_isRecording.value) {
+            addLog(LogLevel.INFO, TAG, "Three-step changes on the next section, not while recording")
+            return
+        }
+        ThreeStepPolishSettings.write(prefs, enabled)
+        _threeStepPolish.value = enabled
+        addLog(LogLevel.INFO, TAG, "Three-step polish set to $enabled for the next AI section")
     }
 
     fun toggleRecording() {

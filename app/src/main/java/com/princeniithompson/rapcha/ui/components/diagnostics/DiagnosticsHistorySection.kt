@@ -203,6 +203,8 @@ fun DiagnosticEntryRow(entry: DiagnosticLogEntry, timeFormat: SimpleDateFormat) 
         DiagnosticType.STAGE2_LIVE_SUCCESS -> Triple(DiagnosticsPalette.greenSoft, DiagnosticsPalette.green, "LIVE2_OK")
         DiagnosticType.STAGE2_LIVE_FAILED -> Triple(DiagnosticsPalette.redSoft, DiagnosticsPalette.red, "LIVE2_ERR")
         DiagnosticType.STAGE2_LIVE_FALLBACK -> Triple(DiagnosticsPalette.amberSoft, DiagnosticsPalette.amber, "LIVE2_RAW")
+        DiagnosticType.POLISH_TRACE -> Triple(Color(0xFFE0E7FF), Color(0xFF4338CA), "TRACE")
+        DiagnosticType.DELIVERY -> Triple(DiagnosticsPalette.amberSoft, DiagnosticsPalette.amber, "DELIVER")
     }
 
     val messageColor = if (

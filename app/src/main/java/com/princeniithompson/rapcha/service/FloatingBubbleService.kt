@@ -42,7 +42,13 @@ import com.princeniithompson.rapcha.service.floating.Stage2LivePolish
 import com.princeniithompson.rapcha.service.floating.Stage2LivePrompt
 import com.princeniithompson.rapcha.service.floating.Stage2Outcome
 import com.princeniithompson.rapcha.service.floating.Stage2PolishSettings
+import com.princeniithompson.rapcha.service.floating.DeliveryHalt
+import com.princeniithompson.rapcha.service.floating.DeliverySession
+import com.princeniithompson.rapcha.service.floating.PolishDelivery
+import com.princeniithompson.rapcha.service.floating.Stage1Capture
 import com.princeniithompson.rapcha.service.floating.Stage2WarmLine
+import com.princeniithompson.rapcha.service.floating.ThreeStepPolicy
+import com.princeniithompson.rapcha.service.floating.ThreeStepPolishSettings
 import com.princeniithompson.rapcha.service.floating.FloatingTextInjector
 import com.princeniithompson.rapcha.service.floating.RapchaTextInserter
 import com.princeniithompson.rapcha.service.floating.OfflineRetryRules
@@ -133,6 +139,9 @@ class FloatingBubbleService : Service() {
 
     @Volatile
     private var isPendingInjectionOnSmartCompletion = false
+
+    @Volatile
+    private var activeDelivery: DeliverySession? = null
 
     /** Foreground app captured when the session starts, before the bubble can cover it. */
     @Volatile
@@ -563,6 +572,7 @@ class FloatingBubbleService : Service() {
         val prefs = getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)
         val savedSmartMode = prefs.getBoolean("smart_mode", false)
         val override = Stage2PolishSettings.read(prefs)
+        val threeStepEnabled = ThreeStepPolishSettings.read(prefs)
         val target = polishCoordinator.stage2Target(
             this,
             completeTargetPackage,
@@ -570,7 +580,8 @@ class FloatingBubbleService : Service() {
             allowLiveHint = false
         )
         val aiApp = HybridPolishPolicy.isAiTarget(target.stage2Category, target.polishCategory)
-        val mode = HybridPolishPolicy.lock(override, aiApp)
+        val plan = ThreeStepPolicy.resolve(override, aiApp, threeStepEnabled, savedSmartMode)
+        val mode = plan.mode
         val liveCategory = HybridPolishPolicy.liveCategory(target.stage2Category, aiApp)
         val instruction = if (mode == SectionPolishMode.TWO_STEP_LIVE) {
             Stage2LivePrompt.systemInstruction(
@@ -586,13 +597,15 @@ class FloatingBubbleService : Service() {
             stage2Category = if (mode == SectionPolishMode.TWO_STEP_LIVE) liveCategory else target.stage2Category,
             polishCategory = target.polishCategory,
             appName = target.appName,
-            systemInstruction = instruction
+            systemInstruction = instruction,
+            stage1 = plan.stage1,
+            threeStep = plan.threeStep
         )
         FloatingBubbleManager.lockSection(section)
         AppLogRepository.logEvent(
             DiagnosticSource.BUBBLE,
             DiagnosticType.SESSION_START,
-            "section_lock=${mode.name} category=${section.stage2Category.name} app=${section.appName} override=${override.storedValue()}"
+            "section_lock=${mode.name} category=${section.stage2Category.name} app=${section.appName} override=${override.storedValue()} three_step=${if (plan.threeStep) "yes" else "no"} stage1=${plan.stage1.name} stage1_model=${GeminiLiveWebSocketClient.DEFAULT_MODEL} stage2_model=${com.princeniithompson.rapcha.config.RapchaConfig.STAGE2_LIVE_MODEL}"
         )
         if (mode == SectionPolishMode.TWO_STEP_LIVE) {
             serviceScope.launch(Dispatchers.IO) {
@@ -612,8 +625,12 @@ class FloatingBubbleService : Service() {
         pendingCompletionTimeoutJob = null
         overlayWindowManager.overlayRecording.value = true
 
-        val isSmartMode = mode == SectionPolishMode.SMART && savedSmartMode
-        val selectedModel = prefs.getString("selected_model", GeminiLiveWebSocketClient.DEFAULT_MODEL) ?: GeminiLiveWebSocketClient.DEFAULT_MODEL
+        val isSmartMode = plan.stage1 == Stage1Capture.SMART
+        val selectedModel = if (mode == SectionPolishMode.TWO_STEP_LIVE) {
+            GeminiLiveWebSocketClient.DEFAULT_MODEL
+        } else {
+            prefs.getString("selected_model", GeminiLiveWebSocketClient.DEFAULT_MODEL) ?: GeminiLiveWebSocketClient.DEFAULT_MODEL
+        }
 
         sessionManager.startSession(
             context = this,
@@ -993,6 +1010,11 @@ class FloatingBubbleService : Service() {
             return
         }
         overlayWindowManager.overlayPolishing.value = true
+        val delivery = DeliverySession(
+            id = android.os.SystemClock.elapsedRealtime(),
+            originPackage = completeTargetPackage
+        )
+        activeDelivery = delivery
         val pasteGate = Mutex()
         val pasteGen = AtomicInteger(0)
         val pasteFinished = AtomicBoolean(false)
@@ -1008,7 +1030,21 @@ class FloatingBubbleService : Service() {
                     )
                 }
                 var committed = ""
-                var copyInstead = false
+                fun refreshDelivery() {
+                    val current = com.princeniithompson.rapcha.service.FloatingBubbleManager.currentForegroundPackage.value
+                    val sensitive = com.princeniithompson.rapcha.service.FloatingBubbleManager.isCurrentAppSensitive.value
+                    val launcher = !current.isNullOrBlank() &&
+                        com.princeniithompson.rapcha.service.ForegroundAppPicker.isLauncherPackage(current)
+                    delivery.note(
+                        PolishDelivery.halt(
+                            originPackage = delivery.originPackage,
+                            currentPackage = current,
+                            sensitive = sensitive,
+                            cancelled = false,
+                            launcher = launcher
+                        )
+                    )
+                }
                 suspend fun pasteLatest(
                     text: String,
                     final: Boolean,
@@ -1018,21 +1054,18 @@ class FloatingBubbleService : Service() {
                     val gen = pasteGen.incrementAndGet()
                     if (final) pasteFinished.set(true)
                     return pasteGate.withLock {
+                        if (activeDelivery !== delivery) {
+                            return@withLock RapchaTextInserter.InsertionResult.Failed
+                        }
+                        refreshDelivery()
+                        if (!delivery.acceptsInsert()) {
+                            return@withLock RapchaTextInserter.InsertionResult.Failed
+                        }
                         if (!final && (pasteFinished.get() || gen != pasteGen.get())) {
                             return@withLock RapchaTextInserter.InsertionResult.Failed
                         }
-                        if (!copyInstead && clipboardWhenNoField && !fieldIsReady()) {
-                            copyInstead = true
-                        }
-                        if (copyInstead) {
-                            if (text == committed && committed.isNotEmpty()) {
-                                return@withLock RapchaTextInserter.InsertionResult.SuccessClipboardFallback
-                            }
-                            val placed = RapchaTextInserter.getInstance(this@FloatingBubbleService).copyNoField(text)
-                            if (placed is RapchaTextInserter.InsertionResult.SuccessClipboardFallback) {
-                                committed = text
-                            }
-                            return@withLock placed
+                        if (!final && !fieldIsReady()) {
+                            return@withLock RapchaTextInserter.InsertionResult.Failed
                         }
                         when (val edit = LiveStreamPaste.plan(committed, text)) {
                             LiveStreamPaste.Edit.Skip -> {
@@ -1076,6 +1109,7 @@ class FloatingBubbleService : Service() {
                 var assembled = ""
                 var livePieces = 0
                 var failedPieces = 0
+                var suspiciousPieces = 0
                 var lastError: String? = null
                 var lastTimedOut = false
                 val stage1Dropped = sessionManager.consumeStage1Drop()
@@ -1107,9 +1141,19 @@ class FloatingBubbleService : Service() {
                             }
                         )
                     }
-                    val pieceText = if (piecePaste.outcome == Stage2Outcome.SUCCESS) {
+                    val pieceText = if (piecePaste.outcome == Stage2Outcome.SUCCESS &&
+                        !PolishDelivery.suspiciousPiece(piece.length, piecePaste.text.length)
+                    ) {
                         livePieces += 1
                         piecePaste.text
+                    } else if (piecePaste.outcome == Stage2Outcome.SUCCESS) {
+                        suspiciousPieces += 1
+                        AppLogRepository.logEvent(
+                            DiagnosticSource.BUBBLE,
+                            DiagnosticType.POLISH_TRACE,
+                            "suspicious_output=yes source_chars=${piece.length} output_chars=${piecePaste.text.length} action=kept_raw chunk=${index + 1}/${pieces.size}"
+                        )
+                        piece
                     } else {
                         failedPieces += 1
                         lastError = piecePaste.error
@@ -1122,7 +1166,7 @@ class FloatingBubbleService : Service() {
                     )
                     pasteLatest(assembled, final = false, clipboardWhenNoField = aiPaste)
                 }
-                val text = if (livePieces == 0) {
+                val text = if (livePieces == 0 && failedPieces > 0) {
                     AppLogRepository.logEvent(
                         DiagnosticSource.BUBBLE,
                         DiagnosticType.STAGE2_LIVE_FALLBACK,
@@ -1144,32 +1188,74 @@ class FloatingBubbleService : Service() {
                     }
                     assembled
                 }
+                if (rawTranscript.isNotBlank()) {
+                    HistoryRepository.saveEntry(
+                        text = rawTranscript,
+                        mode = if (locked.threeStep) "THREE_STEP_STAGE1" else "STAGE1_RAW",
+                        appName = locked.appName
+                    )
+                }
                 if (text.isNotBlank()) {
                     HistoryRepository.saveEntry(
                         text = text,
-                        mode = if (livePieces > 0) "LIVE_POLISHED" else "POLISHED",
+                        mode = if (livePieces > 0) {
+                            if (locked.threeStep) "THREE_STEP_POLISHED" else "LIVE_POLISHED"
+                        } else {
+                            "POLISHED"
+                        },
                         appName = locked.appName
                     )
-                    val placed = pasteLatest(text, final = true, clipboardWhenNoField = aiPaste)
-                    val delivered = if (
-                        placed is RapchaTextInserter.InsertionResult.Failed && aiPaste
-                    ) {
-                        RapchaTextInserter.getInstance(this@FloatingBubbleService).copyNoField(text)
+                    refreshDelivery()
+                    val placed = if (delivery.acceptsInsert()) {
+                        pasteLatest(text, final = true, clipboardWhenNoField = false)
                     } else {
+                        RapchaTextInserter.InsertionResult.Failed
+                    }
+                    val verified = placed is RapchaTextInserter.InsertionResult.SuccessDirect && fieldIsReady()
+                    val copy = PolishDelivery.mayCopyFinal(delivery.halt, delivery.copied) &&
+                        (placed !is RapchaTextInserter.InsertionResult.SuccessDirect || !verified)
+                    val delivered = if (copy) {
+                        delivery.markCopied()
+                        val copied = RapchaTextInserter.getInstance(this@FloatingBubbleService).copyNoField(text)
+                        AppLogRepository.logEvent(
+                            DiagnosticSource.BUBBLE,
+                            DiagnosticType.DELIVERY,
+                            "clipboard=once halt=${delivery.halt.name} outcome=${if (copied is RapchaTextInserter.InsertionResult.SuccessClipboardFallback) "set" else "failed"} verified=no"
+                        )
+                        copied
+                    } else {
+                        AppLogRepository.logEvent(
+                            DiagnosticSource.BUBBLE,
+                            DiagnosticType.DELIVERY,
+                            "clipboard=skipped halt=${delivery.halt.name} verified=unverified field_present=${if (verified) "yes" else "no"}"
+                        )
                         placed
                     }
-                    VocabSuggestions.onConfirmedPlacement(this@FloatingBubbleService, text, delivered)
-                    if (delivered is RapchaTextInserter.InsertionResult.SuccessClipboardFallback) {
-                        Toast.makeText(
-                            this@FloatingBubbleService,
-                            "Copied. No text field was focused.",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    } else if (livePieces > 0) {
-                        Toast.makeText(this@FloatingBubbleService, "Polished ✨", Toast.LENGTH_SHORT).show()
+                    if (delivered is RapchaTextInserter.InsertionResult.SuccessDirect ||
+                        delivered is RapchaTextInserter.InsertionResult.SuccessClipboardFallback
+                    ) {
+                        VocabSuggestions.onConfirmedPlacement(this@FloatingBubbleService, text, delivered)
+                    }
+                    val notice = when {
+                        delivery.halt == DeliveryHalt.CANCELLED -> null
+                        delivery.halt == DeliveryHalt.SENSITIVE -> "Polish is in History."
+                        delivered is RapchaTextInserter.InsertionResult.SuccessClipboardFallback ->
+                            "Full result copied. The text field could not be confirmed."
+                        livePieces > 0 && verified -> "Polished ✨"
+                        livePieces > 0 -> "Polished text is in History."
+                        else -> null
+                    }
+                    if (notice != null) {
+                        Toast.makeText(this@FloatingBubbleService, notice, Toast.LENGTH_LONG).show()
                     }
                 }
+                AppLogRepository.logEvent(
+                    DiagnosticSource.BUBBLE,
+                    DiagnosticType.POLISH_TRACE,
+                    "model_complete=yes live_pieces=$livePieces failed_pieces=$failedPieces raw_chars=${rawTranscript.length} final_chars=${text.length} three_step=${if (locked.threeStep) "yes" else "no"} halt=${delivery.halt.name}"
+                )
             } finally {
+                if (activeDelivery === delivery) activeDelivery = null
                 overlayWindowManager.overlayPolishing.value = false
                 resetAndCollapse()
             }
@@ -1177,6 +1263,7 @@ class FloatingBubbleService : Service() {
     }
 
     private fun onCancelClicked() {
+        activeDelivery?.note(DeliveryHalt.CANCELLED)
         if (FloatingBubbleManager.offlineRetry.value != null || offlineRetry.isHolding()) {
             onDiscardClicked()
             return

@@ -77,7 +77,9 @@ enum class DiagnosticType {
     STAGE2_LIVE_START,
     STAGE2_LIVE_SUCCESS,
     STAGE2_LIVE_FAILED,
-    STAGE2_LIVE_FALLBACK
+    STAGE2_LIVE_FALLBACK,
+    POLISH_TRACE,
+    DELIVERY
 }
 
 data class DiagnosticLogEntry(

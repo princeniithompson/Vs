@@ -36,6 +36,22 @@ enum class SectionPolishMode {
     SMART
 }
 
+/** Stage-1 capture on the same models/gemini-3.5-transcribe-live socket. */
+enum class Stage1Capture {
+    VERBATIM,
+    SMART
+}
+
+/**
+ * What one bubble section will do. Built once at section start.
+ * [threeStep] is true only for an eligible AI Live section while the control is on.
+ */
+data class PolishSectionPlan(
+    val mode: SectionPolishMode,
+    val stage1: Stage1Capture,
+    val threeStep: Boolean
+)
+
 /**
  * Category decides the section. Unknown and non-AI stay Smart.
  * The override wins over the category, and the result is locked for the section.
@@ -73,8 +89,51 @@ data class LockedPolishSection(
     val stage2Category: Stage2Category,
     val polishCategory: AppCategory,
     val appName: String,
-    val systemInstruction: String
+    val systemInstruction: String,
+    val stage1: Stage1Capture = Stage1Capture.VERBATIM,
+    val threeStep: Boolean = false
 )
+
+/**
+ * Optional AI three-step. Missing preference means on for this version.
+ * An explicit false stays off. This does not change a build that is already installed.
+ */
+object ThreeStepPolishSettings {
+    const val PREFS_KEY = "three_step_polish"
+
+    fun read(prefs: SharedPreferences): Boolean {
+        if (!prefs.contains(PREFS_KEY)) return true
+        return prefs.getBoolean(PREFS_KEY, true)
+    }
+
+    fun write(prefs: SharedPreferences, enabled: Boolean) {
+        prefs.edit().putBoolean(PREFS_KEY, enabled).apply()
+    }
+}
+
+/**
+ * Force Smart stays one-step Smart. Force Live and Auto on an AI app use
+ * two-step Live. Three-step, when enabled, makes that AI Stage-1 the existing
+ * Smart flag on gemini-3.5-transcribe-live. It does not apply to non-AI apps
+ * and does not rewrite a plan that was already locked.
+ */
+object ThreeStepPolicy {
+    fun resolve(
+        override: Stage2PolishBackend,
+        aiApp: Boolean,
+        threeStepEnabled: Boolean,
+        savedSmartMode: Boolean
+    ): PolishSectionPlan {
+        val mode = HybridPolishPolicy.lock(override, aiApp)
+        if (mode != SectionPolishMode.TWO_STEP_LIVE) {
+            val stage1 = if (savedSmartMode) Stage1Capture.SMART else Stage1Capture.VERBATIM
+            return PolishSectionPlan(mode, stage1, threeStep = false)
+        }
+        val three = threeStepEnabled && aiApp
+        val stage1 = if (three) Stage1Capture.SMART else Stage1Capture.VERBATIM
+        return PolishSectionPlan(mode, stage1, threeStep = three)
+    }
+}
 
 /**
  * Toggle ON uses only models/gemini-3.8-live. Toggle OFF stays on the unary flash chain.

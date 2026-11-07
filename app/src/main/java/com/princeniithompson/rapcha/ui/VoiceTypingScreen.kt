@@ -127,6 +127,7 @@ fun VoiceTypingScreen(
     val isSmartMode by viewModel.isSmartMode.collectAsState()
     val liveTwoStepPolish by viewModel.liveTwoStepPolish.collectAsState()
     val polishOverride by viewModel.polishOverride.collectAsState()
+    val threeStepPolish by viewModel.threeStepPolish.collectAsState()
     val isBubbleEnabled by viewModel.isBubbleEnabled.collectAsState()
     val isSmartSafeModeEnabled by viewModel.isSmartSafeModeEnabled.collectAsState()
     val isAccessibilityConnected by viewModel.isAccessibilityConnected.collectAsState()
@@ -481,6 +482,33 @@ fun VoiceTypingScreen(
                             )
                             Text(text = label, style = MaterialTheme.typography.bodyMedium)
                         }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Three-step polish",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = if (threeStepPolish) {
+                                    "On for AI apps: Smart cleanup on gemini-3.5-transcribe-live, then gemini-3.8-live prompt optimization. Force Smart stays one-step. Applies on the next section."
+                                } else {
+                                    "Off: AI Live stays verbatim, then gemini-3.8-live. Turn it on again for the next section."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Switch(
+                            checked = threeStepPolish,
+                            onCheckedChange = { viewModel.setThreeStepPolish(it) },
+                            enabled = !isRecording,
+                            modifier = Modifier.testTag("three_step_polish_switch")
+                        )
                     }
                 }
                 Row(
