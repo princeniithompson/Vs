@@ -90,7 +90,11 @@ class FloatingOverlayWindowManager(private val context: Context) {
         onPolishClick: () -> Unit,
         onCompleteClick: () -> Unit,
         onLongPressBubble: () -> Unit = {},
-        onScanTriggered: () -> Unit = {}
+        onScanTriggered: () -> Unit = {},
+        lensEnabled: () -> Boolean = { false },
+        onLensDragStart: () -> Unit = {},
+        onLensDrag: (Float, Float) -> Unit = { _, _ -> },
+        onLensDragEnd: () -> Unit = {}
     ) {
         lifecycleOwner.onCreate()
         lifecycleOwner.onStart()
@@ -182,6 +186,10 @@ class FloatingOverlayWindowManager(private val context: Context) {
                     onCompleteClick = onCompleteClick,
                     onLongPressBubble = onLongPressBubble,
                     onScanTriggered = onScanTriggered,
+                    lensEnabled = lensEnabled,
+                    onLensDragStart = onLensDragStart,
+                    onLensDrag = onLensDrag,
+                    onLensDragEnd = onLensDragEnd,
                     onDragStart = {
                         FloatingHapticManager.trigger(context, FloatingHapticType.BUBBLE_HOLD)
                         resetInactivityTimer(keepShrunk = true)

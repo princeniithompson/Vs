@@ -64,6 +64,10 @@ fun FloatingCollapsedBubble(
     onDragStart: () -> Unit = {},
     onDrag: (Float, Float) -> Unit = { _, _ -> },
     onDragEnd: () -> Unit = {},
+    lensEnabled: () -> Boolean = { false },
+    onLensDragStart: () -> Unit = {},
+    onLensDrag: (Float, Float) -> Unit = { _, _ -> },
+    onLensDragEnd: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val palette = rememberDynamicAuroraPalette()
@@ -118,6 +122,7 @@ fun FloatingCollapsedBubble(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         var isLongPressTriggered = false
                         var isDragging = false
+                        var isLensDrag = false
                         var totalDrag = 0f
 
                         val longPressJob = launch {
@@ -135,7 +140,9 @@ fun FloatingCollapsedBubble(
                                 // Pointer up
                                 change.consume()
                                 longPressJob.cancel()
-                                if (isDragging) {
+                                if (isLensDrag) {
+                                    onLensDragEnd()
+                                } else if (isDragging) {
                                     onDragEnd()
                                 } else if (!isLongPressTriggered) {
                                     if (isScanMode) {
@@ -154,13 +161,21 @@ fun FloatingCollapsedBubble(
                                 val dist = hypot(dx, dy)
                                 totalDrag += dist
 
-                                if (totalDrag > 12f && !isDragging) {
-                                    isDragging = true
-                                    longPressJob.cancel()
-                                    onDragStart()
+                                if (totalDrag > 12f && !isDragging && !isLensDrag) {
+                                    if (isLongPressTriggered && lensEnabled()) {
+                                        isLensDrag = true
+                                        onLensDragStart()
+                                    } else {
+                                        isDragging = true
+                                        longPressJob.cancel()
+                                        onDragStart()
+                                    }
                                 }
 
-                                if (isDragging) {
+                                if (isLensDrag) {
+                                    change.consume()
+                                    onLensDrag(dx, dy)
+                                } else if (isDragging) {
                                     change.consume()
                                     onDrag(dx, dy)
                                 }

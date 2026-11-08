@@ -44,7 +44,11 @@ fun FloatingOverlayContent(
     onScanTriggered: () -> Unit,
     onDragStart: () -> Unit,
     onDrag: (dx: Float, dy: Float) -> Unit,
-    onDragEnd: () -> Unit
+    onDragEnd: () -> Unit,
+    lensEnabled: () -> Boolean = { false },
+    onLensDragStart: () -> Unit = {},
+    onLensDrag: (Float, Float) -> Unit = { _, _ -> },
+    onLensDragEnd: () -> Unit = {}
 ) {
     MyApplicationTheme(darkTheme = true, dynamicColor = true) {
         val rootModifier = when {
@@ -92,7 +96,11 @@ fun FloatingOverlayContent(
                     onScanTriggered = onScanTriggered,
                     onDragStart = onDragStart,
                     onDrag = onDrag,
-                    onDragEnd = onDragEnd
+                    onDragEnd = onDragEnd,
+                    lensEnabled = lensEnabled,
+                    onLensDragStart = onLensDragStart,
+                    onLensDrag = onLensDrag,
+                    onLensDragEnd = onLensDragEnd
                 )
             }
         }

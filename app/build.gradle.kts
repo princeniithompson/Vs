@@ -16,8 +16,8 @@ android {
     applicationId = "com.princeniithompson.rapcha"
     minSdk = 24
     targetSdk = 36
-    versionCode = 9
-    versionName = "live-polish-9"
+    versionCode = 10
+    versionName = "live-polish-10"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -118,6 +118,7 @@ dependencies {
   implementation(libs.okhttp)
   implementation(libs.retrofit)
   implementation("org.tensorflow:tensorflow-lite:2.16.1")
+  implementation("com.google.mlkit:text-recognition:16.0.1")
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)

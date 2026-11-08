@@ -276,8 +276,27 @@ class FloatingBubbleService : Service() {
                 onRingClick = { onRingClicked() },
                 onCancelClick = { onCancelClicked() },
                 onPolishClick = { onPolishClicked() },
-            onCompleteClick = { onConfirmClicked() }
-        )
+                onCompleteClick = { onConfirmClicked() },
+                lensEnabled = {
+                    com.princeniithompson.rapcha.service.lens.LensSettings.enabled(
+                        getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)
+                    )
+                },
+                onLensDragStart = { com.princeniithompson.rapcha.service.lens.LensController.onDragStart() },
+                onLensDrag = { dx, dy -> com.princeniithompson.rapcha.service.lens.LensController.onDrag(dx, dy) },
+                onLensDragEnd = { com.princeniithompson.rapcha.service.lens.LensController.onDragEnd() }
+            )
+            com.princeniithompson.rapcha.service.lens.LensController.attach(
+                context = this,
+                apiKey = { getEffectiveApiKey() },
+                bubbleAlpha = { alpha -> overlayWindowManager.overlayView?.alpha = alpha },
+                bubbleOrigin = {
+                    val lp = overlayWindowManager.layoutParams
+                    val density = resources.displayMetrics.density
+                    val size = 56f * density
+                    Pair((lp?.x ?: 0) + size / 2f, (lp?.y ?: 0) + size / 2f)
+                }
+            )
         offlineRetry.restorePending(this)
         RetryClipStore.currentId()?.let { clipId ->
             if (offlineRetry.isSticky()) linkPendingHistory(clipId)

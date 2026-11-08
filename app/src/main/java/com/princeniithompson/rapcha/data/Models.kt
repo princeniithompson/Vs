@@ -79,7 +79,12 @@ enum class DiagnosticType {
     STAGE2_LIVE_FAILED,
     STAGE2_LIVE_FALLBACK,
     POLISH_TRACE,
-    DELIVERY
+    DELIVERY,
+    LENS_START,
+    LENS_TARGET,
+    LENS_ACTION,
+    LENS_RESULT,
+    LENS_ERROR
 }
 
 data class DiagnosticLogEntry(

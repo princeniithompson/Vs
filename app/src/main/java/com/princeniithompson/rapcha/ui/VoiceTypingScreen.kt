@@ -510,6 +510,42 @@ fun VoiceTypingScreen(
                             modifier = Modifier.testTag("three_step_polish_switch")
                         )
                     }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val lensPrefs = context.getSharedPreferences("voxstream_settings", android.content.Context.MODE_PRIVATE)
+                    var lensOn by remember {
+                        mutableStateOf(com.princeniithompson.rapcha.service.lens.LensSettings.enabled(lensPrefs))
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Lens (long-press drag bubble)",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "On: hold the bubble, then drag to read text under your finger.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = lensOn,
+                            onCheckedChange = {
+                                lensOn = it
+                                com.princeniithompson.rapcha.service.lens.LensSettings.writeEnabled(lensPrefs, it)
+                            },
+                            enabled = !isRecording,
+                            modifier = Modifier.testTag("lens_switch")
+                        )
+                    }
+                    val toneLine = com.princeniithompson.rapcha.service.lens.LensSettings.tones(lensPrefs)
+                        .joinToString("   ") { "${it.emoji} ${it.name}" }
+                    Text(
+                        text = "Tone presets: $toneLine",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
                 }
                 Row(
                     modifier = Modifier

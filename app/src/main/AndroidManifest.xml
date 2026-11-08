@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Held during an active dictation so the CPU stays awake while audio is captured. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -48,6 +49,17 @@
             when it is not recording, so specialUse remains. Microphone-only is not valid
             for that idle overlay.
         -->
+        <activity
+            android:name=".service.lens.LensConsentActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <service
+            android:name=".service.lens.LensCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
         <service
             android:name=".service.FloatingBubbleService"
             android:enabled="true"
