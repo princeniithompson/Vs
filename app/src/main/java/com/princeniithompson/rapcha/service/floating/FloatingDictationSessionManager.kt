@@ -33,6 +33,13 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 
+data class Stage1Endpoint(
+    val text: String,
+    val timedOut: Boolean
+) {
+    val completed: Boolean get() = !timedOut && text.isNotBlank()
+}
+
 class FloatingDictationSessionManager(
     private val context: Context,
     private val onTranscriptUpdated: (fullText: String) -> Unit,
@@ -79,7 +86,8 @@ class FloatingDictationSessionManager(
         private set
 
     var isRecording: Boolean = false
-        private set
+    var capturePrefinal: Boolean = false
+    var prefinalListener: ((String) -> Unit)? = null
 
     var sessionChunksSent: Int = 0
         private set
@@ -377,6 +385,9 @@ class FloatingDictationSessionManager(
             val customVocab = CustomVocabularyRepository.getVocabulary()
             try {
                 connect(apiKey = apiKey, model = model, smartMode = smartMode, customVocabulary = customVocab)
+                if (capturePrefinal) {
+                    enablePrefinalCapture { text -> prefinalListener?.invoke(text) }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to connect WebSocket: ${e.message}")
                 stage1Dropped = true
@@ -539,7 +550,21 @@ class FloatingDictationSessionManager(
     }
 
     suspend fun finishActivityAndAwaitTranscript(): String {
-        if (!isRecording && webSocketClient == null) return getFullTranscriptText()
+        return finishActivity(endedReason = "completed").text
+    }
+
+    /**
+     * Same Complete gate as [finishActivityAndAwaitTranscript]. The caller uses
+     * [Stage1Endpoint.completed] so a timeout is not treated as a Smart final.
+     */
+    suspend fun finishActivityForLyra(): Stage1Endpoint {
+        return finishActivity(endedReason = "polished", discardRetryClip = true)
+    }
+
+    private suspend fun finishActivity(endedReason: String, discardRetryClip: Boolean = false): Stage1Endpoint {
+        if (!isRecording && webSocketClient == null) {
+            return Stage1Endpoint(getFullTranscriptText(), timedOut = true)
+        }
         releaseMicrophoneNow()
 
         refreshDurationFromClock()
@@ -559,17 +584,18 @@ class FloatingDictationSessionManager(
                 }
             }
             val finalText = ws?.endActivityAndAwaitFinal().orEmpty().trim()
+            val timedOut = ws?.endpointTimedOut != false
             if (finalizedTranscript.isEmpty() && finalText.isNotEmpty()) {
                 finalizedTranscript.append(finalText)
             }
             interimTranscript = ""
             val text = getFullTranscriptText().ifBlank { finalText }
             onTranscriptUpdated(text)
-            text
+            Stage1Endpoint(text, timedOut = timedOut || text.isBlank())
         } catch (e: Exception) {
             Log.e(TAG, "Error finishing manual activity", e)
             stage1Dropped = true
-            getFullTranscriptText()
+            Stage1Endpoint(getFullTranscriptText(), timedOut = true)
         } finally {
             try {
                 ws?.disconnect()
@@ -578,10 +604,10 @@ class FloatingDictationSessionManager(
             }
             webSocketClient = null
             withContext(NonCancellable + Dispatchers.IO) {
-                settleRetryClip(discard = false)
+                settleRetryClip(discard = discardRetryClip)
             }
             logSessionEndOnce(
-                "ended_reason: completed | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${ws?.sessionSummary().orEmpty()}"
+                "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${ws?.sessionSummary().orEmpty()}"
             )
             AppLogRepository.updateConnectionState(ConnectionState.Idle, DiagnosticSource.BUBBLE)
             try {

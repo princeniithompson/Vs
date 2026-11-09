@@ -182,6 +182,22 @@ class GeminiLiveWebSocketClient(
 
     private var isSmartMode: Boolean = false
     private var customVocabularyList: List<String> = emptyList()
+    private val prefinal = PrefinalBackup()
+    private var capturePrefinal = false
+    private var onPrefinalFrozen: ((String) -> Unit)? = null
+    @Volatile var endpointTimedOut: Boolean = false
+        private set
+
+    /**
+     * AI Live sessions keep a backup of the voice-container text and persist it
+     * before activityEnd. Normal apps leave this off.
+     */
+    fun enablePrefinalCapture(onFrozen: (String) -> Unit) {
+        capturePrefinal = true
+        onPrefinalFrozen = onFrozen
+    }
+
+    fun prefinalSnapshot(): String = prefinal.displayed()
 
     /**
      * Connect to Gemini Live WebSocket.
@@ -736,6 +752,9 @@ class GeminiLiveWebSocketClient(
                 settleEndpoint("", timedOut = false)
                 return@suspendCancellableCoroutine
             }
+            if (capturePrefinal) {
+                onPrefinalFrozen?.invoke(prefinal.seal())
+            }
             val sent = signalActivityEnd(recordMonitor = true)
             if (!sent) {
                 settleEndpoint(lastInterimText, timedOut = true)
@@ -873,6 +892,7 @@ class GeminiLiveWebSocketClient(
             logMonitorEvent(resumed)
         }
         publishInterimPreview()
+        if (capturePrefinal) prefinal.onPreview(text)
         notifyInterimTranscription(text)
     }
 
@@ -945,6 +965,8 @@ class GeminiLiveWebSocketClient(
         pieceTimeout?.let { mainHandler.removeCallbacks(it) }
         pieceTimeout = null
         cancelCompanionWait()
+        prefinal.reset()
+        endpointTimedOut = false
     }
 
     private fun handleGoAway(goAway: JSONObject) {
@@ -956,6 +978,7 @@ class GeminiLiveWebSocketClient(
     private fun settleEndpoint(text: String, timedOut: Boolean) {
         if (!activityEnded.get() && !sessionFinalizing.get()) return
         if (!endpointSettled.compareAndSet(false, true)) return
+        endpointTimedOut = timedOut
         interimPreviewMonitor.onFinalTranscript(clock())
         endpointTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         endpointTimeoutRunnable = null
@@ -1145,6 +1168,10 @@ class GeminiLiveWebSocketClient(
         if (nearSilent) {
             completePieceSplit("", timedOut = false)
             return
+        }
+        if (capturePrefinal) {
+            prefinal.freezeOpenPiece()
+            onPrefinalFrozen?.invoke(prefinal.displayed())
         }
         val sent = signalActivityEnd(recordMonitor = false)
         if (!sent) {

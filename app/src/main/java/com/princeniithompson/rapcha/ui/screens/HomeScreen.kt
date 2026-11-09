@@ -484,14 +484,22 @@ private fun HistoryCardItem(
                 .padding(20.dp)
         ) {
             // 1. Transcribed Text
-            Text(
-                text = item.text,
-                fontSize = 15.sp,
-                lineHeight = 22.sp,
-                fontWeight = FontWeight.Normal,
-                color = Color(0xFF1A202C)
-            )
-            item.session?.let { LyraHistoryStages(it) }
+            val comparison = item.session?.takeIf {
+                (it.pipeline == com.princeniithompson.rapcha.data.SessionPipeline.TWO_STEP ||
+                    it.pipeline == com.princeniithompson.rapcha.data.SessionPipeline.THREE_STEP) &&
+                    it.stages.isNotEmpty()
+            }
+            if (comparison == null) {
+                Text(
+                    text = item.text,
+                    fontSize = 15.sp,
+                    lineHeight = 22.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = Color(0xFF1A202C)
+                )
+            } else {
+                LyraHistoryStages(comparison)
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
 

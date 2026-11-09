@@ -29,11 +29,11 @@ import com.princeniithompson.rapcha.data.VoiceSessionRecord
 @Composable
 fun LyraHistoryStages(record: VoiceSessionRecord) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
-        if (!record.rawNote.isNullOrBlank()) {
+        if (!record.rawNote.isNullOrBlank() && record.stage("raw") != null) {
             Text(
                 text = record.rawNote,
                 fontSize = 12.sp,
-                color = Color(0xFF92400E),
+                color = Color(0xFF475569),
                 modifier = Modifier.padding(bottom = 8.dp)
             )
         }

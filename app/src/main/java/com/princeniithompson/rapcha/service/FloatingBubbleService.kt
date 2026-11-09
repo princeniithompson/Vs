@@ -21,7 +21,6 @@ import com.princeniithompson.rapcha.data.CustomVocabularyRepository
 import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.data.DictationEndedReason
-import com.princeniithompson.rapcha.data.CaptureMode
 import com.princeniithompson.rapcha.data.LyraReviewPolicy
 import com.princeniithompson.rapcha.data.HistoryRepository
 import com.princeniithompson.rapcha.data.VoiceSessionBuilder
@@ -130,6 +129,8 @@ class FloatingBubbleService : Service() {
     private lateinit var sessionManager: FloatingDictationSessionManager
     val polishCoordinator = FloatingPolishCoordinator()
     private val offlineRetry = OfflineRetryCoordinator()
+    private val lyraFinishGeneration = AtomicInteger(0)
+    private var liveSessionId: String? = null
 
     @androidx.annotation.VisibleForTesting(otherwise = androidx.annotation.VisibleForTesting.PRIVATE)
     internal var lastPolishClickTime: Long
@@ -636,6 +637,13 @@ class FloatingBubbleService : Service() {
             prefs.getString("selected_model", GeminiLiveWebSocketClient.DEFAULT_MODEL) ?: GeminiLiveWebSocketClient.DEFAULT_MODEL
         }
 
+        liveSessionId = java.util.UUID.randomUUID().toString()
+        sessionManager.capturePrefinal = mode == SectionPolishMode.TWO_STEP_LIVE
+        sessionManager.prefinalListener = if (mode == SectionPolishMode.TWO_STEP_LIVE) {
+            { frozen -> persistFrozenRaw(frozen) }
+        } else {
+            null
+        }
         sessionManager.startSession(
             context = this,
             scope = serviceScope,
@@ -921,32 +929,11 @@ class FloatingBubbleService : Service() {
         }
 
         val lockedCtx = FloatingBubbleManager.lockedSessionContext.value ?: "AI · Rapcha"
-        val stage1 = FloatingBubbleManager.lockedPolishSection.value?.stage1
-        if (stage1 != null) {
-            HistoryRepository.saveVoiceSession(
-                VoiceSessionBuilder.build(
-                    sessionId = java.util.UUID.randomUUID().toString(),
-                    timestamp = System.currentTimeMillis(),
-                    appName = FloatingBubbleManager.lockedPolishSection.value?.appName ?: lockedCtx,
-                    stage1 = if (stage1 == Stage1Capture.SMART) CaptureMode.SMART else CaptureMode.VERBATIM,
-                    threeStep = false,
-                    usedLiveModel = false,
-                    aiLyra = false,
-                    stage1Text = textToInject,
-                    deliveredText = textToInject,
-                    lyraText = null,
-                    unaryPolishText = null,
-                    sensitive = false
-                ),
-                durationSeconds = durationSec
-            )
-        } else {
-            HistoryRepository.addHistoryItem(
-                text = textToInject,
-                appContext = lockedCtx,
-                durationSeconds = durationSec
-            )
-        }
+        HistoryRepository.addHistoryItem(
+            text = textToInject,
+            appContext = lockedCtx,
+            durationSeconds = durationSec
+        )
 
         // Injection verifies off the main thread. Collapse only after it returns.
         serviceScope.launch {
@@ -981,20 +968,77 @@ class FloatingBubbleService : Service() {
     }
 
     private fun onPolishClicked() {
-        val rawTranscript = sessionManager.getFullTranscriptText()
         val apiKey = getEffectiveApiKey()
+        val locked = FloatingBubbleManager.lockedPolishSection.value
+        if (locked?.mode == SectionPolishMode.TWO_STEP_LIVE) {
+            if (overlayWindowManager.overlayPendingFinalizing.value) return
+            overlayWindowManager.overlayPendingFinalizing.value = true
+            FloatingBubbleManager.setRecordingState(false)
+            overlayWindowManager.overlayRecording.value = false
+            val generation = lyraFinishGeneration.incrementAndGet()
+            offlineRetry.clearHold()
+            serviceScope.launch {
+                val endpoint = sessionManager.finishActivityForLyra()
+                if (generation != lyraFinishGeneration.get()) {
+                    resetAndCollapse()
+                    return@launch
+                }
+                val frozenRaw = liveSessionId?.let { HistoryRepository.sessionById(it)?.stage("raw") }.orEmpty()
+                AppLogRepository.logEvent(
+                    DiagnosticSource.BUBBLE,
+                    DiagnosticType.POLISH_TRACE,
+                    "stage1_final completed=${if (endpoint.completed) "yes" else "no"} timed_out=${if (endpoint.timedOut) "yes" else "no"} ${com.princeniithompson.rapcha.data.TextFingerprint.describe("stage1", endpoint.text)} raw_chars=${frozenRaw.length}"
+                )
+                if (!endpoint.completed) {
+                    if (frozenRaw.isNotBlank()) {
+                        val placed = FloatingTextInjector.injectReporting(this@FloatingBubbleService, frozenRaw)
+                        VocabSuggestions.onConfirmedPlacement(this@FloatingBubbleService, frozenRaw, placed)
+                    }
+                    resetAndCollapse()
+                    return@launch
+                }
+                if (frozenRaw.isEmpty()) {
+                    AppLogRepository.logEvent(
+                        DiagnosticSource.BUBBLE,
+                        DiagnosticType.POLISH_TRACE,
+                        "prefinal_missing chars=0"
+                    )
+                }
+                if (locked.threeStep && frozenRaw.isNotEmpty()) {
+                    val id = liveSessionId ?: return@launch
+                    val existing = HistoryRepository.sessionById(id)
+                    HistoryRepository.commitSession(
+                        com.princeniithompson.rapcha.data.VoiceSessionBuilder.captured(
+                            sessionId = id,
+                            timestamp = existing?.timestamp ?: System.currentTimeMillis(),
+                            appName = locked.appName,
+                            threeStep = true,
+                            rawText = frozenRaw,
+                            smartText = endpoint.text,
+                            lyraText = null,
+                            smartCompleted = true,
+                            aiLyra = locked.stage2Category == com.princeniithompson.rapcha.service.floating.Stage2Category.AI,
+                            sensitive = com.princeniithompson.rapcha.service.FloatingBubbleManager.isCurrentAppSensitive.value
+                        )
+                    )
+                }
+                val lyraInput = com.princeniithompson.rapcha.data.LyraHandoff.source(endpoint.text)
+                AppLogRepository.logEvent(
+                    DiagnosticSource.BUBBLE,
+                    DiagnosticType.POLISH_TRACE,
+                    "lyra_handoff ${com.princeniithompson.rapcha.data.TextFingerprint.describe("lyra_input", lyraInput)} matches_stage1=${if (com.princeniithompson.rapcha.data.LyraHandoff.matches(endpoint.text.trim(), lyraInput)) "yes" else "no"}"
+                )
+                polishWithLiveStage2(lyraInput, frozenRaw, apiKey, locked)
+            }
+            return
+        }
+        val rawTranscript = sessionManager.getFullTranscriptText()
         if (sessionManager.isRecording) {
             stopVoiceTyping(endedReason = "polished", discardRetryClip = true)
         } else if (FloatingBubbleManager.offlineRetry.value == null) {
             sessionManager.settleRetryClip(discard = true)
         }
         offlineRetry.clearHold()
-
-        val locked = FloatingBubbleManager.lockedPolishSection.value
-        if (locked?.mode == SectionPolishMode.TWO_STEP_LIVE) {
-            polishWithLiveStage2(rawTranscript, apiKey, locked)
-            return
-        }
 
         polishCoordinator.handlePolishRequest(
             context = this,
@@ -1005,7 +1049,6 @@ class FloatingBubbleService : Service() {
             targetHint = FloatingBubbleManager.lockedSessionContext.value,
             lockedCategory = locked?.polishCategory,
             lockedAppName = locked?.appName,
-            stage1 = locked?.stage1 ?: Stage1Capture.VERBATIM,
             onStartPolish = {
                 overlayWindowManager.overlayPolishing.value = true
             },
@@ -1026,10 +1069,12 @@ class FloatingBubbleService : Service() {
     }
 
     private fun polishWithLiveStage2(
-        rawTranscript: String,
+        stage1Final: String,
+        frozenRaw: String,
         apiKey: String,
         locked: LockedPolishSection
     ) {
+        val rawTranscript = stage1Final
         if (rawTranscript.isBlank()) {
             Toast.makeText(this, "No text to polish", Toast.LENGTH_SHORT).show()
             resetAndCollapse()
@@ -1214,23 +1259,27 @@ class FloatingBubbleService : Service() {
                     }
                     assembled
                 }
-                val liveWhole = livePieces > 0 && failedPieces == 0 && suspiciousPieces == 0
+                val liveWhole = livePieces > 0 && failedPieces == 0 && suspiciousPieces == 0 &&
+                    locked.stage2Category == com.princeniithompson.rapcha.service.floating.Stage2Category.AI
                 refreshDelivery()
-                val session = VoiceSessionBuilder.build(
-                    sessionId = java.util.UUID.randomUUID().toString(),
-                    timestamp = System.currentTimeMillis(),
+                val id = liveSessionId ?: java.util.UUID.randomUUID().toString()
+                val keptRaw = HistoryRepository.sessionById(id)?.stage("raw")?.takeIf { it.isNotBlank() } ?: frozenRaw
+                val session = VoiceSessionBuilder.captured(
+                    sessionId = id,
+                    timestamp = HistoryRepository.sessionById(id)?.timestamp ?: System.currentTimeMillis(),
                     appName = locked.appName,
-                    stage1 = if (locked.stage1 == Stage1Capture.SMART) CaptureMode.SMART else CaptureMode.VERBATIM,
                     threeStep = locked.threeStep,
-                    usedLiveModel = true,
-                    aiLyra = locked.stage2Category == com.princeniithompson.rapcha.service.floating.Stage2Category.AI,
-                    stage1Text = rawTranscript,
-                    deliveredText = text,
+                    rawText = keptRaw,
+                    smartText = if (locked.threeStep) rawTranscript else null,
                     lyraText = if (liveWhole) text else null,
-                    unaryPolishText = null,
+                    smartCompleted = true,
+                    aiLyra = locked.stage2Category == com.princeniithompson.rapcha.service.floating.Stage2Category.AI,
                     sensitive = delivery.halt == DeliveryHalt.SENSITIVE
                 )
-                HistoryRepository.saveVoiceSession(session, durationSeconds = sessionManager.durationSeconds)
+                HistoryRepository.commitSession(session, durationSeconds = sessionManager.durationSeconds)
+                if (liveWhole) {
+                    CustomVocabularyRepository.recordUsageFromTranscript(text)
+                }
                 if (text.isNotBlank()) {
                     val placed = if (delivery.acceptsInsert()) {
                         pasteLatest(text, final = true, clipboardWhenNoField = false)
@@ -1293,7 +1342,7 @@ class FloatingBubbleService : Service() {
                 AppLogRepository.logEvent(
                     DiagnosticSource.BUBBLE,
                     DiagnosticType.POLISH_TRACE,
-                    "model_complete=yes live_pieces=$livePieces failed_pieces=$failedPieces raw_chars=${rawTranscript.length} final_chars=${text.length} three_step=${if (locked.threeStep) "yes" else "no"} halt=${delivery.halt.name}"
+                    "model_complete=yes live_pieces=$livePieces failed_pieces=$failedPieces stage1_chars=${rawTranscript.length} lyra_chars=${text.length} frozen_raw_chars=${frozenRaw.length} stage1_sha256=${com.princeniithompson.rapcha.data.TextFingerprint.sha256(rawTranscript)} three_step=${if (locked.threeStep) "yes" else "no"} halt=${delivery.halt.name}"
                 )
             } finally {
                 if (activeDelivery === delivery) activeDelivery = null
@@ -1303,7 +1352,45 @@ class FloatingBubbleService : Service() {
         }
     }
 
+    private fun persistFrozenRaw(text: String) {
+        val section = FloatingBubbleManager.lockedPolishSection.value ?: return
+        if (section.mode != SectionPolishMode.TWO_STEP_LIVE) return
+        val id = liveSessionId ?: return
+        val raw = text.trim()
+        if (raw.isEmpty()) return
+        if (FloatingBubbleManager.isCurrentAppSensitive.value) {
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.POLISH_TRACE,
+                "prefinal_frozen skipped=sensitive before=activity_end"
+            )
+            return
+        }
+        val existing = HistoryRepository.sessionById(id)
+        HistoryRepository.commitSession(
+            VoiceSessionBuilder.captured(
+                sessionId = id,
+                timestamp = existing?.timestamp ?: System.currentTimeMillis(),
+                appName = section.appName,
+                threeStep = section.threeStep,
+                rawText = raw,
+                smartText = null,
+                lyraText = null,
+                smartCompleted = false,
+                aiLyra = section.stage2Category == com.princeniithompson.rapcha.service.floating.Stage2Category.AI,
+                sensitive = false
+            ),
+            durationSeconds = if (::sessionManager.isInitialized) sessionManager.durationSeconds else 0
+        )
+        AppLogRepository.logEvent(
+            DiagnosticSource.BUBBLE,
+            DiagnosticType.POLISH_TRACE,
+            "prefinal_frozen before=activity_end ${com.princeniithompson.rapcha.data.TextFingerprint.describe("raw", raw)}"
+        )
+    }
+
     private fun onCancelClicked() {
+        lyraFinishGeneration.incrementAndGet()
         activeDelivery?.note(DeliveryHalt.CANCELLED)
         if (FloatingBubbleManager.offlineRetry.value != null || offlineRetry.isHolding()) {
             onDiscardClicked()

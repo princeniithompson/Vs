@@ -2,6 +2,7 @@ package com.princeniithompson.rapcha.data
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -56,11 +57,28 @@ data class VoiceSessionRecord(
     fun stage(role: String): String? = stages.firstOrNull { it.role == role }?.text
 }
 
+object TextFingerprint {
+    fun sha256(text: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    fun describe(name: String, text: String): String {
+        return "$name chars=${text.length} sha256=${sha256(text)}"
+    }
+}
+
+object LyraHandoff {
+    /** The only string Stage-2 may see is the completed Stage-1 final. */
+    fun source(stage1Final: String): String = stage1Final.trim()
+
+    fun matches(savedStage1: String, sent: String): Boolean = savedStage1 == sent
+}
+
 object LyraReviewPolicy {
     const val AUTO_HIDE_MS = 8_000L
     const val DOWN_PROMPT = "What did Lyra get wrong?"
-    const val RAW_NOTE =
-        "gemini-3.5-transcribe-live SMART mode returns only the formatted transcript in inputTranscription. A separate verbatim transcript is not provided."
+    const val SMART_INCOMPLETE_NOTE = "Smart finalization did not complete. Lyra was not run."
     const val LYRA_MISSING_NOTE = "Lyra did not produce this text."
 
     fun reviewable(record: VoiceSessionRecord): Boolean {
@@ -98,6 +116,60 @@ object LyraReviewPolicy {
 }
 
 object VoiceSessionBuilder {
+    /**
+     * AI Live session. [rawText] is the frozen voice-container backup.
+     * [smartText] is set only after the normal Smart completion gate returns a
+     * real final. It is never copied from [rawText].
+     */
+    fun captured(
+        sessionId: String,
+        timestamp: Long,
+        appName: String,
+        threeStep: Boolean,
+        rawText: String,
+        smartText: String?,
+        lyraText: String?,
+        smartCompleted: Boolean,
+        aiLyra: Boolean,
+        sensitive: Boolean
+    ): VoiceSessionRecord {
+        val stages = ArrayList<TranscriptStage>()
+        val raw = rawText.trim()
+        if (raw.isNotEmpty()) stages += TranscriptStage("raw", "Raw transcript", raw)
+        val smart = smartText?.trim().orEmpty()
+        if (threeStep && smartCompleted && smart.isNotEmpty()) {
+            stages += TranscriptStage("smart", "3.5 Smart", smart)
+        }
+        val lyra = lyraText?.trim().orEmpty()
+        val lyraOk = aiLyra && lyra.isNotEmpty() && !sensitive && (!threeStep || smartCompleted)
+        if (lyra.isNotEmpty() && !sensitive && (!threeStep || smartCompleted)) {
+            stages += TranscriptStage("lyra", if (aiLyra) "Lyra 3.8 final" else "3.8 Live final", lyra)
+        }
+        val note = when {
+            threeStep && !smartCompleted -> LyraReviewPolicy.SMART_INCOMPLETE_NOTE
+            !lyraOk && smartCompleted -> LyraReviewPolicy.LYRA_MISSING_NOTE
+            else -> null
+        }
+        val finalText = when {
+            lyraOk -> lyra
+            threeStep && smartCompleted && smart.isNotEmpty() -> smart
+            else -> raw
+        }
+        return VoiceSessionRecord(
+            sessionId = sessionId,
+            timestamp = timestamp,
+            appName = appName.ifBlank { "App" },
+            pipeline = if (threeStep) SessionPipeline.THREE_STEP else SessionPipeline.TWO_STEP,
+            lyraProduced = lyraOk,
+            aiLyra = aiLyra,
+            sensitive = sensitive,
+            rawAvailable = raw.isNotEmpty(),
+            rawNote = note,
+            stages = stages,
+            finalText = finalText
+        )
+    }
+
     fun build(
         sessionId: String,
         timestamp: Long,
@@ -135,10 +207,7 @@ object VoiceSessionBuilder {
             val label = if (aiLyra) "Lyra 3.8 final" else "3.8 Live final"
             stages += TranscriptStage("lyra", label, lyra)
         }
-        val rawNote = listOfNotNull(
-            if (stage1 == CaptureMode.SMART) LyraReviewPolicy.RAW_NOTE else null,
-            if (usedLiveModel && lyra.isEmpty()) LyraReviewPolicy.LYRA_MISSING_NOTE else null
-        ).joinToString(" ").ifBlank { null }
+        val rawNote = if (usedLiveModel && lyra.isEmpty()) LyraReviewPolicy.LYRA_MISSING_NOTE else null
         val finalText = deliveredText.trim().ifBlank { spoken }
         return VoiceSessionRecord(
             sessionId = sessionId,

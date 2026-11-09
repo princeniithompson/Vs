@@ -143,6 +143,63 @@ class ManualEndpointingTest {
     }
 
     @Test
+    fun `the prefinal backup is saved before activityEnd and the smart final does not replace it`() {
+        val frozen = mutableListOf<String>()
+        val harness = Harness(smartMode = true)
+        harness.open(modelSmart = true)
+        harness.client.enablePrefinalCapture { frozen += it }
+        harness.client.sendAudioChunk(InterimPreviewMonitor.speechPcm(sample = 4000, sampleCount = 160))
+        harness.listener.onMessage(
+            harness.socket,
+            """{"serverContent":{"interimInputTranscription":{"text":"I need seven crates of eggs. Actually, reduce it to three crates"}}}"""
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        var result = ""
+        CoroutineScope(Dispatchers.Main).launch {
+            result = harness.client.endActivityAndAwaitFinal()
+        }
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(1, frozen.size)
+        assertTrue(frozen.single().contains("seven crates"))
+        assertTrue(frozen.single().contains("three crates"))
+        assertTrue(harness.socket.sentMessages.any { it.contains("activityEnd") })
+        assertEquals(frozen.single(), harness.client.prefinalSnapshot())
+        harness.listener.onMessage(
+            harness.socket,
+            """{"serverContent":{"inputTranscription":{"text":"I need three crates of eggs."}}}"""
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals("I need three crates of eggs.", result)
+        assertEquals(frozen.single(), harness.client.prefinalSnapshot())
+        assertFalse(harness.client.endpointTimedOut)
+        harness.client.disconnect()
+    }
+
+    @Test
+    fun `a finalization timeout is marked and does not rewrite the backup`() {
+        val harness = Harness(smartMode = true)
+        harness.open(modelSmart = true)
+        harness.client.enablePrefinalCapture { }
+        harness.listener.onMessage(
+            harness.socket,
+            """{"serverContent":{"interimInputTranscription":{"text":"still talking um still talking"}}}"""
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        var result = ""
+        CoroutineScope(Dispatchers.Main).launch {
+            result = harness.client.endActivityAndAwaitFinal()
+        }
+        shadowOf(Looper.getMainLooper()).idleFor(
+            GeminiLiveWebSocketClient.FINAL_TRANSCRIPT_TIMEOUT_MS,
+            TimeUnit.MILLISECONDS
+        )
+        assertEquals("still talking um still talking", result)
+        assertTrue(harness.client.endpointTimedOut)
+        assertEquals("still talking um still talking", harness.client.prefinalSnapshot())
+        harness.client.disconnect()
+    }
+
+    @Test
     fun `activityEnd waits for the final transcript and never sends audioStreamEnd`() {
         var finalized = ""
         val harness = Harness(onFinal = { finalized = it })

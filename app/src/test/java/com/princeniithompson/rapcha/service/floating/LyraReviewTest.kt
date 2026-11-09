@@ -27,13 +27,13 @@ class LyraReviewTest {
     @Test
     fun `only a finished Lyra session can be rated`() {
         val twoStep = session(pipeline = "two", lyra = "Paste this prompt")
-        val threeStep = session(pipeline = "three", lyra = "Paste this prompt", stage1 = CaptureMode.SMART)
+        val threeStep = session(pipeline = "three", lyra = "Paste this prompt")
         assertTrue(twoStep.reviewable)
         assertTrue(threeStep.reviewable)
         assertEquals(LyraRating.UNRATED, twoStep.rating)
         assertTrue(LyraReviewPolicy.shouldPrompt(twoStep))
 
-        val smart = session(pipeline = "smart", lyra = null, unary = "Clean text")
+        val smart = session(pipeline = "smart", lyra = "Clean text")
         val fallback = session(pipeline = "two", lyra = null)
         val otherModel = session(pipeline = "two", lyra = "Edited", ai = false)
         val sensitive = session(pipeline = "two", lyra = "Paste this prompt", sensitive = true)
@@ -47,30 +47,29 @@ class LyraReviewTest {
     }
 
     @Test
-    fun `one session keeps every stage and does not invent a smart-mode raw transcript`() {
-        val three = session(
-            pipeline = "three",
-            stage1 = CaptureMode.SMART,
-            stage1Text = "Buy milk and eggs",
-            lyra = "Buy milk and eggs, listed for the model"
-        )
-        assertEquals("s1", three.sessionId)
-        assertEquals(SessionPipeline.THREE_STEP, three.pipeline)
-        assertFalse(three.rawAvailable)
-        assertNull(three.stage("raw"))
-        assertEquals("Buy milk and eggs", three.stage("smart"))
-        assertEquals("Buy milk and eggs, listed for the model", three.stage("lyra"))
-        assertEquals(LyraReviewPolicy.RAW_NOTE, three.rawNote)
-        assertEquals(listOf("smart", "lyra"), three.stages.map { it.role })
+    fun `one session keeps frozen raw, completed smart, and lyra as different texts`() {
+        val raw = "I need seven crates of eggs. Actually, reduce it to three crates"
+        val smart = "I need three crates of eggs."
+        val lyra = "Buy three crates of eggs."
+        val three = session(pipeline = "three", raw = raw, smart = smart, lyra = lyra)
+        assertEquals(listOf("raw", "smart", "lyra"), three.stages.map { it.role })
+        assertEquals(raw, three.stage("raw"))
+        assertEquals(smart, three.stage("smart"))
+        assertEquals(lyra, three.stage("lyra"))
+        assertTrue(three.rawAvailable)
+        assertFalse(three.rawNote.orEmpty().contains("not provided"))
+        val updated = session(pipeline = "three", raw = three.stage("raw")!!, smart = "Formatted later", lyra = lyra)
+        assertEquals(raw, updated.stage("raw"))
+        assertEquals("Formatted later", updated.stage("smart"))
 
-        val two = session(pipeline = "two", stage1Text = "um buy milk", lyra = "Buy milk")
+        val two = session(pipeline = "two", raw = "um buy milk", lyra = "Buy milk")
         assertEquals(listOf("raw", "lyra"), two.stages.map { it.role })
-        assertTrue(two.rawAvailable)
         assertNull(two.stage("smart"))
 
-        val message = session(pipeline = "smart", stage1Text = "um hey", unary = "Hey")
-        assertEquals(listOf("raw", "smart_polish"), message.stages.map { it.role })
-        assertFalse(message.reviewable)
+        val timedOut = session(pipeline = "three", raw = raw, smartCompleted = false, lyra = null)
+        assertEquals(listOf("raw"), timedOut.stages.map { it.role })
+        assertFalse(timedOut.reviewable)
+        assertEquals(LyraReviewPolicy.SMART_INCOMPLETE_NOTE, timedOut.rawNote)
     }
 
     @Test
@@ -90,7 +89,7 @@ class LyraReviewTest {
         assertEquals(LyraRating.UP, up.rating)
         assertTrue(up.tags.isEmpty())
         assertEquals("kept the name", up.comment)
-        val smart = session(pipeline = "smart", unary = "Hey")
+        val smart = session(pipeline = "smart", lyra = "Hey")
         assertEquals(smart, LyraReviewPolicy.apply(smart, LyraRating.DOWN))
     }
 
@@ -98,15 +97,21 @@ class LyraReviewTest {
     fun `export lists counts and one json line with the texts`() {
         val up = LyraReviewPolicy.apply(session(pipeline = "two", id = "up", lyra = "Buy milk"), LyraRating.UP)
         val down = LyraReviewPolicy.apply(
-            session(pipeline = "three", id = "down", stage1 = CaptureMode.SMART, lyra = "Buy milk"),
+            session(
+                pipeline = "three",
+                id = "down",
+                raw = "um seven crates actually three",
+                smart = "Three crates.",
+                lyra = "Buy milk"
+            ),
             LyraRating.DOWN,
             tags = listOf(LyraReviewTag.REMOVED_WORDS),
             comment = "dropped eggs"
         )
         val unrated = session(pipeline = "two", id = "later", lyra = "Still waiting")
-        val smart = session(pipeline = "smart", id = "wa", unary = "Hey")
+        val smart = session(pipeline = "smart", id = "wa", lyra = "Hey")
         val fallback = session(pipeline = "two", id = "raw", lyra = null)
-        val sensitive = session(pipeline = "three", id = "secret", stage1 = CaptureMode.SMART, lyra = "hidden", sensitive = true)
+        val sensitive = session(pipeline = "three", id = "secret", lyra = "hidden", sensitive = true)
         val export = LyraReviewExport.section(listOf(smart, fallback, sensitive, unrated, down, up))
         assertTrue(export.contains("LYRA_REVIEW"))
         assertTrue(export.contains("up=1 down=1 unrated=1"))
@@ -119,10 +124,10 @@ class LyraReviewTest {
         assertEquals("down", parsed.getString("session_id"))
         assertEquals("three-step", parsed.getString("mode"))
         assertEquals("down", parsed.getString("rating"))
-        assertTrue(parsed.isNull("raw"))
-        assertEquals("um buy milk and eggs", parsed.getString("smart"))
+        assertEquals("um seven crates actually three", parsed.getString("raw"))
+        assertEquals("Three crates.", parsed.getString("smart"))
         assertEquals("Buy milk", parsed.getString("lyra"))
-        assertEquals("smart", parsed.getString("compare_from"))
+        assertEquals("raw", parsed.getString("compare_from"))
         assertEquals("dropped eggs", parsed.getString("comment"))
         assertEquals("removed_words", parsed.getJSONArray("tags").getString(0))
         val two = JSONObject(jsonLines.first { it.contains("\"up\"") }.removePrefix("JSON "))
@@ -155,24 +160,40 @@ class LyraReviewTest {
     private fun session(
         pipeline: String,
         id: String = "s1",
-        stage1: CaptureMode = CaptureMode.VERBATIM,
-        stage1Text: String = "um buy milk and eggs",
+        raw: String = "um buy milk and eggs",
+        smart: String? = null,
         lyra: String? = null,
-        unary: String? = null,
         ai: Boolean = true,
-        sensitive: Boolean = false
-    ) = VoiceSessionBuilder.build(
-        sessionId = id,
-        timestamp = 1_700_000_000_000L,
-        appName = "Claude",
-        stage1 = stage1,
-        threeStep = pipeline == "three",
-        usedLiveModel = pipeline == "two" || pipeline == "three",
-        aiLyra = ai && (pipeline == "two" || pipeline == "three"),
-        stage1Text = stage1Text,
-        deliveredText = lyra ?: unary ?: stage1Text,
-        lyraText = lyra,
-        unaryPolishText = unary,
-        sensitive = sensitive
-    )
+        sensitive: Boolean = false,
+        smartCompleted: Boolean = true
+    ): com.princeniithompson.rapcha.data.VoiceSessionRecord {
+        if (pipeline == "smart") {
+            return VoiceSessionBuilder.build(
+                sessionId = id,
+                timestamp = 1_700_000_000_000L,
+                appName = "WhatsApp",
+                stage1 = CaptureMode.VERBATIM,
+                threeStep = false,
+                usedLiveModel = false,
+                aiLyra = false,
+                stage1Text = raw,
+                deliveredText = lyra ?: raw,
+                lyraText = null,
+                unaryPolishText = lyra,
+                sensitive = sensitive
+            )
+        }
+        return VoiceSessionBuilder.captured(
+            sessionId = id,
+            timestamp = 1_700_000_000_000L,
+            appName = "Claude",
+            threeStep = pipeline == "three",
+            rawText = raw,
+            smartText = if (pipeline == "three") smart ?: "Buy milk and eggs." else null,
+            lyraText = lyra,
+            smartCompleted = smartCompleted,
+            aiLyra = ai,
+            sensitive = sensitive
+        )
+    }
 }
