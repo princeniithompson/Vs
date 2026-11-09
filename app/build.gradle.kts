@@ -16,8 +16,8 @@ android {
     applicationId = "com.princeniithompson.rapcha"
     minSdk = 24
     targetSdk = 36
-    versionCode = 13
-    versionName = "lyra-review-13"
+    versionCode = 14
+    versionName = "lyra-review-14"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
