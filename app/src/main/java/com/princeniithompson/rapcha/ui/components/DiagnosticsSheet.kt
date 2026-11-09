@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Schedule
@@ -97,7 +98,8 @@ enum class DiagnosticSubScreen {
     HISTORY,
     AUDIO,
     NOTES,
-    APP_DETECTION
+    APP_DETECTION,
+    LIVE_MODEL
 }
 
 /**
@@ -305,6 +307,19 @@ fun DiagnosticsBottomSheet(
                             )
                         }
                     }
+                    DiagnosticSubScreen.LIVE_MODEL -> {
+                        SubScreenScaffold(
+                            title = "Live model",
+                            subtitle = "Ping and chat on gemini-3.8-live",
+                            onBackClick = { currentSubScreen = DiagnosticSubScreen.HUB },
+                            onDismiss = onDismiss,
+                            menuActions = menuActions
+                        ) {
+                            com.princeniithompson.rapcha.ui.components.diagnostics.DiagnosticsLiveModelSection(
+                                apiKey = com.princeniithompson.rapcha.core.ApiConfig.getEffectiveKey(customApiKey)
+                            )
+                        }
+                    }
                     DiagnosticSubScreen.NOTES -> {
                         SubScreenScaffold(
                             title = "Field Notes",
@@ -444,6 +459,21 @@ private fun DiagnosticsHubView(
                 iconBg = DiagnosticsPalette.audioIcon,
                 onClick = { onNavigateTo(DiagnosticSubScreen.AUDIO) },
                 testTag = "nav_card_audio"
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        item {
+            DiagnosticSectionNavCard(
+                title = "Live model",
+                subtitle = "Ping setup and send a prompt on gemini-3.8-live",
+                badgeText = "3.8 LIVE",
+                badgeBg = DiagnosticsPalette.greenSoft,
+                badgeFg = DiagnosticsPalette.teal,
+                icon = Icons.Filled.GraphicEq,
+                iconBg = DiagnosticsPalette.voiceIcon,
+                onClick = { onNavigateTo(DiagnosticSubScreen.LIVE_MODEL) },
+                testTag = "nav_card_live_model"
             )
             Spacer(modifier = Modifier.height(12.dp))
         }

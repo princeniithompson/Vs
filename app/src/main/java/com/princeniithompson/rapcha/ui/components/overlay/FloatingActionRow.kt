@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.princeniithompson.rapcha.service.AppContextResolver
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
+import com.princeniithompson.rapcha.service.floating.BubbleActionPlan
 import com.princeniithompson.rapcha.service.floating.OfflineRetryRules
 
 @Composable
@@ -79,9 +80,21 @@ fun FloatingActionRow(
     onCompleteClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isAiApp by FloatingBubbleManager.isCurrentAppAi.collectAsState()
+    val foregroundAi by FloatingBubbleManager.isCurrentAppAi.collectAsState()
     val selectedAiMode by FloatingBubbleManager.selectedAiPolishMode.collectAsState()
     val offlineRetry by FloatingBubbleManager.offlineRetry.collectAsState()
+    val sectionMode by FloatingBubbleManager.sectionPolishMode.collectAsState()
+    val lockedSection by FloatingBubbleManager.lockedPolishSection.collectAsState()
+    val liveTwoStep = sectionMode == com.princeniithompson.rapcha.service.floating.SectionPolishMode.TWO_STEP_LIVE
+    val isAiApp = lockedSection?.let {
+        it.polishCategory == com.princeniithompson.rapcha.service.AppCategory.AI_CHAT
+    } ?: foregroundAi
+    val actionPlan = BubbleActionPlan.resolve(
+        liveTwoStep = liveTwoStep,
+        polishing = isPolishing,
+        isAiApp = isAiApp,
+        optimizePrompt = selectedAiMode == com.princeniithompson.rapcha.service.floating.AiPolishMode.OPTIMIZE_PROMPT
+    )
 
     Column(modifier = modifier.fillMaxWidth()) {
         val retryOffer = offlineRetry
@@ -89,8 +102,8 @@ fun FloatingActionRow(
             OfflineRetryActions(offer = retryOffer)
             return@Column
         }
-        // AI-Aware Mode Toggle (Displayed strictly inside AI apps)
-        if (isAiApp) {
+        // AI-Aware Mode Toggle (Displayed strictly inside AI apps, and only on the three-button layout)
+        if (isAiApp && actionPlan.showsComplete) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -180,20 +193,22 @@ fun FloatingActionRow(
                 }
             }
 
-            // 2. Polish Button
-            val polishLabel = when {
-                isPolishing -> "Polishing..."
-                !isAiApp -> "Polish"
-                selectedAiMode == com.princeniithompson.rapcha.service.floating.AiPolishMode.OPTIMIZE_PROMPT -> "Optimize"
-                else -> "Clean"
+            // 2. Polish Button. Live two-step makes this the filled primary action.
+            val polishLabel = actionPlan.polishLabel
+            val polishBackground = if (actionPlan.polishIsPrimary) palette.primaryVibrant else Color(0x24FFFFFF)
+            val polishBorder = if (actionPlan.polishIsPrimary) Color.Transparent else Color(0x24FFFFFF)
+            val polishTextColor = if (actionPlan.polishIsPrimary) {
+                if (isColorDark(palette.primaryVibrant)) Color.White else Color(0xFF042F2E)
+            } else {
+                Color(0xFFE2E8F0)
             }
 
             PillActionButton(
                 onClick = onPolishClick,
-                backgroundColor = Color(0x24FFFFFF),
-                borderColor = Color(0x24FFFFFF),
+                backgroundColor = polishBackground,
+                borderColor = polishBorder,
                 enabled = !isPolishing && !isFinalizing,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(if (actionPlan.polishIsPrimary) 1.35f else 1f)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -202,29 +217,33 @@ fun FloatingActionRow(
                     if (isPolishing) {
                         Text(
                             text = "Polishing...",
-                            color = Color(0xFFE2E8F0),
+                            color = polishTextColor,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium
                         )
                     } else {
                         Text(
-                            text = if (isAiApp && selectedAiMode == com.princeniithompson.rapcha.service.floating.AiPolishMode.OPTIMIZE_PROMPT) "✨" else "✦",
-                            color = palette.primaryVibrant,
+                            text = if (!actionPlan.polishIsPrimary && isAiApp && selectedAiMode == com.princeniithompson.rapcha.service.floating.AiPolishMode.OPTIMIZE_PROMPT) "✨" else "✦",
+                            color = if (actionPlan.polishIsPrimary) polishTextColor else palette.primaryVibrant,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = polishLabel,
-                            color = Color(0xFFE2E8F0),
+                            color = polishTextColor,
                             fontSize = 13.5.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = if (actionPlan.polishIsPrimary) FontWeight.SemiBold else FontWeight.Medium
                         )
                     }
                 }
             }
 
-            // 3. Complete Button
+            if (!actionPlan.showsComplete) {
+                return@Row
+            }
+
+            // 3. Complete Button. Hidden while Live two-step polish is on.
             val onAccentColor = if (isColorDark(palette.primaryVibrant)) Color.White else Color(0xFF042F2E)
 
             PillActionButton(

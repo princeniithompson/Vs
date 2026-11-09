@@ -45,6 +45,9 @@ CRITICAL RULES:
      * Builds the complete two-layer system instruction combining the Chef golden rules with the Spice modifier.
      */
     fun buildSystemInstruction(category: AppCategory, appName: String): String {
+        if (category == AppCategory.AI_CHAT || category == AppCategory.AI) {
+            return LyraPolishInstruction.forKeyboard(appName)
+        }
         val spice = getSpiceCard(category, appName)
         return "$CHEF_GOLDEN_RULES\n\n$spice"
     }

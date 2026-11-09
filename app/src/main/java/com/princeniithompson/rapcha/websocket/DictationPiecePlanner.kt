@@ -54,6 +54,7 @@ class DictationPiecePlanner(
     private var pauseLatched = false
     private var preconnectArmed = false
     private var wantsPreconnect = false
+    private var rescueNotBeforeMs = 0L
     private var rmsMin = Double.POSITIVE_INFINITY
     private var rmsMax = 0.0
     private var rmsSum = 0.0
@@ -84,6 +85,7 @@ class DictationPiecePlanner(
         pauseLatched = false
         preconnectArmed = false
         wantsPreconnect = false
+        rescueNotBeforeMs = 0L
         resetRms()
     }
 
@@ -164,7 +166,8 @@ class DictationPiecePlanner(
             wantsPreconnect = true
         }
         val speechHeld = lastSpeechAt > 0L && nowMs - lastSpeechAt <= speechHoldMs
-        if (speechHeld && speechWithoutInterimMs >= rescueGapMs) {
+        if (speechHeld && speechWithoutInterimMs >= rescueGapMs && nowMs >= rescueNotBeforeMs) {
+            rescueNotBeforeMs = nowMs + RESCUE_COOLDOWN_MS
             freshConnectionMode = true
             return split(Reason.RESCUE, replay = true, fresh = true, nowMs)
         }
@@ -236,6 +239,7 @@ class DictationPiecePlanner(
         const val FORCE_AFTER_MS = 195_000L
         const val PAUSE_MS = 700L
         const val RESCUE_GAP_MS = 6_000L
+        const val RESCUE_COOLDOWN_MS = 20_000L
         const val PRECONNECT_LEAD_MS = 10_000L
         const val DEATH_AGE_MS = 223_000L
         const val REPLAY_MS = 2_000L

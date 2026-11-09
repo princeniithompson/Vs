@@ -199,13 +199,25 @@ fun DiagnosticEntryRow(entry: DiagnosticLogEntry, timeFormat: SimpleDateFormat) 
         DiagnosticType.RETRY_OFFLINE -> Triple(DiagnosticsPalette.amberSoft, DiagnosticsPalette.amber, "OFFLINE")
         DiagnosticType.RETRY_NETWORK_BACK -> Triple(DiagnosticsPalette.greenSoft, DiagnosticsPalette.green, "NET_BACK")
         DiagnosticType.RETRY_HISTORY -> Triple(Color(0xFFDBEAFE), Color(0xFF1D4ED8), "HIST_RETRY")
+        DiagnosticType.STAGE2_LIVE_START -> Triple(Color(0xFFDBEAFE), Color(0xFF1D4ED8), "LIVE2")
+        DiagnosticType.STAGE2_LIVE_SUCCESS -> Triple(DiagnosticsPalette.greenSoft, DiagnosticsPalette.green, "LIVE2_OK")
+        DiagnosticType.STAGE2_LIVE_FAILED -> Triple(DiagnosticsPalette.redSoft, DiagnosticsPalette.red, "LIVE2_ERR")
+        DiagnosticType.STAGE2_LIVE_FALLBACK -> Triple(DiagnosticsPalette.amberSoft, DiagnosticsPalette.amber, "LIVE2_RAW")
+        DiagnosticType.POLISH_TRACE -> Triple(Color(0xFFE0E7FF), Color(0xFF4338CA), "TRACE")
+        DiagnosticType.DELIVERY -> Triple(DiagnosticsPalette.amberSoft, DiagnosticsPalette.amber, "DELIVER")
+        DiagnosticType.LENS_START -> Triple(Color(0xFFDBEAFE), Color(0xFF1D4ED8), "LENS")
+        DiagnosticType.LENS_TARGET -> Triple(Color(0xFFE0E7FF), Color(0xFF4338CA), "LENS_TXT")
+        DiagnosticType.LENS_ACTION -> Triple(DiagnosticsPalette.purpleSoft, DiagnosticsPalette.purple, "LENS_ACT")
+        DiagnosticType.LENS_RESULT -> Triple(DiagnosticsPalette.greenSoft, DiagnosticsPalette.green, "LENS_OK")
+        DiagnosticType.LENS_ERROR -> Triple(DiagnosticsPalette.redSoft, DiagnosticsPalette.red, "LENS_ERR")
     }
 
     val messageColor = if (
         entry.type == DiagnosticType.ERROR ||
         entry.type == DiagnosticType.POLISH_FAILED ||
         entry.type == DiagnosticType.CRASH ||
-        entry.type == DiagnosticType.RETRY_FAILED
+        entry.type == DiagnosticType.RETRY_FAILED ||
+        entry.type == DiagnosticType.STAGE2_LIVE_FAILED
     ) {
         DiagnosticsPalette.red
     } else {

@@ -16,14 +16,21 @@ android {
     applicationId = "com.princeniithompson.rapcha"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 11
+    versionName = "live-polish-11"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
     vectorDrawables {
       useSupportLibrary = true
     }
+
+    val gitCommit = runCatching {
+      providers.exec {
+        commandLine("git", "rev-parse", "HEAD")
+      }.standardOutput.asText.get().trim()
+    }.getOrDefault("unknown")
+    buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
   }
 
   val envKeystorePath: String? = System.getenv("KEYSTORE_PATH")
@@ -111,6 +118,7 @@ dependencies {
   implementation(libs.okhttp)
   implementation(libs.retrofit)
   implementation("org.tensorflow:tensorflow-lite:2.16.1")
+  implementation("com.google.mlkit:text-recognition:16.0.1")
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)

@@ -33,6 +33,32 @@ object RapchaConfig {
     /** Non-live model used when Live fails and the user taps Retry. */
     const val TRANSCRIBE_MODEL: String = "gemini-3.5-transcribe"
 
+    /**
+     * Stage-2 model when Live two-step is on. Text turn on the same
+     * BidiGenerateContent socket as transcription. The Polish button calls this
+     * model directly. It is not a unary flash model.
+     */
+    const val STAGE2_LIVE_MODEL: String = "models/gemini-3.8-live"
+
+    /**
+     * Wait for setupComplete. This is separate from the no-token clock.
+     * live-polish-4 started the 4.5s clock at connect, so a slow handshake
+     * was reported as "timed out before setup" with an empty frame list.
+     */
+    const val STAGE2_LIVE_SETUP_MS: Long = 12_000L
+
+    /**
+     * After the text turn is sent, give up if no transcript chunk arrives.
+     * Chunks that are already flowing are not cut by this clock.
+     */
+    const val STAGE2_LIVE_TIMEOUT_MS: Long = 6_000L
+
+    /** Return accumulated transcript this long after the last chunk if turnComplete is late. */
+    const val STAGE2_LIVE_IDLE_MS: Long = 700L
+
+    /** Absolute cap while transcript chunks are still arriving. Not an empty wait. */
+    const val STAGE2_LIVE_HARD_CAP_MS: Long = 12_000L
+
     /** Same debounce as Polish so a double tap cannot spend two free-tier retries. */
     const val RETRY_DEBOUNCE_MS: Long = POLISH_DEBOUNCE_MS
 

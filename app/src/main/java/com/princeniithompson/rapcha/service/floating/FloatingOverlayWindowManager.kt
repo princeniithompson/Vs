@@ -90,7 +90,12 @@ class FloatingOverlayWindowManager(private val context: Context) {
         onPolishClick: () -> Unit,
         onCompleteClick: () -> Unit,
         onLongPressBubble: () -> Unit = {},
-        onScanTriggered: () -> Unit = {}
+        onScanTriggered: () -> Unit = {},
+        lensEnabled: () -> Boolean = { false },
+        lensActive: () -> Boolean = { false },
+        onLensArmed: () -> Unit = {},
+        onLensDrag: (Float, Float) -> Unit = { _, _ -> },
+        onLensDragEnd: () -> Unit = {}
     ) {
         lifecycleOwner.onCreate()
         lifecycleOwner.onStart()
@@ -182,6 +187,11 @@ class FloatingOverlayWindowManager(private val context: Context) {
                     onCompleteClick = onCompleteClick,
                     onLongPressBubble = onLongPressBubble,
                     onScanTriggered = onScanTriggered,
+                    lensEnabled = lensEnabled,
+                    lensActive = lensActive,
+                    onLensArmed = onLensArmed,
+                    onLensDrag = onLensDrag,
+                    onLensDragEnd = onLensDragEnd,
                     onDragStart = {
                         FloatingHapticManager.trigger(context, FloatingHapticType.BUBBLE_HOLD)
                         resetInactivityTimer(keepShrunk = true)
@@ -271,6 +281,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
 
     fun expandPanel() {
         if (FloatingBubbleManager.isCurrentAppSensitive.value) return
+        dragSnapHandler.cancel()
         overlayExpanded.value = true
         val lp = layoutParams ?: return
         val displayMetrics = context.resources.displayMetrics
@@ -278,7 +289,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
         val screenHeight = displayMetrics.heightPixels
 
         val topY = (36 * density).toInt()
-        val maxY = (screenHeight - (210 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
+        val maxY = (screenHeight - (320 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
 
         lp.width = WindowManager.LayoutParams.MATCH_PARENT
         lp.height = WindowManager.LayoutParams.WRAP_CONTENT
