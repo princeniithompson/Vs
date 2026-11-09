@@ -21,7 +21,10 @@ import com.princeniithompson.rapcha.data.CustomVocabularyRepository
 import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.data.DictationEndedReason
+import com.princeniithompson.rapcha.data.CaptureMode
+import com.princeniithompson.rapcha.data.LyraReviewPolicy
 import com.princeniithompson.rapcha.data.HistoryRepository
+import com.princeniithompson.rapcha.data.VoiceSessionBuilder
 import com.princeniithompson.rapcha.data.RetryClipStore
 import com.princeniithompson.rapcha.service.floating.DictationAlerts
 import com.princeniithompson.rapcha.service.floating.FloatingDictationSessionManager
@@ -31,6 +34,7 @@ import com.princeniithompson.rapcha.service.floating.FloatingHapticType
 import com.princeniithompson.rapcha.service.floating.FloatingNotificationManager
 import com.princeniithompson.rapcha.service.floating.FloatingOverlayWindowManager
 import com.princeniithompson.rapcha.service.floating.FloatingPolishCoordinator
+import com.princeniithompson.rapcha.service.floating.LyraReviewPrompt
 import com.princeniithompson.rapcha.service.floating.LivePolishOutcome
 import com.princeniithompson.rapcha.service.floating.LiveStreamPaste
 import com.princeniithompson.rapcha.service.floating.LivePolishProtocol
@@ -917,11 +921,32 @@ class FloatingBubbleService : Service() {
         }
 
         val lockedCtx = FloatingBubbleManager.lockedSessionContext.value ?: "AI · Rapcha"
-        HistoryRepository.addHistoryItem(
-            text = textToInject,
-            appContext = lockedCtx,
-            durationSeconds = durationSec
-        )
+        val stage1 = FloatingBubbleManager.lockedPolishSection.value?.stage1
+        if (stage1 != null) {
+            HistoryRepository.saveVoiceSession(
+                VoiceSessionBuilder.build(
+                    sessionId = java.util.UUID.randomUUID().toString(),
+                    timestamp = System.currentTimeMillis(),
+                    appName = FloatingBubbleManager.lockedPolishSection.value?.appName ?: lockedCtx,
+                    stage1 = if (stage1 == Stage1Capture.SMART) CaptureMode.SMART else CaptureMode.VERBATIM,
+                    threeStep = false,
+                    usedLiveModel = false,
+                    aiLyra = false,
+                    stage1Text = textToInject,
+                    deliveredText = textToInject,
+                    lyraText = null,
+                    unaryPolishText = null,
+                    sensitive = false
+                ),
+                durationSeconds = durationSec
+            )
+        } else {
+            HistoryRepository.addHistoryItem(
+                text = textToInject,
+                appContext = lockedCtx,
+                durationSeconds = durationSec
+            )
+        }
 
         // Injection verifies off the main thread. Collapse only after it returns.
         serviceScope.launch {
@@ -980,6 +1005,7 @@ class FloatingBubbleService : Service() {
             targetHint = FloatingBubbleManager.lockedSessionContext.value,
             lockedCategory = locked?.polishCategory,
             lockedAppName = locked?.appName,
+            stage1 = locked?.stage1 ?: Stage1Capture.VERBATIM,
             onStartPolish = {
                 overlayWindowManager.overlayPolishing.value = true
             },
@@ -1188,24 +1214,24 @@ class FloatingBubbleService : Service() {
                     }
                     assembled
                 }
-                if (rawTranscript.isNotBlank()) {
-                    HistoryRepository.saveEntry(
-                        text = rawTranscript,
-                        mode = if (locked.threeStep) "THREE_STEP_STAGE1" else "STAGE1_RAW",
-                        appName = locked.appName
-                    )
-                }
+                val liveWhole = livePieces > 0 && failedPieces == 0 && suspiciousPieces == 0
+                refreshDelivery()
+                val session = VoiceSessionBuilder.build(
+                    sessionId = java.util.UUID.randomUUID().toString(),
+                    timestamp = System.currentTimeMillis(),
+                    appName = locked.appName,
+                    stage1 = if (locked.stage1 == Stage1Capture.SMART) CaptureMode.SMART else CaptureMode.VERBATIM,
+                    threeStep = locked.threeStep,
+                    usedLiveModel = true,
+                    aiLyra = locked.stage2Category == com.princeniithompson.rapcha.service.floating.Stage2Category.AI,
+                    stage1Text = rawTranscript,
+                    deliveredText = text,
+                    lyraText = if (liveWhole) text else null,
+                    unaryPolishText = null,
+                    sensitive = delivery.halt == DeliveryHalt.SENSITIVE
+                )
+                HistoryRepository.saveVoiceSession(session, durationSeconds = sessionManager.durationSeconds)
                 if (text.isNotBlank()) {
-                    HistoryRepository.saveEntry(
-                        text = text,
-                        mode = if (livePieces > 0) {
-                            if (locked.threeStep) "THREE_STEP_POLISHED" else "LIVE_POLISHED"
-                        } else {
-                            "POLISHED"
-                        },
-                        appName = locked.appName
-                    )
-                    refreshDelivery()
                     val placed = if (delivery.acceptsInsert()) {
                         pasteLatest(text, final = true, clipboardWhenNoField = false)
                     } else {
@@ -1247,6 +1273,21 @@ class FloatingBubbleService : Service() {
                     }
                     if (notice != null) {
                         Toast.makeText(this@FloatingBubbleService, notice, Toast.LENGTH_LONG).show()
+                    }
+                    val rated = if (delivery.halt == DeliveryHalt.SENSITIVE && !session.sensitive) {
+                        val hidden = session.copy(sensitive = true)
+                        HistoryRepository.replaceVoiceSession(session.sessionId, hidden)
+                        hidden
+                    } else {
+                        session
+                    }
+                    if (LyraReviewPolicy.shouldPrompt(rated)) {
+                        AppLogRepository.logEvent(
+                            DiagnosticSource.BUBBLE,
+                            DiagnosticType.POLISH_TRACE,
+                            "lyra_review=prompted session=${rated.sessionId} mode=${if (locked.threeStep) "three-step" else "two-step"} app=${locked.appName}"
+                        )
+                        LyraReviewPrompt.show(this@FloatingBubbleService, rated)
                     }
                 }
                 AppLogRepository.logEvent(

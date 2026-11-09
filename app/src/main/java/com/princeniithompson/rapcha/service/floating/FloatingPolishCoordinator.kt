@@ -8,7 +8,9 @@ import com.princeniithompson.rapcha.core.ApiConfig
 import com.princeniithompson.rapcha.data.AppLogRepository
 import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
+import com.princeniithompson.rapcha.data.CaptureMode
 import com.princeniithompson.rapcha.data.HistoryRepository
+import com.princeniithompson.rapcha.data.VoiceSessionBuilder
 import com.princeniithompson.rapcha.data.LogLevel
 import com.princeniithompson.rapcha.service.AppCategory
 import com.princeniithompson.rapcha.service.AppClassifier
@@ -55,7 +57,8 @@ class FloatingPolishCoordinator {
         targetPackage: String? = null,
         targetHint: String? = null,
         lockedCategory: AppCategory? = null,
-        lockedAppName: String? = null
+        lockedAppName: String? = null,
+        stage1: Stage1Capture = Stage1Capture.VERBATIM
     ) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastPolishClickTime < POLISH_DEBOUNCE_MS) {
@@ -148,20 +151,42 @@ class FloatingPolishCoordinator {
                         DiagnosticType.POLISH_SUCCESS,
                         "Result: ${com.princeniithompson.rapcha.data.TranscriptPrivacy.summary(polishedText)}"
                     )
-                    HistoryRepository.saveEntry(
-                        text = polishedText,
-                        mode = "POLISHED",
-                        appName = targetAppName
+                    HistoryRepository.saveVoiceSession(
+                        VoiceSessionBuilder.build(
+                            sessionId = java.util.UUID.randomUUID().toString(),
+                            timestamp = System.currentTimeMillis(),
+                            appName = targetAppName,
+                            stage1 = if (stage1 == Stage1Capture.SMART) CaptureMode.SMART else CaptureMode.VERBATIM,
+                            threeStep = false,
+                            usedLiveModel = false,
+                            aiLyra = false,
+                            stage1Text = rawTranscript,
+                            deliveredText = polishedText,
+                            lyraText = null,
+                            unaryPolishText = polishedText,
+                            sensitive = false
+                        )
                     )
                     val placed = FloatingTextInjector.injectReporting(context, polishedText)
                     VocabSuggestions.onConfirmedPlacement(context, polishedText, placed)
                     Toast.makeText(context, "Polished ✨", Toast.LENGTH_SHORT).show()
                 } else {
                     if (rawTranscript.isNotBlank()) {
-                        HistoryRepository.saveEntry(
-                            text = rawTranscript,
-                            mode = "VERBATIM",
-                            appName = targetAppName
+                        HistoryRepository.saveVoiceSession(
+                            VoiceSessionBuilder.build(
+                                sessionId = java.util.UUID.randomUUID().toString(),
+                                timestamp = System.currentTimeMillis(),
+                                appName = targetAppName,
+                                stage1 = if (stage1 == Stage1Capture.SMART) CaptureMode.SMART else CaptureMode.VERBATIM,
+                                threeStep = false,
+                                usedLiveModel = false,
+                                aiLyra = false,
+                                stage1Text = rawTranscript,
+                                deliveredText = rawTranscript,
+                                lyraText = null,
+                                unaryPolishText = null,
+                                sensitive = false
+                            )
                         )
                         val placed = FloatingTextInjector.injectReporting(context, rawTranscript)
                         VocabSuggestions.onConfirmedPlacement(context, rawTranscript, placed)

@@ -42,6 +42,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -74,7 +75,9 @@ import com.princeniithompson.rapcha.data.HistoryRepository
 import com.princeniithompson.rapcha.data.RetryClipStore
 import com.princeniithompson.rapcha.service.FloatingBubbleService
 import com.princeniithompson.rapcha.ui.VoiceTypingViewModel
+import com.princeniithompson.rapcha.data.LyraRating
 import com.princeniithompson.rapcha.ui.components.InAppVoiceTypingBubble
+import com.princeniithompson.rapcha.ui.components.LyraHistoryStages
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,10 +89,18 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     val historyItems by HistoryRepository.historyItems.collectAsState()
+    var unratedOnly by remember { mutableStateOf(false) }
+    val unratedCount = remember(historyItems) {
+        historyItems.count { it.session?.reviewable == true && it.session.rating == LyraRating.UNRATED }
+    }
+    val visibleHistory = remember(historyItems, unratedOnly) {
+        if (!unratedOnly) historyItems
+        else historyItems.filter { it.session?.reviewable == true && it.session.rating == LyraRating.UNRATED }
+    }
 
     // Group history items by date header ("Today", "Yesterday", "Sep 21, 2026", etc.)
-    val groupedHistory = remember(historyItems) {
-        historyItems.groupBy { it.getFormattedDateHeader() }
+    val groupedHistory = remember(visibleHistory) {
+        visibleHistory.groupBy { it.getFormattedDateHeader() }
     }
 
     Box(
@@ -143,6 +154,25 @@ fun HomeScreen(
             item {
                 TopCarouselSection(viewModel = viewModel)
                 Spacer(modifier = Modifier.height(20.dp))
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterChip(
+                        selected = !unratedOnly,
+                        onClick = { unratedOnly = false },
+                        label = { Text("All") }
+                    )
+                    FilterChip(
+                        selected = unratedOnly,
+                        onClick = { unratedOnly = true },
+                        label = { Text(if (unratedCount > 0) "Unrated $unratedCount" else "Unrated") }
+                    )
+                }
             }
 
             // 3. Grouped Daily History List
@@ -461,6 +491,7 @@ private fun HistoryCardItem(
                 fontWeight = FontWeight.Normal,
                 color = Color(0xFF1A202C)
             )
+            item.session?.let { LyraHistoryStages(it) }
 
             Spacer(modifier = Modifier.height(12.dp))
 

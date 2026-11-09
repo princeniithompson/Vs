@@ -151,7 +151,7 @@ object DictationAlerts {
         manager.createNotificationChannel(channel)
     }
 
-    private fun canPost(context: Context): Boolean {
+    fun canPost(context: Context): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
         return ContextCompat.checkSelfPermission(
             context,
