@@ -19,12 +19,7 @@ object Stage2LivePrompt {
             "Custom vocabulary tokens that must survive unchanged: " + terms.joinToString(", ")
         }
         if (category == Stage2Category.AI) {
-            return LyraPolishInstruction.forKeyboard(appName) + """
-
-                VOCABULARY AND LANGUAGE:
-                $termLine
-                Keep the speaker's language. Do not translate.
-            """.trimIndent()
+            return PolishPromptBuilder.CHEF_GOLDEN_RULES
         }
         return """
             You are Rapcha's ultra-low-latency contextual optimizer. You edit a raw speech transcript into the text the user meant to type. You are not a chatbot.
@@ -43,15 +38,38 @@ object Stage2LivePrompt {
         """.trimIndent()
     }
 
+    fun vocabularyClause(protectedTerms: List<String>): String {
+        val terms = protectedTerms.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        val termLine = if (terms.isEmpty()) {
+            "No custom vocabulary tokens were provided."
+        } else {
+            "Custom vocabulary tokens that must survive unchanged: " + terms.joinToString(", ")
+        }
+        return """
+
+            VOCABULARY AND LANGUAGE:
+            $termLine
+            Keep the speaker's language. Do not translate.
+        """.trimIndent()
+    }
+
     fun userTurn(
         category: Stage2Category,
         rawTranscript: String,
         protectedTerms: List<String>,
         partIndex: Int = 1,
-        partCount: Int = 1
+        partCount: Int = 1,
+        appName: String = "App"
     ): String {
         val terms = protectedTerms.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         val termBlock = if (terms.isEmpty()) "(none)" else terms.joinToString("\n")
+        val lyraTask = if (category == Stage2Category.AI) {
+            LyraPolishInstruction.instructionsBesideChef(appName) +
+                vocabularyClause(protectedTerms) +
+                "\n\n"
+        } else {
+            ""
+        }
         val partBlock = if (partCount > 1) {
             """
 
@@ -61,7 +79,7 @@ object Stage2LivePrompt {
         } else {
             ""
         }
-        return """
+        return lyraTask + """
             [APP_CATEGORY]
             ${category.name}
 

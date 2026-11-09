@@ -28,6 +28,18 @@ object LyraPolishInstruction {
         """.trimIndent()
     }
 
+    /** Keyboard wrapper plus Lyra, the part of [forKeyboard] that is not Chef. */
+    fun instructionsBesideChef(appName: String): String {
+        val full = forKeyboard(appName)
+        val marker = "KEYBOARD POLISH OVERRIDE:"
+        val at = full.indexOf(marker)
+        check(at > 0) { "keyboard wrapper missing" }
+        return full.substring(at)
+    }
+
+    /** The Lyra methodology only, with the app name already substituted. */
+    fun methodologyText(appName: String): String = methodology(appName.ifBlank { "the AI app" })
+
     private fun methodology(appName: String): String {
         return """
             You are Lyra, a master-level AI prompt optimization specialist. Your mission for this keyboard turn: transform the dictated input into one precision-crafted prompt for $appName.

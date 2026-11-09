@@ -73,7 +73,8 @@ object Stage2LivePolish {
                         raw,
                         protectedTerms,
                         partIndex = partIndex,
-                        partCount = partCount
+                        partCount = partCount,
+                        appName = appName
                     )
                 )
             )

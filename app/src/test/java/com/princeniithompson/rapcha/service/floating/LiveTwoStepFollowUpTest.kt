@@ -85,12 +85,20 @@ class LiveTwoStepFollowUpTest {
     }
 
     @Test
-    fun `live stage-2 ai instruction is lyra and message is not`() {
+    fun `live stage-2 ai system instruction is chef and lyra stays in the user turn`() {
         val ai = Stage2LivePrompt.systemInstruction(Stage2Category.AI, "Grok Bot", listOf("Niithompson"))
-        assertTrue(ai.contains("Lyra"))
-        assertTrue(ai.contains(LyraPolishInstruction.NEVER_ANSWER_RULE))
-        assertTrue(ai.contains("Niithompson"))
-        assertFalse(ai.contains(LyraPolishInstruction.WELCOME_MESSAGE))
+        assertEquals(PolishPromptBuilder.CHEF_GOLDEN_RULES, ai)
+        assertFalse(ai.contains("Lyra"))
+        val turn = Stage2LivePrompt.userTurn(
+            Stage2Category.AI,
+            "hello",
+            listOf("Niithompson"),
+            appName = "Grok Bot"
+        )
+        assertTrue(turn.contains("You are Lyra"))
+        assertTrue(turn.contains(LyraPolishInstruction.NEVER_ANSWER_RULE))
+        assertTrue(turn.contains("Niithompson"))
+        assertFalse(turn.contains(LyraPolishInstruction.WELCOME_MESSAGE))
 
         val message = Stage2LivePrompt.systemInstruction(Stage2Category.MESSAGE, "WhatsApp", emptyList())
         assertFalse(message.contains("Lyra"))
@@ -108,7 +116,9 @@ class LiveTwoStepFollowUpTest {
             apiKey = "test-key",
             appName = "Grok Bot",
             model = { request ->
-                assertTrue(request.systemInstruction.contains("Lyra"))
+                assertEquals(PolishPromptBuilder.CHEF_GOLDEN_RULES, request.systemInstruction)
+                assertFalse(request.systemInstruction.contains("Lyra"))
+                assertTrue(request.userText.contains("You are Lyra"))
                 assertFalse(request.systemInstruction.contains("gemini-3.5-flash-lite"))
                 LivePolishResponse(null, "Stage-2 Live polish timed out before setup", timedOut = true)
             },
