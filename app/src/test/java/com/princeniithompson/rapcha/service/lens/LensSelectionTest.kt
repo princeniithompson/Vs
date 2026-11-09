@@ -35,12 +35,104 @@ class LensSelectionTest {
     }
 
     @Test
-    fun `long press drag is the lens only when the control is on`() {
-        assertEquals(BubblePointer.LENS, BubblePointerPolicy.resolve(true, true, true))
-        assertEquals(BubblePointer.DRAG, BubblePointerPolicy.resolve(true, true, false))
-        assertEquals(BubblePointer.DRAG, BubblePointerPolicy.resolve(false, true, true))
-        assertEquals(BubblePointer.TAP, BubblePointerPolicy.resolve(false, false, true))
-        assertEquals(BubblePointer.LONG_PRESS, BubblePointerPolicy.resolve(true, false, true))
+    fun `two short taps within the window arm the lens and cancel the single tap`() {
+        val taps = detector()
+        val first = tap(taps, downAt = 1_000L, upAt = 1_080L)
+        assertEquals(1_080L + LensDoubleTapDetector.MAX_GAP_MS, first.scheduleSingleTapAtMs)
+        assertFalse(first.activateLens)
+        val secondDown = taps.down(1_200L, 4f, 4f, 1)
+        assertTrue(secondDown.cancelPendingTap)
+        assertFalse(secondDown.activateLens)
+        assertFalse(taps.tick(1_080L + LensDoubleTapDetector.MAX_GAP_MS).fireSingleTap)
+        val secondUp = taps.up(1_260L, 4f, 4f, cancelled = false)
+        assertTrue(secondUp.activateLens)
+        assertFalse(secondUp.fireSingleTap)
+        assertNull(taps.tick(1_400L).scheduleSingleTapAtMs)
+        assertFalse(taps.tick(1_400L).fireSingleTap)
+    }
+
+    @Test
+    fun `slow far dragged held cancelled and multitouch taps do not arm the lens`() {
+        val slow = detector()
+        tap(slow, downAt = 0L, upAt = 80L)
+        val late = slow.down(80L + LensDoubleTapDetector.MAX_GAP_MS + 1, 0f, 0f, 1)
+        assertFalse(late.activateLens)
+        assertTrue(late.cancelPendingTap)
+
+        val far = detector()
+        tap(far, downAt = 0L, upAt = 80L)
+        val away = far.down(200L, 400f, 0f, 1)
+        assertFalse(away.activateLens)
+        assertTrue(away.cancelPendingTap)
+
+        val dragged = detector()
+        dragged.down(0L, 0f, 0f, 1)
+        val drag = dragged.move(40L, 40f, 0f, 1)
+        assertTrue(drag.startBubbleDrag)
+        assertFalse(dragged.up(80L, 40f, 0f, cancelled = false).activateLens)
+
+        val held = detector()
+        held.down(0L, 0f, 0f, 1)
+        assertNull(held.up(0L + LensDoubleTapDetector.MAX_TAP_MS + 1, 0f, 0f, cancelled = false).scheduleSingleTapAtMs)
+        val heldThenDrag = detector()
+        heldThenDrag.down(0L, 0f, 0f, 1)
+        assertFalse(heldThenDrag.move(LensDoubleTapDetector.MAX_TAP_MS + 1, 1f, 0f, 1).activateLens)
+        val afterHold = heldThenDrag.move(LensDoubleTapDetector.MAX_TAP_MS + 40, 40f, 0f, 1)
+        assertTrue(afterHold.startBubbleDrag)
+        assertFalse(afterHold.activateLens)
+
+        val cancelled = detector()
+        cancelled.down(0L, 0f, 0f, 1)
+        val abort = cancelled.up(60L, 0f, 0f, cancelled = true)
+        assertFalse(abort.activateLens)
+        assertNull(abort.scheduleSingleTapAtMs)
+
+        val multi = detector()
+        val extra = multi.down(0L, 0f, 0f, 2)
+        assertFalse(extra.activateLens)
+        assertNull(multi.up(50L, 0f, 0f, cancelled = false).scheduleSingleTapAtMs)
+
+        val secondDrag = detector()
+        tap(secondDrag, 0L, 50L)
+        assertTrue(secondDrag.down(150L, 0f, 0f, 1).cancelPendingTap)
+        val moved = secondDrag.move(180L, 40f, 0f, 1)
+        assertTrue(moved.startBubbleDrag)
+        assertFalse(moved.activateLens)
+        val draggedUp = secondDrag.up(220L, 40f, 0f, cancelled = false)
+        assertFalse(draggedUp.activateLens)
+        assertTrue(draggedUp.endBubbleDrag)
+        assertNull(draggedUp.scheduleSingleTapAtMs)
+        assertFalse(secondDrag.tick(1_000L).fireSingleTap)
+
+        val rebound = detector()
+        tap(rebound, 0L, 50L)
+        rebound.down(50L + LensDoubleTapDetector.MIN_GAP_MS - 1, 0f, 0f, 1)
+        val again = rebound.up(100L, 0f, 0f, cancelled = false)
+        assertFalse(again.activateLens)
+        assertEquals(100L + LensDoubleTapDetector.MAX_GAP_MS, again.scheduleSingleTapAtMs)
+    }
+
+    @Test
+    fun `a single tap waits out the double-tap window before it fires`() {
+        val taps = detector()
+        val first = tap(taps, downAt = 500L, upAt = 560L)
+        assertEquals(560L + LensDoubleTapDetector.MAX_GAP_MS, first.scheduleSingleTapAtMs)
+        assertFalse(taps.tick(560L + LensDoubleTapDetector.MAX_GAP_MS - 1).fireSingleTap)
+        assertTrue(taps.tick(560L + LensDoubleTapDetector.MAX_GAP_MS).fireSingleTap)
+    }
+
+    @Test
+    fun `after the lens is armed a later drag is not another double tap`() {
+        val taps = detector()
+        tap(taps, 0L, 50L)
+        taps.down(150L, 0f, 0f, 1)
+        assertTrue(taps.up(200L, 0f, 0f, cancelled = false).activateLens)
+        taps.reset()
+        taps.down(1_000L, 0f, 0f, 1)
+        val drag = taps.move(1_040L, 30f, 0f, 1)
+        assertTrue(drag.startBubbleDrag)
+        assertFalse(drag.activateLens)
+        assertTrue(taps.up(1_100L, 30f, 0f, cancelled = false).endBubbleDrag)
     }
 
     @Test
@@ -75,6 +167,13 @@ class LensSelectionTest {
         val parsed = LensSettings.parse(raw)
         assertEquals(listOf("Friendly", "Professional", "Casual"), parsed.map { it.name })
         assertEquals("😊", parsed.first().emoji)
+    }
+
+    private fun detector(): LensDoubleTapDetector = LensDoubleTapDetector(touchSlopPx = 16f, doubleTapSlopPx = 48f)
+
+    private fun tap(detector: LensDoubleTapDetector, downAt: Long, upAt: Long): LensDoubleTapDetector.Decision {
+        detector.down(downAt, 0f, 0f, 1)
+        return detector.up(upAt, 0f, 0f, cancelled = false)
     }
 
     private fun candidate(

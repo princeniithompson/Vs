@@ -16,8 +16,8 @@ android {
     applicationId = "com.princeniithompson.rapcha"
     minSdk = 24
     targetSdk = 36
-    versionCode = 10
-    versionName = "live-polish-10"
+    versionCode = 11
+    versionName = "live-polish-11"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

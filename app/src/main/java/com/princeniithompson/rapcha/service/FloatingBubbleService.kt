@@ -280,9 +280,10 @@ class FloatingBubbleService : Service() {
                 lensEnabled = {
                     com.princeniithompson.rapcha.service.lens.LensSettings.enabled(
                         getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)
-                    )
+                    ) && !sessionManager.isRecording && !overlayWindowManager.overlayPolishing.value
                 },
-                onLensDragStart = { com.princeniithompson.rapcha.service.lens.LensController.onDragStart() },
+                lensActive = { com.princeniithompson.rapcha.service.lens.LensController.isOpen() },
+                onLensArmed = { com.princeniithompson.rapcha.service.lens.LensController.onArmed() },
                 onLensDrag = { dx, dy -> com.princeniithompson.rapcha.service.lens.LensController.onDrag(dx, dy) },
                 onLensDragEnd = { com.princeniithompson.rapcha.service.lens.LensController.onDragEnd() }
             )

@@ -56,20 +56,142 @@ object LensSelection {
     }
 }
 
-enum class BubblePointer {
-    TAP,
-    DRAG,
-    LONG_PRESS,
-    LENS
-}
+/**
+ * Double-tap gate for the lifesaver bubble.
+ * Times match ViewConfiguration: 40ms minimum, 300ms maximum, measured from the
+ * first finger-up to the second finger-down. A tap that moves past the touch
+ * slop, lasts 300ms, uses a second finger, or is cancelled is not a tap.
+ */
+class LensDoubleTapDetector(
+    private val touchSlopPx: Float,
+    private val doubleTapSlopPx: Float,
+    private val minGapMs: Long = MIN_GAP_MS,
+    private val maxGapMs: Long = MAX_GAP_MS,
+    private val maxTapMs: Long = MAX_TAP_MS
+) {
+    data class Decision(
+        val cancelPendingTap: Boolean = false,
+        val scheduleSingleTapAtMs: Long? = null,
+        val fireSingleTap: Boolean = false,
+        val activateLens: Boolean = false,
+        val startBubbleDrag: Boolean = false,
+        val draggingBubble: Boolean = false,
+        val endBubbleDrag: Boolean = false
+    )
 
-object BubblePointerPolicy {
-    fun resolve(longPressFired: Boolean, dragged: Boolean, lensEnabled: Boolean): BubblePointer {
-        return when {
-            longPressFired && dragged && lensEnabled -> BubblePointer.LENS
-            dragged -> BubblePointer.DRAG
-            longPressFired -> BubblePointer.LONG_PRESS
-            else -> BubblePointer.TAP
+    private enum class Phase { IDLE, DOWN, PENDING, SECOND }
+
+    private var phase = Phase.IDLE
+    private var downAt = 0L
+    private var downX = 0f
+    private var downY = 0f
+    private var firstX = 0f
+    private var firstY = 0f
+    private var firstUpAt = 0L
+    private var moved = false
+    private var extraPointer = false
+    private var dragging = false
+
+    fun down(timeMs: Long, x: Float, y: Float, pointerCount: Int): Decision {
+        if (pointerCount > 1) {
+            val cancel = phase == Phase.PENDING
+            reset()
+            return Decision(cancelPendingTap = cancel)
         }
+        if (phase == Phase.PENDING) {
+            val gap = timeMs - firstUpAt
+            val near = hypot(x - firstX, y - firstY) <= doubleTapSlopPx
+            if (gap in minGapMs..maxGapMs && near) {
+                phase = Phase.SECOND
+                downAt = timeMs
+                downX = x
+                downY = y
+                moved = false
+                extraPointer = false
+                dragging = false
+                return Decision(cancelPendingTap = true)
+            }
+            phase = Phase.DOWN
+            downAt = timeMs
+            downX = x
+            downY = y
+            moved = false
+            extraPointer = false
+            dragging = false
+            return Decision(cancelPendingTap = true)
+        }
+        phase = Phase.DOWN
+        downAt = timeMs
+        downX = x
+        downY = y
+        moved = false
+        extraPointer = false
+        dragging = false
+        return Decision()
+    }
+
+    fun move(timeMs: Long, x: Float, y: Float, pointerCount: Int): Decision {
+        if (phase != Phase.DOWN && phase != Phase.SECOND) return Decision()
+        if (pointerCount > 1) {
+            extraPointer = true
+            return Decision(cancelPendingTap = phase == Phase.SECOND)
+        }
+        val travel = hypot(x - downX, y - downY)
+        if (!dragging && travel > touchSlopPx) {
+            moved = true
+            dragging = true
+            val wasSecond = phase == Phase.SECOND
+            phase = Phase.DOWN
+            return Decision(cancelPendingTap = wasSecond, startBubbleDrag = true, draggingBubble = true)
+        }
+        if (dragging) return Decision(draggingBubble = true)
+        if (timeMs - downAt > maxTapMs) moved = true
+        return Decision()
+    }
+
+    fun up(timeMs: Long, x: Float, y: Float, cancelled: Boolean): Decision {
+        val wasSecond = phase == Phase.SECOND
+        val held = timeMs - downAt
+        val tap = !cancelled && !moved && !extraPointer && !dragging && held in 0..maxTapMs
+        if (wasSecond && tap) {
+            reset()
+            return Decision(activateLens = true)
+        }
+        if (dragging) {
+            reset()
+            return Decision(endBubbleDrag = true)
+        }
+        if (phase == Phase.DOWN && tap) {
+            phase = Phase.PENDING
+            firstX = downX
+            firstY = downY
+            firstUpAt = timeMs
+            return Decision(scheduleSingleTapAtMs = timeMs + maxGapMs)
+        }
+        reset()
+        return Decision()
+    }
+
+    fun tick(timeMs: Long): Decision {
+        if (phase == Phase.PENDING && timeMs >= firstUpAt + maxGapMs) {
+            reset()
+            return Decision(fireSingleTap = true)
+        }
+        return Decision()
+    }
+
+    fun reset() {
+        phase = Phase.IDLE
+        moved = false
+        extraPointer = false
+        dragging = false
+    }
+
+    private fun hypot(dx: Float, dy: Float): Float = kotlin.math.hypot(dx, dy)
+
+    companion object {
+        const val MIN_GAP_MS = 40L
+        const val MAX_GAP_MS = 300L
+        const val MAX_TAP_MS = 300L
     }
 }

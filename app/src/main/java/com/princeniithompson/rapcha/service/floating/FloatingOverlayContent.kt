@@ -46,7 +46,8 @@ fun FloatingOverlayContent(
     onDrag: (dx: Float, dy: Float) -> Unit,
     onDragEnd: () -> Unit,
     lensEnabled: () -> Boolean = { false },
-    onLensDragStart: () -> Unit = {},
+    lensActive: () -> Boolean = { false },
+    onLensArmed: () -> Unit = {},
     onLensDrag: (Float, Float) -> Unit = { _, _ -> },
     onLensDragEnd: () -> Unit = {}
 ) {
@@ -98,7 +99,8 @@ fun FloatingOverlayContent(
                     onDrag = onDrag,
                     onDragEnd = onDragEnd,
                     lensEnabled = lensEnabled,
-                    onLensDragStart = onLensDragStart,
+                    lensActive = lensActive,
+                    onLensArmed = onLensArmed,
                     onLensDrag = onLensDrag,
                     onLensDragEnd = onLensDragEnd
                 )

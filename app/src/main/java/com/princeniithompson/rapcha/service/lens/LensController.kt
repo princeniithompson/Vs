@@ -37,7 +37,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
 
-enum class LensPhase { HIDDEN, DRAGGING, ACTIONS, GENERATING, RESULT, ERROR }
+enum class LensPhase { HIDDEN, ARMED, DRAGGING, ACTIONS, GENERATING, RESULT, ERROR }
 
 data class LensUiState(
     val phase: LensPhase = LensPhase.HIDDEN,
@@ -55,7 +55,7 @@ data class LensUiState(
 )
 
 /**
- * Long-press-drag lens. The model call is gemini-3.8-live only.
+ * Double-tap arms the lens. A later drag targets text. The model call is gemini-3.8-live only.
  */
 object LensController {
     private const val TAG = "LensController"
@@ -87,33 +87,40 @@ object LensController {
         this.bubbleOrigin = bubbleOrigin
     }
 
-    fun onDragStart() {
+    fun isOpen(): Boolean = state.value.phase != LensPhase.HIDDEN
+
+    fun onArmed() {
         val app = context ?: return
         if (!LensSettings.enabled(app.getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE))) return
+        if (isOpen()) return
         val origin = bubbleOrigin?.invoke() ?: return
         epoch.incrementAndGet()
         fieldText = ""
         source = null
         state.value = LensUiState(
-            phase = LensPhase.DRAGGING,
+            phase = LensPhase.ARMED,
             centerX = origin.first,
             centerY = origin.second,
             tones = tones()
         )
         bubbleAlpha?.invoke(0f)
         ensureWindow()
+        setTouchable(false)
         AppLogRepository.logEvent(
             DiagnosticSource.BUBBLE,
             DiagnosticType.LENS_START,
-            "build=${com.princeniithompson.rapcha.BuildConfig.VERSION_NAME}"
+            "build=${com.princeniithompson.rapcha.BuildConfig.VERSION_NAME} gesture=double_tap"
         )
-        look()
     }
 
     fun onDrag(dx: Float, dy: Float) {
         val current = state.value
-        if (current.phase != LensPhase.DRAGGING) return
-        state.value = current.copy(centerX = current.centerX + dx, centerY = current.centerY + dy)
+        if (current.phase != LensPhase.DRAGGING && current.phase != LensPhase.ARMED) return
+        state.value = current.copy(
+            phase = LensPhase.DRAGGING,
+            centerX = current.centerX + dx,
+            centerY = current.centerY + dy
+        )
         val now = android.os.SystemClock.elapsedRealtime()
         if (now - lastLookup > 90L) {
             lastLookup = now

@@ -35,11 +35,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.princeniithompson.rapcha.R
+import com.princeniithompson.rapcha.service.lens.LensDoubleTapDetector
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -47,7 +49,8 @@ import kotlin.math.hypot
 
 /**
  * Collapsed floating lifebuoy bubble with simplified 2-step AI Context Scan flow:
- * 1. Normal mode: Tap starts/stops voice typing; Long-press (>= 650ms) enters Scan Mode (Lens appearance).
+ * 1. Normal mode: Tap starts/stops voice typing. A double-tap arms the text lens.
+ *    Long-press (>= 650ms) still enters Scan Mode and never arms the text lens.
  * 2. Scan mode: Single tap immediately triggers the Aurora Screen Scan.
  * 3. Context Loaded: Displays a glowing neon cyan lens/sparkle badge.
  */
@@ -65,7 +68,8 @@ fun FloatingCollapsedBubble(
     onDrag: (Float, Float) -> Unit = { _, _ -> },
     onDragEnd: () -> Unit = {},
     lensEnabled: () -> Boolean = { false },
-    onLensDragStart: () -> Unit = {},
+    lensActive: () -> Boolean = { false },
+    onLensArmed: () -> Unit = {},
     onLensDrag: (Float, Float) -> Unit = { _, _ -> },
     onLensDragEnd: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -118,68 +122,132 @@ fun FloatingCollapsedBubble(
             .size(if (isScanMode) 64.dp else 56.dp)
             .pointerInput(isScanMode) {
                 coroutineScope {
+                    val scope = this
+                    var pendingTap: kotlinx.coroutines.Job? = null
+                    val tapSlop = viewConfiguration.touchSlop
+                    val doubleTapSlop = 100.dp.toPx()
+                    val taps = LensDoubleTapDetector(tapSlop, doubleTapSlop)
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
-                        var isLongPressTriggered = false
-                        var isDragging = false
-                        var isLensDrag = false
-                        var totalDrag = 0f
-
-                        val longPressJob = launch {
-                            delay(650L)
-                            if (!isDragging && totalDrag < 18f) {
-                                isLongPressTriggered = true
-                                onLongPress()
+                        val downTime = System.currentTimeMillis()
+                        val pointers = { currentEvent.changes.count { it.pressed } }
+                        if (lensActive()) {
+                            var lensMoved = false
+                            var total = 0f
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: continue
+                                if (!change.pressed) {
+                                    change.consume()
+                                    if (lensMoved) onLensDragEnd()
+                                    break
+                                }
+                                val delta = change.positionChange()
+                                total += hypot(delta.x, delta.y)
+                                if (total > tapSlop) {
+                                    lensMoved = true
+                                    change.consume()
+                                    onLensDrag(delta.x, delta.y)
+                                }
                             }
+                            return@awaitEachGesture
                         }
-
+                        val armLens = lensEnabled() && !isScanMode
+                        if (!armLens) {
+                            var isLongPressTriggered = false
+                            var isDragging = false
+                            var totalDrag = 0f
+                            val longPressJob = launch {
+                                delay(650L)
+                                if (!isDragging && totalDrag < 18f) {
+                                    isLongPressTriggered = true
+                                    onLongPress()
+                                }
+                            }
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: continue
+                                if (!change.pressed) {
+                                    change.consume()
+                                    longPressJob.cancel()
+                                    if (isDragging) onDragEnd()
+                                    else if (!isLongPressTriggered) {
+                                        if (isScanMode) onScanTriggered() else onClick()
+                                    }
+                                    break
+                                }
+                                val delta = change.positionChange()
+                                totalDrag += hypot(delta.x, delta.y)
+                                if (totalDrag > 12f && !isDragging) {
+                                    isDragging = true
+                                    longPressJob.cancel()
+                                    pendingTap?.cancel()
+                                    onDragStart()
+                                }
+                                if (isDragging) {
+                                    change.consume()
+                                    onDrag(delta.x, delta.y)
+                                }
+                            }
+                            return@awaitEachGesture
+                        }
+                        val start = taps.down(downTime, down.position.x, down.position.y, pointers())
+                        if (start.cancelPendingTap) pendingTap?.cancel()
+                        var sawDrag = false
+                        val longPressJob = scope.launch {
+                            delay(650L)
+                            if (!sawDrag) onLongPress()
+                        }
+                        try {
                         while (true) {
                             val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull() ?: break
-                            if (!change.pressed) {
-                                // Pointer up
-                                change.consume()
-                                longPressJob.cancel()
-                                if (isLensDrag) {
-                                    onLensDragEnd()
-                                } else if (isDragging) {
-                                    onDragEnd()
-                                } else if (!isLongPressTriggered) {
-                                    if (isScanMode) {
-                                        // Tap in Scan Mode -> immediately trigger screen scan
-                                        onScanTriggered()
-                                    } else {
-                                        // Tap in Normal Mode -> open popup/start voice typing
-                                        onClick()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: continue
+                            val count = event.changes.count { it.pressed }.coerceAtLeast(1)
+                                if (!change.pressed) {
+                                    change.consume()
+                                    longPressJob.cancel()
+                                    val decision = taps.up(
+                                    System.currentTimeMillis(),
+                                    change.position.x,
+                                    change.position.y,
+                                    cancelled = !change.changedToUp()
+                                )
+                                if (decision.endBubbleDrag) onDragEnd()
+                                if (decision.activateLens) {
+                                    pendingTap?.cancel()
+                                    onLensArmed()
+                                }
+                                val fireAt = decision.scheduleSingleTapAtMs
+                                if (fireAt != null) {
+                                    val wait = (fireAt - System.currentTimeMillis()).coerceAtLeast(0L)
+                                    pendingTap?.cancel()
+                                    pendingTap = scope.launch {
+                                        delay(wait)
+                                        if (taps.tick(fireAt).fireSingleTap) onClick()
                                     }
                                 }
                                 break
-                            } else {
-                                val posChange = change.positionChange()
-                                val dx = posChange.x
-                                val dy = posChange.y
-                                val dist = hypot(dx, dy)
-                                totalDrag += dist
-
-                                if (totalDrag > 12f && !isDragging && !isLensDrag) {
-                                    if (isLongPressTriggered && lensEnabled()) {
-                                        isLensDrag = true
-                                        onLensDragStart()
-                                    } else {
-                                        isDragging = true
-                                        longPressJob.cancel()
-                                        onDragStart()
-                                    }
-                                }
-
-                                if (isLensDrag) {
-                                    change.consume()
-                                    onLensDrag(dx, dy)
-                                } else if (isDragging) {
-                                    change.consume()
-                                    onDrag(dx, dy)
-                                }
                             }
+                            val delta = change.positionChange()
+                            val decision = taps.move(
+                                System.currentTimeMillis(),
+                                change.position.x,
+                                change.position.y,
+                                count
+                            )
+                            if (decision.cancelPendingTap) pendingTap?.cancel()
+                            if (decision.startBubbleDrag) {
+                                sawDrag = true
+                                longPressJob.cancel()
+                                onDragStart()
+                            }
+                            if (decision.draggingBubble) {
+                                change.consume()
+                                onDrag(delta.x, delta.y)
+                            }
+                        }
+                        } finally {
+                            longPressJob.cancel()
                         }
                     }
                 }

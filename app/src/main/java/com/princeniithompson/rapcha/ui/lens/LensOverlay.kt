@@ -55,7 +55,7 @@ fun LensOverlay(
 ) {
     if (state.phase == LensPhase.HIDDEN) return
     Box(modifier = Modifier.fillMaxSize()) {
-        if (state.phase != LensPhase.DRAGGING) {
+        if (state.phase != LensPhase.DRAGGING && state.phase != LensPhase.ARMED) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -76,7 +76,7 @@ fun LensOverlay(
                     .border(2.dp, Color(0xFF2979FF), RoundedCornerShape(4.dp))
             )
         }
-        if (state.phase == LensPhase.DRAGGING) {
+        if (state.phase == LensPhase.DRAGGING || state.phase == LensPhase.ARMED) {
             Box(
                 modifier = Modifier
                     .offset { IntOffset((state.centerX - 36f).toInt(), (state.centerY - 36f).toInt()) }

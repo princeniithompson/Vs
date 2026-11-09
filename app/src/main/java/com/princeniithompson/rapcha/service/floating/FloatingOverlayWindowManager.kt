@@ -92,7 +92,8 @@ class FloatingOverlayWindowManager(private val context: Context) {
         onLongPressBubble: () -> Unit = {},
         onScanTriggered: () -> Unit = {},
         lensEnabled: () -> Boolean = { false },
-        onLensDragStart: () -> Unit = {},
+        lensActive: () -> Boolean = { false },
+        onLensArmed: () -> Unit = {},
         onLensDrag: (Float, Float) -> Unit = { _, _ -> },
         onLensDragEnd: () -> Unit = {}
     ) {
@@ -187,7 +188,8 @@ class FloatingOverlayWindowManager(private val context: Context) {
                     onLongPressBubble = onLongPressBubble,
                     onScanTriggered = onScanTriggered,
                     lensEnabled = lensEnabled,
-                    onLensDragStart = onLensDragStart,
+                    lensActive = lensActive,
+                    onLensArmed = onLensArmed,
                     onLensDrag = onLensDrag,
                     onLensDragEnd = onLensDragEnd,
                     onDragStart = {

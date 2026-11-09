@@ -518,12 +518,12 @@ fun VoiceTypingScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Lens (long-press drag bubble)",
+                                text = "Lens (double-tap bubble)",
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "On: hold the bubble, then drag to read text under your finger.",
+                                text = "On: double-tap the bubble, then drag the lens over text.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
