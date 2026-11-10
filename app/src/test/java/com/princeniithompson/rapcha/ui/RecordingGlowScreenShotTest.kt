@@ -1,20 +1,16 @@
 package com.princeniithompson.rapcha.ui
 
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
-import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
-import com.github.takahirom.roborazzi.RoborazziOptions
-import com.github.takahirom.roborazzi.RoborazziTaskType
-import com.github.takahirom.roborazzi.captureRoboImage
 import com.princeniithompson.rapcha.service.floating.BubbleChromeStyle
 import com.princeniithompson.rapcha.service.floating.DynamicTonePolicy
 import com.princeniithompson.rapcha.ui.components.RecordingGlowScreen
-import java.io.File
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -29,22 +25,9 @@ class RecordingGlowScreenShotTest {
     @get:Rule
     val rule = createComposeRule()
 
-    @OptIn(ExperimentalRoborazziApi::class)
     @Test
-    fun `recording glows screen shows the words page`() {
-        rule.setContent {
-            RecordingGlowScreen(
-                selectedStyleId = "breathing_horizon",
-                activeChrome = BubbleChromeStyle.ORIGINAL,
-                tone = DynamicTonePolicy.LUMINOUS,
-                idle = false,
-                onSelectStyle = {},
-                onChooseChrome = {},
-                onChooseTone = {},
-                onDismiss = {},
-                modifier = Modifier.width(360.dp)
-            )
-        }
+    fun `words page keeps cancel and polish and lists every glow`() {
+        show(page = 0, chrome = BubbleChromeStyle.ORIGINAL)
         rule.onNodeWithText("Recording glows").assertIsDisplayed()
         rule.onNodeWithText("Cancel").assertIsDisplayed()
         rule.onNodeWithText("Polish").assertIsDisplayed()
@@ -52,30 +35,48 @@ class RecordingGlowScreenShotTest {
         rule.onNodeWithText("Mini").assertIsDisplayed()
         rule.onNodeWithText("Luminous").assertIsDisplayed()
         rule.onNodeWithText("Deep").assertIsDisplayed()
-        rule.onNodeWithText("Breathing Horizon").assertIsDisplayed()
-        rule.onNodeWithText("Flashlight Core").assertIsDisplayed()
+        listOf(
+            "Breathing Horizon",
+            "Sunset Mirage",
+            "Gentle Wave Slice",
+            "Flashlight Core",
+            "Electric Sunburst",
+            "Bioluminescent Shimmer",
+            "Liquid Specular Glass",
+            "Velvet Ambient Calm"
+        ).forEach { rule.onNodeWithText(it).fetchSemanticsNode() }
         rule.onNodeWithText("Select as active").assertDoesNotExist()
-        rule.onNodeWithText("Complete").assertDoesNotExist()
         rule.onNodeWithText("Soft band").assertDoesNotExist()
+        assertNull(chosenStyle)
+    }
 
-        val out = File("/opt/cursor/artifacts/recording-glows-19.png")
-        out.parentFile?.mkdirs()
-        captureRoboImage(
-            file = out,
-            roborazziOptions = RoborazziOptions(taskType = RoborazziTaskType.Record)
-        ) {
+    @Test
+    fun `mini page uses the real compact bar`() {
+        show(page = 1, chrome = BubbleChromeStyle.COMPACT)
+        rule.onNodeWithText("00:00").assertIsDisplayed()
+        rule.onNodeWithText("App").assertIsDisplayed()
+        rule.onNodeWithText("Select as active").assertDoesNotExist()
+    }
+
+    private var chosenStyle: String? = null
+
+    private fun show(page: Int, chrome: BubbleChromeStyle) {
+        chosenStyle = null
+        rule.mainClock.autoAdvance = false
+        rule.setContent {
             RecordingGlowScreen(
-                selectedStyleId = "breathing_horizon",
-                activeChrome = BubbleChromeStyle.ORIGINAL,
+                selectedStyleId = "velvet_aura",
+                activeChrome = chrome,
                 tone = DynamicTonePolicy.LUMINOUS,
                 idle = false,
-                onSelectStyle = {},
+                onSelectStyle = { chosenStyle = it },
                 onChooseChrome = {},
                 onChooseTone = {},
                 onDismiss = {},
-                modifier = Modifier.width(360.dp)
+                modifier = Modifier.width(360.dp).height(800.dp),
+                initialPreviewPage = page
             )
         }
-        assertTrue(out.length() > 0L)
+        rule.mainClock.advanceTimeByFrame()
     }
 }

@@ -22,12 +22,6 @@ data class RecordingGlow(
 }
 
 object RecordingGlowList {
-    private val retired = setOf(
-        "bioluminescent_deep",
-        "liquid_glass",
-        "velvet_aura"
-    )
-
     val glows: List<RecordingGlow> = listOf(
         RecordingGlow(
             id = "breathing_horizon",
@@ -90,15 +84,13 @@ object RecordingGlowList {
 
     val names: List<String> = glows.map { it.name }
 
-    fun byId(id: String): RecordingGlow = glows.first { it.id == resolve(id) }
+    fun byId(id: String): RecordingGlow = glows.firstOrNull { it.id == id } ?: glows.first()
 
-    /** Old glows that are not on this screen become Breathing Horizon. */
+    /** Keeps any saved catalogue glow, including the three that v19 had hidden. */
     fun resolve(savedId: String?): String {
-        if (savedId != null && glows.any { it.id == savedId }) return savedId
-        return glows.first().id
+        if (savedId != null && GlowAnimationCatalogue.styles.any { it.id == savedId }) return savedId
+        return GlowAnimationCatalogue.DEFAULT_ID
     }
-
-    fun isRetired(savedId: String?): Boolean = savedId != null && savedId in retired
 }
 
 object RecordingGlowColors {

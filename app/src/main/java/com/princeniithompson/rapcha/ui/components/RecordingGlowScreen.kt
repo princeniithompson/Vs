@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -39,6 +38,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -59,9 +59,20 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import com.princeniithompson.rapcha.service.floating.BubbleChromeStyle
 import com.princeniithompson.rapcha.service.floating.DynamicTonePolicy
 import com.princeniithompson.rapcha.service.floating.RecordingGlowPreview
+import com.princeniithompson.rapcha.ui.components.overlay.CompactRecordingBar
+import com.princeniithompson.rapcha.ui.components.overlay.rememberDynamicAuroraPalette
+import kotlin.math.PI
 import kotlinx.coroutines.launch
 
 @Composable
@@ -74,13 +85,15 @@ fun RecordingGlowScreen(
     onChooseChrome: (BubbleChromeStyle) -> Unit,
     onChooseTone: (String) -> Unit,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    initialPreviewPage: Int = 0
 ) {
-    val resolved = RecordingGlowList.resolve(selectedStyleId)
-    LaunchedEffect(selectedStyleId) {
-        if (RecordingGlowList.isRetired(selectedStyleId)) onSelectStyle(resolved)
-    }
-    val pagerState = rememberPagerState(pageCount = { RecordingGlowPreview.PAGE_COUNT })
+    val colors = rememberGlowPageColors()
+    val palette = rememberDynamicAuroraPalette()
+    val pagerState = rememberPagerState(
+        initialPage = initialPreviewPage,
+        pageCount = { RecordingGlowPreview.PAGE_COUNT }
+    )
     val scope = rememberCoroutineScope()
     var token by remember { mutableIntStateOf(0) }
     LaunchedEffect(token, idle) {
@@ -92,22 +105,23 @@ fun RecordingGlowScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(RecordingGlowColors.PAGE))
+            .background(colors.page)
             .verticalScroll(scroll)
-            .navigationBarsPadding()
-            .padding(14.dp)
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(top = 8.dp)
+            .padding(horizontal = 14.dp)
             .padding(bottom = 20.dp)
     ) {
-        Box(modifier = Modifier.fillMaxWidth().height(34.dp)) {
-            HeaderButton(Icons.AutoMirrored.Filled.ArrowBack, Modifier.align(Alignment.CenterStart), onDismiss)
+        Box(modifier = Modifier.fillMaxWidth().height(48.dp)) {
+            HeaderButton(Icons.AutoMirrored.Filled.ArrowBack, colors, Modifier.align(Alignment.CenterStart), onDismiss)
             Text(
                 text = "Recording glows",
-                color = Color(RecordingGlowColors.TEXT),
+                color = colors.text,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.align(Alignment.Center)
             )
-            HeaderButton(Icons.Filled.Close, Modifier.align(Alignment.CenterEnd), onDismiss)
+            HeaderButton(Icons.Filled.Close, colors, Modifier.align(Alignment.CenterEnd), onDismiss)
         }
         Spacer(modifier = Modifier.height(8.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
@@ -120,7 +134,7 @@ fun RecordingGlowScreen(
                         .width(width)
                         .height(8.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(Color(if (current) RecordingGlowColors.ACCENT else RecordingGlowColors.DOT))
+                        .background(if (current) colors.accent else colors.dot)
                 )
             }
         }
@@ -129,7 +143,7 @@ fun RecordingGlowScreen(
             state = pagerState,
             contentPadding = PaddingValues(horizontal = 20.dp),
             pageSpacing = 12.dp,
-            modifier = Modifier.fillMaxWidth().height(190.dp)
+            modifier = Modifier.fillMaxWidth().height(230.dp)
         ) { page ->
             val pageStyle = RecordingGlowPreview.styleForPage(page)
             val active = activeChrome == pageStyle
@@ -141,12 +155,29 @@ fun RecordingGlowScreen(
                 }
             ) {
                 if (pageStyle == BubbleChromeStyle.ORIGINAL) {
-                    WordsBubblePreview(glowStyleId = resolved, tone = tone)
+                    FloatingDictationPopup(
+                        transcriptText = "",
+                        isRecording = false,
+                        isPendingFinalizing = false,
+                        isPolishing = false,
+                        audioAmplitude = 0f,
+                        glowStyleId = selectedStyleId,
+                        onCancelClick = {},
+                        onPolishClick = {},
+                        onCompleteClick = {},
+                        onLifebuoyClick = {},
+                        blankPreview = true
+                    )
                 } else {
-                    MiniBubblePreview(
-                        glowStyleId = resolved,
-                        tone = tone,
-                        animate = active
+                    CompactRecordingBar(
+                        elapsedSeconds = 0,
+                        appName = "App",
+                        glowStyleId = selectedStyleId,
+                        palette = palette,
+                        audioAmplitude = 0f,
+                        processing = false,
+                        onCancel = {},
+                        onComplete = {}
                     )
                 }
             }
@@ -154,6 +185,8 @@ fun RecordingGlowScreen(
         Spacer(modifier = Modifier.height(14.dp))
         WordsMiniSwitch(
             active = activeChrome,
+            rimColor = colors.rim,
+            trackColor = colors.track,
             onChoose = { chosen ->
                 token++
                 onChooseChrome(chosen)
@@ -163,14 +196,38 @@ fun RecordingGlowScreen(
             }
         )
         Spacer(modifier = Modifier.height(14.dp))
-        GlowModeControl(tone = tone, onChoose = { token++; onChooseTone(it) })
+        GlowModeControl(colors = colors, tone = tone, onChoose = { token++; onChooseTone(it) })
         Spacer(modifier = Modifier.height(16.dp))
+        val motion = rememberInfiniteTransition(label = "glowCards")
+        val phase1 by motion.animateFloat(
+            0f, (2f * PI).toFloat(),
+            infiniteRepeatable(tween(2600, easing = LinearEasing), RepeatMode.Restart),
+            label = "phase1"
+        )
+        val phase2 by motion.animateFloat(
+            (2f * PI).toFloat(), 0f,
+            infiniteRepeatable(tween(3600, easing = LinearEasing), RepeatMode.Restart),
+            label = "phase2"
+        )
+        val amplitude by motion.animateFloat(
+            0.18f, 0.85f,
+            infiniteRepeatable(tween(1400, easing = androidx.compose.animation.core.FastOutSlowInEasing), RepeatMode.Reverse),
+            label = "amp"
+        )
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            RecordingGlowList.glows.forEach { glow ->
-                val selected = glow.id == resolved
-                GlowRow(glow = glow, deep = tone == DynamicTonePolicy.DEEP, selected = selected) {
+            GlowAnimationCatalogue.styles.forEach { style ->
+                GlowRow(
+                    name = style.name,
+                    styleId = style.id,
+                    palette = palette,
+                    phase1 = phase1,
+                    phase2 = phase2,
+                    amplitude = amplitude,
+                    colors = colors,
+                    selected = style.id == selectedStyleId
+                ) {
                     token++
-                    onSelectStyle(glow.id)
+                    onSelectStyle(style.id)
                 }
             }
         }
@@ -178,16 +235,20 @@ fun RecordingGlowScreen(
 }
 
 @Composable
-private fun HeaderButton(icon: ImageVector, modifier: Modifier, onClick: () -> Unit) {
+private fun HeaderButton(icon: ImageVector, colors: GlowPageColors, modifier: Modifier, onClick: () -> Unit) {
     Box(
-        modifier = modifier
-            .size(34.dp)
-            .clip(CircleShape)
-            .background(Color(RecordingGlowColors.HEADER_FILL))
-            .clickable(onClick = onClick),
+        modifier = modifier.size(48.dp).clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Icon(icon, contentDescription = null, tint = Color(RecordingGlowColors.TEXT), modifier = Modifier.size(18.dp))
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(colors.header),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = colors.text, modifier = Modifier.size(20.dp))
+        }
     }
 }
 
@@ -216,29 +277,25 @@ private fun BubblePage(active: Boolean, onTap: () -> Unit, content: @Composable 
                         null
                     }
                 }
-                .then(
-                    if (active) {
-                        Modifier
-                            .shadow(12.dp, RoundedCornerShape(28.dp), spotColor = Color(RecordingGlowColors.ACCENT), ambientColor = Color(RecordingGlowColors.ACCENT))
-                            .border(2.dp, Color(RecordingGlowColors.ACCENT), RoundedCornerShape(28.dp))
-                            .padding(3.dp)
-                    } else Modifier
-                )
-                .clickable {
-                    scope.launch {
-                        pop.snapTo(0.95f)
-                        pop.animateTo(1f, tween(240))
-                    }
-                    onTap()
-                }
         ) {
             content()
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clickable {
+                        scope.launch {
+                            pop.snapTo(0.95f)
+                            pop.animateTo(1f, tween(240))
+                        }
+                        onTap()
+                    }
+            )
         }
     }
 }
 
 @Composable
-private fun GlowModeControl(tone: String, onChoose: (String) -> Unit) {
+private fun GlowModeControl(colors: GlowPageColors, tone: String, onChoose: (String) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Center
@@ -246,14 +303,14 @@ private fun GlowModeControl(tone: String, onChoose: (String) -> Unit) {
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(percent = 50))
-                .background(Color(RecordingGlowColors.MODE_TRACK))
+                .background(colors.modeTrack)
                 .padding(3.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            ModeOption("Luminous", Icons.Filled.WbSunny, tone == DynamicTonePolicy.LUMINOUS) {
+            ModeOption("Luminous", Icons.Filled.WbSunny, colors, tone == DynamicTonePolicy.LUMINOUS) {
                 onChoose(DynamicTonePolicy.LUMINOUS)
             }
-            ModeOption("Deep", Icons.Filled.DarkMode, tone == DynamicTonePolicy.DEEP) {
+            ModeOption("Deep", Icons.Filled.DarkMode, colors, tone == DynamicTonePolicy.DEEP) {
                 onChoose(DynamicTonePolicy.DEEP)
             }
         }
@@ -261,16 +318,16 @@ private fun GlowModeControl(tone: String, onChoose: (String) -> Unit) {
 }
 
 @Composable
-private fun ModeOption(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
+private fun ModeOption(label: String, icon: ImageVector, colors: GlowPageColors, selected: Boolean, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.96f else 1f, tween(150), label = "press")
     val fill by animateColorAsState(
-        if (selected) Color(RecordingGlowColors.ACCENT) else Color.Transparent,
+        if (selected) colors.accent else Color.Transparent,
         tween(200),
         label = "fill"
     )
-    val ink = if (selected) Color(RecordingGlowColors.ON_SELECTED) else Color(RecordingGlowColors.MODE_OFF)
+    val ink = if (selected) colors.onAccent else colors.modeOff
     Row(
         modifier = Modifier
             .heightIn(min = 48.dp)
@@ -289,32 +346,51 @@ private fun ModeOption(label: String, icon: ImageVector, selected: Boolean, onCl
 }
 
 @Composable
-private fun GlowRow(glow: RecordingGlow, deep: Boolean, selected: Boolean, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(20.dp)
+private fun GlowRow(
+    name: String,
+    styleId: String,
+    palette: com.princeniithompson.rapcha.ui.components.overlay.AuroraColorPalette,
+    phase1: Float,
+    phase2: Float,
+    amplitude: Float,
+    colors: GlowPageColors,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(16.dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 58.dp)
+            .height(84.dp)
             .clip(shape)
-            .background(Color(if (selected) RecordingGlowColors.ROW_ON else RecordingGlowColors.ROW))
-            .then(
-                if (selected) Modifier.border(1.5.dp, Color(RecordingGlowColors.ROW_RING), shape) else Modifier
-            )
+            .background(if (selected) colors.rowOn else colors.row)
+            .then(if (selected) Modifier.border(1.5.dp, colors.accent, shape) else Modifier)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(width = 54.dp, height = 42.dp)
-                .clip(RoundedCornerShape(13.dp))
-                .drawBehind { drawRect(glowBrush(glow, deep, size)) }
+                .size(width = 68.dp, height = 54.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF0F172A))
+                .drawBehind {
+                    renderGlowAnimation(
+                        styleId = styleId,
+                        palette = palette,
+                        effectiveAmp = amplitude,
+                        glowBrightness = if (selected) 0.90f else 0.65f,
+                        phase1 = phase1,
+                        phase2 = phase2
+                    )
+                }
         )
         Text(
-            text = glow.name,
-            color = Color(RecordingGlowColors.TEXT),
+            text = name,
+            color = if (selected) colors.accent else colors.text,
             fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+            maxLines = 1,
             modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
         )
         Box(
@@ -322,14 +398,67 @@ private fun GlowRow(glow: RecordingGlow, deep: Boolean, selected: Boolean, onCli
                 .size(24.dp)
                 .clip(CircleShape)
                 .then(
-                    if (selected) Modifier.background(Color(RecordingGlowColors.ACCENT))
-                    else Modifier.border(2.dp, Color(RecordingGlowColors.HOLLOW), CircleShape)
+                    if (selected) Modifier.background(colors.accent)
+                    else Modifier.border(1.5.dp, colors.dot, CircleShape)
                 ),
             contentAlignment = Alignment.Center
         ) {
             if (selected) {
-                Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                Icon(Icons.Filled.Check, contentDescription = null, tint = colors.onAccent, modifier = Modifier.size(15.dp))
             }
         }
+    }
+}
+
+private data class GlowPageColors(
+    val page: Color,
+    val text: Color,
+    val header: Color,
+    val dot: Color,
+    val accent: Color,
+    val onAccent: Color,
+    val modeTrack: Color,
+    val modeOff: Color,
+    val row: Color,
+    val rowOn: Color,
+    val rim: Color,
+    val track: Color
+)
+
+@Composable
+private fun rememberGlowPageColors(): GlowPageColors {
+    val scheme = MaterialTheme.colorScheme
+    val dynamic = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    fun Color.solid(): Color = copy(alpha = 1f)
+    return if (dynamic) {
+        GlowPageColors(
+            page = scheme.surface.solid(),
+            text = scheme.onSurface.solid(),
+            header = scheme.surfaceContainerHigh.solid(),
+            dot = scheme.outlineVariant.solid(),
+            accent = scheme.primary.solid(),
+            onAccent = scheme.onPrimary.solid(),
+            modeTrack = scheme.surfaceContainer.solid(),
+            modeOff = scheme.onSurface.solid(),
+            row = scheme.surfaceContainer.solid(),
+            rowOn = scheme.primaryContainer.solid(),
+            rim = scheme.surface.solid(),
+            track = scheme.primaryContainer.solid()
+        )
+    } else {
+        GlowPageColors(
+            page = Color(RecordingGlowColors.PAGE),
+            text = Color(RecordingGlowColors.TEXT),
+            header = Color(RecordingGlowColors.HEADER_FILL),
+            dot = Color(RecordingGlowColors.DOT),
+            accent = Color(RecordingGlowColors.ACCENT),
+            onAccent = Color(RecordingGlowColors.ON_SELECTED),
+            modeTrack = Color(RecordingGlowColors.MODE_TRACK),
+            modeOff = Color(RecordingGlowColors.MODE_OFF),
+            row = Color(RecordingGlowColors.ROW),
+            rowOn = Color(RecordingGlowColors.ROW_ON),
+            rim = Color(0xFFEEF6DC),
+            track = Color(0xFFB7D07A)
+        )
     }
 }

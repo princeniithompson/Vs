@@ -48,7 +48,9 @@ import com.princeniithompson.rapcha.service.floating.BubbleChromeStyle
 fun WordsMiniSwitch(
     active: BubbleChromeStyle,
     onChoose: (BubbleChromeStyle) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    rimColor: Color = Color(0xFFEEF6DC),
+    trackColor: Color = Color(0xFFB7D07A)
 ) {
     val wordsInteraction = remember { MutableInteractionSource() }
     val miniInteraction = remember { MutableInteractionSource() }
@@ -68,7 +70,7 @@ fun WordsMiniSwitch(
             .shadow(8.dp, rim, ambientColor = Color(0x33000000), spotColor = Color(0x33000000))
             .clip(rim)
             .drawBehind {
-                drawRect(Color(0xFFEEF6DC))
+                drawRect(rimColor)
                 drawLine(
                     color = Color.White,
                     start = Offset(0f, 1.dp.toPx()),
@@ -84,32 +86,7 @@ fun WordsMiniSwitch(
                 .height(60.dp)
                 .onSizeChanged { trackSize = it }
                 .clip(RoundedCornerShape(34.dp))
-                .drawBehind {
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            listOf(Color(0xFF93AE56), Color(0xFFB7D07A))
-                        )
-                    )
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            listOf(Color(0x800F2A0A), Color.Transparent)
-                        ),
-                        size = androidx.compose.ui.geometry.Size(size.width, 9.dp.toPx())
-                    )
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            listOf(Color.Transparent, Color(0x66FFFFFF))
-                        ),
-                        topLeft = Offset(0f, size.height - 8.dp.toPx()),
-                        size = androidx.compose.ui.geometry.Size(size.width, 8.dp.toPx())
-                    )
-                    drawRect(
-                        brush = Brush.horizontalGradient(
-                            listOf(Color(0x400F2A0A), Color.Transparent)
-                        ),
-                        size = androidx.compose.ui.geometry.Size(8.dp.toPx(), size.height)
-                    )
-                }
+                .drawBehind { drawRect(trackColor) }
         ) {
             if (trackSize.width > 0) {
                 val inset = 5.dp

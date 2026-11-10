@@ -68,24 +68,27 @@ class BubbleChromeTest {
     }
 
     @Test
-    fun `the screen lists five glows and retired ones become breathing horizon`() {
+    fun `the glow list restores all eight names and keeps a saved hidden glow`() {
         assertEquals(
             listOf(
                 "Breathing Horizon",
-                "Electric Sunburst",
                 "Sunset Mirage",
                 "Gentle Wave Slice",
-                "Flashlight Core"
+                "Flashlight Core",
+                "Electric Sunburst",
+                "Bioluminescent Shimmer",
+                "Liquid Specular Glass",
+                "Velvet Ambient Calm"
             ),
-            RecordingGlowList.names
+            GlowAnimationCatalogue.styles.map { it.name }
         )
-        assertEquals("breathing_horizon", RecordingGlowList.resolve("breathing_horizon"))
-        assertEquals("breathing_horizon", RecordingGlowList.resolve("bioluminescent_deep"))
-        assertEquals("breathing_horizon", RecordingGlowList.resolve("liquid_glass"))
-        assertEquals("breathing_horizon", RecordingGlowList.resolve("velvet_aura"))
+        assertFalse(GlowAnimationCatalogue.styles.any { it.name.contains("Mobile", ignoreCase = true) })
+        assertFalse(GlowAnimationCatalogue.styles.any { it.name.contains("Beacon") })
+        assertEquals("bioluminescent_deep", RecordingGlowList.resolve("bioluminescent_deep"))
+        assertEquals("liquid_glass", RecordingGlowList.resolve("liquid_glass"))
+        assertEquals("velvet_aura", RecordingGlowList.resolve("velvet_aura"))
         assertEquals("electric_sunburst", RecordingGlowList.resolve("electric_sunburst"))
         assertEquals(listOf("Cancel", "Polish"), WordsBubblePreviewSpec.labels)
-        assertEquals("Flashlight Core", GlowAnimationCatalogue.getById("pulsing_spotlight").name)
     }
 
     @Test
