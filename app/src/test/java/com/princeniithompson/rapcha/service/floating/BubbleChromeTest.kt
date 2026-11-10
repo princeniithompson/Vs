@@ -1,6 +1,7 @@
 package com.princeniithompson.rapcha.service.floating
 
 import com.princeniithompson.rapcha.ui.components.GlowAnimationCatalogue
+import com.princeniithompson.rapcha.ui.components.WordsBubblePreviewSpec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -8,20 +9,73 @@ import org.junit.Test
 
 class BubbleChromeTest {
     @Test
-    fun `style stays original until the active button is pressed`() {
+    fun `words and mini map onto the existing bubble style and older values still load`() {
         assertEquals(BubbleChromeStyle.ORIGINAL, BubbleChromeStyle.fromStored(null))
+        assertEquals("words", BubbleChromeStyle.ORIGINAL.stored())
+        assertEquals("mini", BubbleChromeStyle.COMPACT.stored())
+        assertEquals(BubbleChromeStyle.ORIGINAL, BubbleChromeStyle.fromStored("words"))
         assertEquals(BubbleChromeStyle.ORIGINAL, BubbleChromeStyle.fromStored("original"))
+        assertEquals(BubbleChromeStyle.COMPACT, BubbleChromeStyle.fromStored("mini"))
         assertEquals(BubbleChromeStyle.COMPACT, BubbleChromeStyle.fromStored("compact"))
-        val current = BubbleChromeStyle.ORIGINAL
-        assertEquals(current, RecordingGlowPreview.styleAfterPreview(current, page = 1, buttonPressed = false))
+        assertEquals(DynamicTonePolicy.LUMINOUS, DynamicTonePolicy.normalize(null))
+        assertEquals(GlowAnimationCatalogue.DEFAULT_ID, "breathing_horizon")
+    }
+
+    @Test
+    fun `auto scroll and swipes never change the active bubble`() {
+        val words = BubbleChromeStyle.ORIGINAL
+        val mini = BubbleChromeStyle.COMPACT
+        assertEquals(words, RecordingGlowPreview.styleAfterPreview(words, page = 1, explicitChoice = false))
+        assertEquals(mini, RecordingGlowPreview.styleAfterPreview(mini, page = 0, explicitChoice = false))
+        var page = 0
+        var active = words
+        repeat(4) {
+            page = RecordingGlowPreview.nextPage(page)
+            active = RecordingGlowPreview.styleAfterPreview(active, page, explicitChoice = false)
+        }
+        assertEquals(words, active)
+        assertEquals(mini, RecordingGlowPreview.styleAfterPreview(words, page = 1, explicitChoice = true))
+        assertEquals(words, RecordingGlowPreview.styleForPage(0))
+        assertEquals(mini, RecordingGlowPreview.styleForPage(1))
+    }
+
+    @Test
+    fun `luminous and deep colors are opaque`() {
+        listOf(
+            GlowModePaint.LUMINOUS,
+            GlowModePaint.DEEP,
+            GlowModePaint.IDLE,
+            GlowModePaint.ON_SELECTED,
+            GlowModePaint.ON_IDLE,
+            GlowModePaint.chip(selected = true, DynamicTonePolicy.LUMINOUS),
+            GlowModePaint.chip(selected = true, DynamicTonePolicy.DEEP),
+            GlowModePaint.chip(selected = false, DynamicTonePolicy.LUMINOUS),
+            GlowModePaint.label(selected = true),
+            GlowModePaint.label(selected = false)
+        ).forEach { color ->
+            assertTrue(GlowModePaint.isOpaque(color))
+        }
+        val washed = 0x4034D399
+        assertTrue(GlowModePaint.isOpaque(GlowModePaint.opaque(washed)))
+        assertEquals(0xFF34D399.toInt(), GlowModePaint.opaque(washed))
+    }
+
+    @Test
+    fun `glow list keeps its names in catalogue order and the words bubble stays blank`() {
         assertEquals(
-            BubbleChromeStyle.COMPACT,
-            RecordingGlowPreview.styleAfterPreview(current, page = 1, buttonPressed = true)
+            listOf(
+                "Breathing Horizon",
+                "Sunset Mirage",
+                "Gentle Wave Slice",
+                "Flashlight Core Beacon",
+                "Electric Sunburst",
+                "Bioluminescent Shimmer",
+                "Liquid Specular Glass",
+                "Velvet Ambient Calm"
+            ),
+            GlowAnimationCatalogue.styles.map { it.name }
         )
-        assertEquals(
-            BubbleChromeStyle.ORIGINAL,
-            RecordingGlowPreview.styleAfterPreview(BubbleChromeStyle.COMPACT, page = 0, buttonPressed = true)
-        )
+        assertEquals(listOf("Cancel", "Polish"), WordsBubblePreviewSpec.labels)
     }
 
     @Test

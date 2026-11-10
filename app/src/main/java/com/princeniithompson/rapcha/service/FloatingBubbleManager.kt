@@ -199,9 +199,12 @@ object FloatingBubbleManager {
             prefs.edit().putString(KEY_COLOR_TONE, tone).apply()
         }
         _selectedColorTone.value = tone
-        _bubbleChrome.value = com.princeniithompson.rapcha.service.floating.BubbleChromeStyle.fromStored(
-            prefs.getString(KEY_BUBBLE_CHROME, null)
-        )
+        val storedChrome = prefs.getString(KEY_BUBBLE_CHROME, null)
+        val chrome = com.princeniithompson.rapcha.service.floating.BubbleChromeStyle.fromStored(storedChrome)
+        if (storedChrome != chrome.stored()) {
+            prefs.edit().putString(KEY_BUBBLE_CHROME, chrome.stored()).apply()
+        }
+        _bubbleChrome.value = chrome
         _isSmartSafeModeEnabled.value = prefs.getBoolean(KEY_SMART_SAFE_MODE, true)
         _isAppDynamicColorEnabled.value = true
         if (!prefs.getBoolean(KEY_APP_DYNAMIC_COLOR, true)) {

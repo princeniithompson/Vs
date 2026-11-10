@@ -1,8 +1,9 @@
 package com.princeniithompson.rapcha.service.floating
 
 /**
- * Global recording chrome. Original stays the default until the user taps
- * Select as active on the compact page. Swiping the preview does not switch it.
+ * Global recording chrome. Words is the original bubble. Mini is the compact bubble.
+ * The saved value lives in the existing bubble_chrome_style preference.
+ * Older "original" and "compact" values still load.
  *
  * Compact sizes are taken from the phone screenshot at about 2.6 px/dp.
  * Cancel 47dp, pill 90×47dp with a 23.5dp corner, Complete 47dp, gaps 6dp.
@@ -11,11 +12,20 @@ enum class BubbleChromeStyle {
     ORIGINAL,
     COMPACT;
 
-    fun stored(): String = name.lowercase()
+    /** Persisted activeContainer. words is original, mini is compact. */
+    fun stored(): String = if (this == COMPACT) MINI else WORDS
+
+    fun activeContainer(): String = stored()
 
     companion object {
+        const val WORDS = "words"
+        const val MINI = "mini"
+
         fun fromStored(value: String?): BubbleChromeStyle {
-            return if (value.equals(COMPACT.stored(), ignoreCase = true)) COMPACT else ORIGINAL
+            return when (value?.lowercase()) {
+                MINI, "compact" -> COMPACT
+                else -> ORIGINAL
+            }
         }
     }
 }
@@ -67,11 +77,41 @@ object RecordingGlowPreview {
         return idle && !userInteracting && onScreen
     }
 
-    /** Only an explicit button press changes the saved style. */
-    fun styleAfterPreview(current: BubbleChromeStyle, page: Int, buttonPressed: Boolean): BubbleChromeStyle {
-        if (!buttonPressed) return current
+    fun styleForPage(page: Int): BubbleChromeStyle {
         return if (page == 0) BubbleChromeStyle.ORIGINAL else BubbleChromeStyle.COMPACT
     }
+
+    /**
+     * Moving the preview, including the 19-second auto-scroll and a swipe,
+     * never changes the saved bubble. Only an explicit choice does.
+     */
+    fun styleAfterPreview(current: BubbleChromeStyle, page: Int, explicitChoice: Boolean): BubbleChromeStyle {
+        if (!explicitChoice) return current
+        return styleForPage(page)
+    }
+}
+
+/**
+ * Opaque fills for the Luminous and Deep controls. None of these carry alpha.
+ */
+object GlowModePaint {
+    const val LUMINOUS = 0xFF34D399.toInt()
+    const val DEEP = 0xFF065F46.toInt()
+    const val IDLE = 0xFFD1FAE5.toInt()
+    const val ON_SELECTED = 0xFFFFFFFF.toInt()
+    const val ON_IDLE = 0xFF064E3B.toInt()
+
+    fun chip(selected: Boolean, mode: String): Int {
+        if (!selected) return IDLE
+        return if (mode == DynamicTonePolicy.DEEP) DEEP else LUMINOUS
+    }
+
+    fun label(selected: Boolean): Int = if (selected) ON_SELECTED else ON_IDLE
+
+    fun isOpaque(argb: Int): Boolean = argb ushr 24 == 0xFF
+
+    /** Forces a full alpha byte so a tone chip cannot be drawn translucent. */
+    fun opaque(argb: Int): Int = argb or 0xFF000000.toInt()
 }
 
 object DynamicTonePolicy {

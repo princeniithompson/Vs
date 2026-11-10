@@ -1,12 +1,5 @@
 package com.princeniithompson.rapcha.ui.components
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,21 +18,16 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,11 +35,12 @@ import androidx.compose.ui.unit.sp
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
 import com.princeniithompson.rapcha.service.floating.BubbleChromeStyle
 import com.princeniithompson.rapcha.service.floating.DynamicTonePolicy
+import com.princeniithompson.rapcha.service.floating.GlowModePaint
 import com.princeniithompson.rapcha.service.floating.RecordingGlowPreview
+import androidx.compose.runtime.remember
 import com.princeniithompson.rapcha.ui.components.overlay.CompactRecordingBar
 import com.princeniithompson.rapcha.ui.components.overlay.getDynamicTonePalette
 import com.princeniithompson.rapcha.ui.components.overlay.rememberDynamicAuroraPalette
-import kotlin.math.PI
 
 @Composable
 fun RecordingGlowCustomization(
@@ -63,37 +52,22 @@ fun RecordingGlowCustomization(
     val palette = rememberDynamicAuroraPalette()
     val tone by FloatingBubbleManager.selectedColorTone.collectAsState()
     val pagerState = rememberPagerState(pageCount = { RecordingGlowPreview.PAGE_COUNT })
-    var nudge by remember { mutableIntStateOf(0) }
-    LaunchedEffect(pagerState.settledPage, nudge, idle) {
+    LaunchedEffect(pagerState.settledPage, idle) {
         if (!RecordingGlowPreview.shouldAutoAdvance(idle, userInteracting = false, onScreen = true)) return@LaunchedEffect
         kotlinx.coroutines.delay(RecordingGlowPreview.IDLE_PAGE_MS)
         if (!pagerState.isScrollInProgress && idle) {
             pagerState.animateScrollToPage(RecordingGlowPreview.nextPage(pagerState.settledPage))
         }
     }
-    val motion = rememberInfiniteTransition(label = "glowPreview")
-    val phase1 by motion.animateFloat(
-        0f,
-        (2f * PI).toFloat(),
-        infiniteRepeatable(tween(2600, easing = LinearEasing), RepeatMode.Restart),
-        label = "a"
-    )
-    val phase2 by motion.animateFloat(
-        (2f * PI).toFloat(),
-        0f,
-        infiniteRepeatable(tween(3600, easing = LinearEasing), RepeatMode.Restart),
-        label = "b"
-    )
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         HorizontalPager(
             state = pagerState,
             contentPadding = PaddingValues(horizontal = 4.dp),
             pageSpacing = 10.dp,
-            modifier = Modifier.fillMaxWidth().height(250.dp)
+            modifier = Modifier.fillMaxWidth().height(200.dp)
         ) { page ->
-            val pageStyle = if (page == 0) BubbleChromeStyle.ORIGINAL else BubbleChromeStyle.COMPACT
-            val active = activeChrome == pageStyle
-            Column {
+            val pageStyle = RecordingGlowPreview.styleForPage(page)
+            Box(modifier = Modifier.fillMaxSize()) {
                 if (pageStyle == BubbleChromeStyle.ORIGINAL) {
                     Box(
                         modifier = Modifier.fillMaxWidth().height(190.dp),
@@ -108,7 +82,7 @@ fun RecordingGlowCustomization(
                             .height(190.dp)
                             .clip(RoundedCornerShape(22.dp))
                             .background(Color(0xFF101418))
-                            .border(1.dp, palette.primaryVibrant.copy(alpha = 0.35f), RoundedCornerShape(22.dp)),
+                            .border(1.dp, Color(GlowModePaint.LUMINOUS), RoundedCornerShape(22.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         CompactRecordingBar(
@@ -122,34 +96,22 @@ fun RecordingGlowCustomization(
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(8.dp))
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(42.dp)
-                        .clip(RoundedCornerShape(21.dp))
-                        .background(if (active) palette.primaryVibrant else palette.primary.copy(alpha = 0.16f))
+                        .fillMaxSize()
                         .clickable {
-                            nudge += 1
-                            val next = RecordingGlowPreview.styleAfterPreview(activeChrome, page, buttonPressed = true)
-                            FloatingBubbleManager.setBubbleChrome(context, next)
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (active) {
-                            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.size(6.dp))
+                            FloatingBubbleManager.setBubbleChrome(context, pageStyle)
                         }
-                        Text(
-                            text = if (active) "Active" else "Select as active",
-                            color = if (active) Color.White else palette.deep,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
+                )
             }
         }
+        Spacer(modifier = Modifier.height(8.dp))
+        WordsMiniSwitch(
+            active = activeChrome,
+            onChoose = { chosen ->
+                FloatingBubbleManager.setBubbleChrome(context, chosen)
+            }
+        )
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             horizontalArrangement = Arrangement.Center
@@ -161,7 +123,7 @@ fun RecordingGlowCustomization(
                         .padding(horizontal = 4.dp)
                         .size(if (on) 8.dp else 6.dp)
                         .clip(CircleShape)
-                        .background(if (on) palette.primaryVibrant else palette.primary.copy(alpha = 0.35f))
+                        .background(if (on) Color(GlowModePaint.DEEP) else Color(GlowModePaint.LUMINOUS))
                 )
             }
         }
@@ -170,21 +132,20 @@ fun RecordingGlowCustomization(
             listOf(DynamicTonePolicy.LUMINOUS to "Luminous", DynamicTonePolicy.DEEP to "Deep").forEach { (id, label) ->
                 val selected = tone == id
                 val swatch = remember(id) { getDynamicTonePalette(context, id) }
+                val fill = if (selected) swatch.primaryVibrant else swatch.primary
+                val ink = if (selected) Color(GlowModePaint.ON_SELECTED) else swatch.deep
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(36.dp)
                         .clip(RoundedCornerShape(18.dp))
-                        .background(if (selected) swatch.primaryVibrant else swatch.primary.copy(alpha = 0.2f))
-                        .clickable {
-                            nudge += 1
-                            FloatingBubbleManager.setColorTone(context, id)
-                        },
+                        .background(Color(GlowModePaint.opaque(fill.toArgb())))
+                        .clickable { FloatingBubbleManager.setColorTone(context, id) },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         label,
-                        color = if (selected) Color.White else swatch.deep,
+                        color = Color(GlowModePaint.opaque(ink.toArgb())),
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp
                     )
