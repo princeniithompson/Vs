@@ -1,8 +1,8 @@
 package com.princeniithompson.rapcha.service.floating
 
 /**
- * Which bubble actions are on screen.
- * Live two-step hides Complete. Polish is the only forward action, and its label stays Polish.
+ * The recording chrome shows Cancel and Complete.
+ * Complete runs the locked section's existing finish. There is no manual Polish button.
  */
 enum class BubbleAction {
     CANCEL,
@@ -20,28 +20,16 @@ data class BubbleActionPlan(
         get() = BubbleAction.COMPLETE in actions
 
     companion object {
+        @Suppress("UNUSED_PARAMETER")
         fun resolve(
             liveTwoStep: Boolean,
             polishing: Boolean,
             isAiApp: Boolean,
             optimizePrompt: Boolean
         ): BubbleActionPlan {
-            if (liveTwoStep) {
-                return BubbleActionPlan(
-                    actions = listOf(BubbleAction.CANCEL, BubbleAction.POLISH),
-                    polishLabel = if (polishing) "Polishing..." else "Polish",
-                    polishIsPrimary = true
-                )
-            }
-            val label = when {
-                polishing -> "Polishing..."
-                !isAiApp -> "Polish"
-                optimizePrompt -> "Optimize"
-                else -> "Clean"
-            }
             return BubbleActionPlan(
-                actions = listOf(BubbleAction.CANCEL, BubbleAction.POLISH, BubbleAction.COMPLETE),
-                polishLabel = label,
+                actions = listOf(BubbleAction.CANCEL, BubbleAction.COMPLETE),
+                polishLabel = "Complete",
                 polishIsPrimary = false
             )
         }

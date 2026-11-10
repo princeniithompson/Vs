@@ -18,18 +18,18 @@ import org.robolectric.annotation.Config
 class LiveTwoStepFollowUpTest {
 
     @Test
-    fun `live two-step shows cancel and polish only and the label is polish`() {
+    fun `recording chrome is cancel and complete for live and one-step`() {
         val on = BubbleActionPlan.resolve(
             liveTwoStep = true,
             polishing = false,
             isAiApp = true,
             optimizePrompt = true
         )
-        assertEquals(listOf(BubbleAction.CANCEL, BubbleAction.POLISH), on.actions)
-        assertFalse(on.showsComplete)
-        assertEquals("Polish", on.polishLabel)
-        assertTrue(on.polishIsPrimary)
-        assertFalse(on.polishLabel.equals("Publish", ignoreCase = true))
+        assertEquals(listOf(BubbleAction.CANCEL, BubbleAction.COMPLETE), on.actions)
+        assertTrue(on.showsComplete)
+        assertFalse(on.actions.contains(BubbleAction.POLISH))
+        assertTrue(CompleteActionRoute.usesLiveFinish(true))
+        assertFalse(CompleteActionRoute.usesLiveFinish(false))
 
         val busy = BubbleActionPlan.resolve(
             liveTwoStep = true,
@@ -37,8 +37,7 @@ class LiveTwoStepFollowUpTest {
             isAiApp = false,
             optimizePrompt = false
         )
-        assertEquals("Polishing...", busy.polishLabel)
-        assertFalse(busy.showsComplete)
+        assertEquals(listOf(BubbleAction.CANCEL, BubbleAction.COMPLETE), busy.actions)
     }
 
     @Test
@@ -135,36 +134,22 @@ class LiveTwoStepFollowUpTest {
     }
 
     @Test
-    fun `two-step off restores cancel polish and complete`() {
+    fun `one-step also shows only cancel and complete`() {
         val messaging = BubbleActionPlan.resolve(
             liveTwoStep = false,
             polishing = false,
             isAiApp = false,
             optimizePrompt = false
         )
-        assertEquals(
-            listOf(BubbleAction.CANCEL, BubbleAction.POLISH, BubbleAction.COMPLETE),
-            messaging.actions
-        )
-        assertEquals("Polish", messaging.polishLabel)
-        assertFalse(messaging.polishIsPrimary)
-
+        assertEquals(listOf(BubbleAction.CANCEL, BubbleAction.COMPLETE), messaging.actions)
+        assertFalse(messaging.actions.contains(BubbleAction.POLISH))
         val optimize = BubbleActionPlan.resolve(
             liveTwoStep = false,
             polishing = false,
             isAiApp = true,
             optimizePrompt = true
         )
-        assertTrue(optimize.showsComplete)
-        assertEquals("Optimize", optimize.polishLabel)
-
-        val clean = BubbleActionPlan.resolve(
-            liveTwoStep = false,
-            polishing = false,
-            isAiApp = true,
-            optimizePrompt = false
-        )
-        assertEquals("Clean", clean.polishLabel)
+        assertEquals(listOf(BubbleAction.CANCEL, BubbleAction.COMPLETE), optimize.actions)
     }
 
     @Test

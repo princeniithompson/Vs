@@ -285,7 +285,7 @@ private fun TopCarouselSection(viewModel: VoiceTypingViewModel) {
     // Automatic scrolling every 19 seconds when idle - key on settledPage so animation is never cancelled mid-scroll
     LaunchedEffect(hasActiveTranscription, pagerState.settledPage) {
         if (!hasActiveTranscription) {
-            delay(19_000L) // 19 good seconds
+            delay(com.princeniithompson.rapcha.service.floating.RecordingGlowPreview.IDLE_PAGE_MS)
             if (!hasActiveTranscription && !pagerState.isScrollInProgress) {
                 val nextPage = (pagerState.settledPage + 1) % totalPages
                 pagerState.animateScrollToPage(

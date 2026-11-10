@@ -240,7 +240,10 @@ class FloatingBubbleService : Service() {
                     }
                 }
             },
-            onDurationTicked = { _ ->
+            onDurationTicked = { seconds ->
+                if (::overlayWindowManager.isInitialized) {
+                    overlayWindowManager.overlayElapsedSeconds.value = seconds
+                }
                 if (sessionManager.isRecording &&
                     (FloatingBubbleManager.isNetworkProblem.value || offlineRetry.isSticky())
                 ) {
@@ -281,7 +284,15 @@ class FloatingBubbleService : Service() {
                 onRingClick = { onRingClicked() },
                 onCancelClick = { onCancelClicked() },
                 onPolishClick = { onPolishClicked() },
-            onCompleteClick = { onConfirmClicked() }
+            onCompleteClick = {
+                val twoStep = FloatingBubbleManager.lockedPolishSection.value?.mode ==
+                    com.princeniithompson.rapcha.service.floating.SectionPolishMode.TWO_STEP_LIVE
+                if (com.princeniithompson.rapcha.service.floating.CompleteActionRoute.usesLiveFinish(twoStep)) {
+                    onPolishClicked()
+                } else {
+                    onConfirmClicked()
+                }
+            }
         )
         offlineRetry.restorePending(this)
         RetryClipStore.currentId()?.let { clipId ->

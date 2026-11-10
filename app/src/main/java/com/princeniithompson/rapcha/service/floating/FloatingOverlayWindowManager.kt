@@ -67,6 +67,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
     val overlayPreviewPhase = MutableStateFlow(com.princeniithompson.rapcha.websocket.InterimPreviewMonitor.Phase.LISTENING)
     val overlayPolishingMessage = MutableStateFlow<String?>(null)
     val overlayRecording = MutableStateFlow(false)
+    val overlayElapsedSeconds = MutableStateFlow(0)
     val overlayPendingFinalizing = MutableStateFlow(false)
     val overlayPolishing = MutableStateFlow(false)
     val overlayExpanded = MutableStateFlow(false)
@@ -154,6 +155,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
                 val scanOriginX by overlayScanOriginX.collectAsState()
                 val scanOriginY by overlayScanOriginY.collectAsState()
                 val isContextLoaded by ScreenContextRepository.isContextLoaded.collectAsState()
+                val elapsedSeconds by overlayElapsedSeconds.collectAsState()
                 val selectedGlowStyleId by FloatingBubbleManager.selectedGlowStyleId.collectAsState()
                 val selectedFinishingStyleId by FloatingBubbleManager.selectedFinishingStyleId.collectAsState()
                 val isCurrentAppSensitive by FloatingBubbleManager.isCurrentAppSensitive.collectAsState()
@@ -174,6 +176,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
                     isSnappedToRight = dragSnapHandler.isSnappedToRight,
                     isContextLoaded = isContextLoaded,
                     selectedGlowStyleId = selectedGlowStyleId,
+                    elapsedSeconds = elapsedSeconds,
                     selectedFinishingStyleId = selectedFinishingStyleId,
                     isCurrentAppSensitive = isCurrentAppSensitive,
                     onRingClick = onRingClick,
@@ -281,11 +284,30 @@ class FloatingOverlayWindowManager(private val context: Context) {
         val topY = (36 * density).toInt()
         val maxY = (screenHeight - (320 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
 
-        lp.width = WindowManager.LayoutParams.MATCH_PARENT
-        lp.height = WindowManager.LayoutParams.WRAP_CONTENT
+        val compact = FloatingBubbleManager.bubbleChrome.value ==
+            com.princeniithompson.rapcha.service.floating.BubbleChromeStyle.COMPACT
+        if (compact) {
+            val rowWidth = (
+                com.princeniithompson.rapcha.service.floating.BubbleChromeGeometry.CANCEL_DP +
+                    com.princeniithompson.rapcha.service.floating.BubbleChromeGeometry.GAP_DP +
+                    com.princeniithompson.rapcha.service.floating.BubbleChromeGeometry.PILL_WIDTH_DP +
+                    com.princeniithompson.rapcha.service.floating.BubbleChromeGeometry.GAP_DP +
+                    com.princeniithompson.rapcha.service.floating.BubbleChromeGeometry.COMPLETE_DP +
+                    16
+                ) * density
+            lp.width = rowWidth.toInt()
+            lp.height = WindowManager.LayoutParams.WRAP_CONTENT
+        } else {
+            lp.width = WindowManager.LayoutParams.MATCH_PARENT
+            lp.height = WindowManager.LayoutParams.WRAP_CONTENT
+        }
         lp.gravity = Gravity.TOP or Gravity.START
         lp.flags = OVERLAY_WINDOW_FLAGS
-        lp.x = 0
+        lp.x = if (compact && dragSnapHandler.isSnappedToRight) {
+            (displayMetrics.widthPixels - lp.width).coerceAtLeast(0)
+        } else {
+            0
+        }
         lp.y = dragSnapHandler.savedY.coerceIn(topY, maxY)
 
         try {

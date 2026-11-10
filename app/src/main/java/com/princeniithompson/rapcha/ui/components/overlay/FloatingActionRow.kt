@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.princeniithompson.rapcha.service.AppContextResolver
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
+import com.princeniithompson.rapcha.service.floating.BubbleAction
 import com.princeniithompson.rapcha.service.floating.BubbleActionPlan
 import com.princeniithompson.rapcha.service.floating.OfflineRetryRules
 
@@ -203,7 +204,7 @@ fun FloatingActionRow(
                 Color(0xFFE2E8F0)
             }
 
-            PillActionButton(
+            if (BubbleAction.POLISH in actionPlan.actions) PillActionButton(
                 onClick = onPolishClick,
                 backgroundColor = polishBackground,
                 borderColor = polishBorder,

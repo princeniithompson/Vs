@@ -30,7 +30,7 @@ data class AuroraColorPalette(
 fun getDynamicTonePalette(context: Context, toneId: String): AuroraColorPalette {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         try {
-            when (toneId) {
+            when (com.princeniithompson.rapcha.service.floating.DynamicTonePolicy.normalize(toneId)) {
                 "deep" -> {
                     val c500 = ContextCompat.getColor(context, android.R.color.system_accent1_500)
                     val c600 = ContextCompat.getColor(context, android.R.color.system_accent1_600)
@@ -90,7 +90,7 @@ fun getDynamicTonePalette(context: Context, toneId: String): AuroraColorPalette 
             }
         } catch (e: Throwable) {
             val darkDyn = dynamicDarkColorScheme(context)
-            return when (toneId) {
+            return when (com.princeniithompson.rapcha.service.floating.DynamicTonePolicy.normalize(toneId)) {
                 "deep" -> AuroraColorPalette(
                     primary = darkDyn.primaryContainer,
                     primaryLight = darkDyn.primary,
@@ -122,7 +122,7 @@ fun getDynamicTonePalette(context: Context, toneId: String): AuroraColorPalette 
             }
         }
     } else {
-        return when (toneId) {
+        return when (com.princeniithompson.rapcha.service.floating.DynamicTonePolicy.normalize(toneId)) {
             "deep" -> AuroraColorPalette(
                 primary = Color(0xFF065F46),
                 primaryLight = Color(0xFF047857),

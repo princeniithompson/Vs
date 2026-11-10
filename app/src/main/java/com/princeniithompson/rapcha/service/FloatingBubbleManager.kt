@@ -35,6 +35,7 @@ object FloatingBubbleManager {
     private const val KEY_COLOR_TONE = "dynamic_color_tone"
     private const val KEY_SMART_SAFE_MODE = "smart_safe_mode_enabled"
     private const val KEY_APP_DYNAMIC_COLOR = "app_dynamic_color_enabled"
+    private const val KEY_BUBBLE_CHROME = "bubble_chrome_style"
     const val DEFAULT_GLOW_STYLE_ID = "breathing_horizon"
     const val DEFAULT_FINISHING_STYLE_ID = "pixel_flourish"
     const val DEFAULT_COLOR_TONE = "luminous"
@@ -59,6 +60,9 @@ object FloatingBubbleManager {
 
     private val _selectedColorTone = MutableStateFlow(DEFAULT_COLOR_TONE)
     val selectedColorTone: StateFlow<String> = _selectedColorTone.asStateFlow()
+
+    private val _bubbleChrome = MutableStateFlow(com.princeniithompson.rapcha.service.floating.BubbleChromeStyle.ORIGINAL)
+    val bubbleChrome: StateFlow<com.princeniithompson.rapcha.service.floating.BubbleChromeStyle> = _bubbleChrome.asStateFlow()
 
     // Foreground package tracking & session locking:
     private val _currentForegroundPackage = MutableStateFlow<String?>(null)
@@ -189,9 +193,20 @@ object FloatingBubbleManager {
         _selectedGlowStyleId.value = validatedGlowStyle
 
         _selectedFinishingStyleId.value = prefs.getString(KEY_FINISHING_STYLE, DEFAULT_FINISHING_STYLE_ID) ?: DEFAULT_FINISHING_STYLE_ID
-        _selectedColorTone.value = prefs.getString(KEY_COLOR_TONE, DEFAULT_COLOR_TONE) ?: DEFAULT_COLOR_TONE
+        val storedTone = prefs.getString(KEY_COLOR_TONE, DEFAULT_COLOR_TONE)
+        val tone = com.princeniithompson.rapcha.service.floating.DynamicTonePolicy.normalize(storedTone)
+        if (tone != storedTone) {
+            prefs.edit().putString(KEY_COLOR_TONE, tone).apply()
+        }
+        _selectedColorTone.value = tone
+        _bubbleChrome.value = com.princeniithompson.rapcha.service.floating.BubbleChromeStyle.fromStored(
+            prefs.getString(KEY_BUBBLE_CHROME, null)
+        )
         _isSmartSafeModeEnabled.value = prefs.getBoolean(KEY_SMART_SAFE_MODE, true)
-        _isAppDynamicColorEnabled.value = prefs.getBoolean(KEY_APP_DYNAMIC_COLOR, true)
+        _isAppDynamicColorEnabled.value = true
+        if (!prefs.getBoolean(KEY_APP_DYNAMIC_COLOR, true)) {
+            prefs.edit().putBoolean(KEY_APP_DYNAMIC_COLOR, true).apply()
+        }
         initialized = true
         checkPermissions(context)
 
@@ -238,9 +253,16 @@ object FloatingBubbleManager {
     }
 
     fun setColorTone(context: Context, toneId: String) {
-        _selectedColorTone.value = toneId
+        val tone = com.princeniithompson.rapcha.service.floating.DynamicTonePolicy.normalize(toneId)
+        _selectedColorTone.value = tone
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_COLOR_TONE, toneId).apply()
+        prefs.edit().putString(KEY_COLOR_TONE, tone).apply()
+    }
+
+    fun setBubbleChrome(context: Context, style: com.princeniithompson.rapcha.service.floating.BubbleChromeStyle) {
+        _bubbleChrome.value = style
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_BUBBLE_CHROME, style.stored()).apply()
     }
 
     fun setGlowStyle(context: Context, styleId: String) {
