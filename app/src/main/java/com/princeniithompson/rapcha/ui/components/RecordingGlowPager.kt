@@ -49,7 +49,6 @@ import com.princeniithompson.rapcha.service.floating.BubbleChromeStyle
 import com.princeniithompson.rapcha.service.floating.DynamicTonePolicy
 import com.princeniithompson.rapcha.service.floating.RecordingGlowPreview
 import com.princeniithompson.rapcha.ui.components.overlay.CompactRecordingBar
-import com.princeniithompson.rapcha.ui.components.FloatingDictationPopup
 import com.princeniithompson.rapcha.ui.components.overlay.getDynamicTonePalette
 import com.princeniithompson.rapcha.ui.components.overlay.rememberDynamicAuroraPalette
 import kotlin.math.PI
@@ -95,32 +94,23 @@ fun RecordingGlowCustomization(
             val pageStyle = if (page == 0) BubbleChromeStyle.ORIGINAL else BubbleChromeStyle.COMPACT
             val active = activeChrome == pageStyle
             Column {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(190.dp)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(
-                            if (pageStyle == BubbleChromeStyle.COMPACT) Color(0xFF101418)
-                            else palette.primary.copy(alpha = 0.18f)
-                        )
-                        .border(1.dp, palette.primaryVibrant.copy(alpha = 0.35f), RoundedCornerShape(22.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (pageStyle == BubbleChromeStyle.ORIGINAL) {
-                        FloatingDictationPopup(
-                            transcriptText = "floating bubble looks like. So currently, I would like you to look at the current uploaded image.",
-                            isRecording = true,
-                            isPendingFinalizing = false,
-                            isPolishing = false,
-                            audioAmplitude = 0.55f,
-                            glowStyleId = selectedStyleId,
-                            onCancelClick = {},
-                            onPolishClick = {},
-                            onCompleteClick = {},
-                            onLifebuoyClick = {}
-                        )
-                    } else {
+                if (pageStyle == BubbleChromeStyle.ORIGINAL) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(190.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        WordsBubblePreview(glowStyleId = selectedStyleId)
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(190.dp)
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(Color(0xFF101418))
+                            .border(1.dp, palette.primaryVibrant.copy(alpha = 0.35f), RoundedCornerShape(22.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
                         CompactRecordingBar(
                             elapsedSeconds = 3,
                             appName = "App",
