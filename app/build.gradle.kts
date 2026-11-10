@@ -16,8 +16,8 @@ android {
     applicationId = "com.princeniithompson.rapcha"
     minSdk = 24
     targetSdk = 36
-    versionCode = 18
-    versionName = "bubble-redesign-18"
+    versionCode = 19
+    versionName = "bubble-redesign-19"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

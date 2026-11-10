@@ -81,6 +81,8 @@ object RecordingGlowPreview {
         return if (page == 0) BubbleChromeStyle.ORIGINAL else BubbleChromeStyle.COMPACT
     }
 
+    fun pageFor(style: BubbleChromeStyle): Int = if (style == BubbleChromeStyle.COMPACT) 1 else 0
+
     /**
      * Moving the preview, including the 19-second auto-scroll and a swipe,
      * never changes the saved bubble. Only an explicit choice does.

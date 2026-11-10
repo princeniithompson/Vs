@@ -51,7 +51,7 @@ object GlowAnimationCatalogue {
         ),
         GlowAnimationStyle(
             id = "pulsing_spotlight",
-            name = "Flashlight Core Beacon",
+            name = "Flashlight Core",
             subtitle = "Focused central flashlight beam swelling dynamically with voice intensity",
             category = "Ambient Beam"
         ),

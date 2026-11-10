@@ -1,9 +1,12 @@
 package com.princeniithompson.rapcha.ui.components
 
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -14,20 +17,32 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.princeniithompson.rapcha.service.floating.BubbleChromeStyle
 
 /**
- * One raised Words/Mini control. The checkered half is the saved bubble.
- * It does not move the preview page.
+ * Raised Words/Mini control. Choosing a side saves that bubble.
+ * The carousel scroll is the caller's job.
  */
 @Composable
 fun WordsMiniSwitch(
@@ -35,83 +50,163 @@ fun WordsMiniSwitch(
     onChoose: (BubbleChromeStyle) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val shape = RoundedCornerShape(24.dp)
-    Row(
+    val wordsInteraction = remember { MutableInteractionSource() }
+    val miniInteraction = remember { MutableInteractionSource() }
+    val wordsPressed by wordsInteraction.collectIsPressedAsState()
+    val miniPressed by miniInteraction.collectIsPressedAsState()
+    val pressed = wordsPressed || miniPressed
+    val fraction by animateFloatAsState(
+        targetValue = if (active == BubbleChromeStyle.COMPACT) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow),
+        label = "thumb"
+    )
+    var trackSize by remember { mutableStateOf(IntSize.Zero) }
+    val rim = RoundedCornerShape(percent = 50)
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(48.dp)
-            .shadow(2.dp, shape)
-            .clip(shape)
-            .background(Color(0xFFC5E1A5))
-            .border(2.dp, Color.White, shape)
-            .padding(3.dp)
+            .shadow(8.dp, rim, ambientColor = Color(0x33000000), spotColor = Color(0x33000000))
+            .clip(rim)
+            .drawBehind {
+                drawRect(Color(0xFFEEF6DC))
+                drawLine(
+                    color = Color.White,
+                    start = Offset(0f, 1.dp.toPx()),
+                    end = Offset(size.width, 1.dp.toPx()),
+                    strokeWidth = 1.dp.toPx()
+                )
+            }
+            .padding(6.dp)
     ) {
-        SwitchHalf(
-            label = "Words",
-            selected = active == BubbleChromeStyle.ORIGINAL,
-            onClick = { onChoose(BubbleChromeStyle.ORIGINAL) },
-            modifier = Modifier.weight(1f)
-        )
-        SwitchHalf(
-            label = "Mini",
-            selected = active == BubbleChromeStyle.COMPACT,
-            onClick = { onChoose(BubbleChromeStyle.COMPACT) },
-            modifier = Modifier.weight(1f)
-        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(60.dp)
+                .onSizeChanged { trackSize = it }
+                .clip(RoundedCornerShape(34.dp))
+                .drawBehind {
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            listOf(Color(0xFF93AE56), Color(0xFFB7D07A))
+                        )
+                    )
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            listOf(Color(0x800F2A0A), Color.Transparent)
+                        ),
+                        size = androidx.compose.ui.geometry.Size(size.width, 9.dp.toPx())
+                    )
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            listOf(Color.Transparent, Color(0x66FFFFFF))
+                        ),
+                        topLeft = Offset(0f, size.height - 8.dp.toPx()),
+                        size = androidx.compose.ui.geometry.Size(size.width, 8.dp.toPx())
+                    )
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            listOf(Color(0x400F2A0A), Color.Transparent)
+                        ),
+                        size = androidx.compose.ui.geometry.Size(8.dp.toPx(), size.height)
+                    )
+                }
+        ) {
+            if (trackSize.width > 0) {
+                val inset = 5.dp
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val insetPx = inset.toPx()
+                    val thumbW = (size.width - insetPx * 2f) / 2f
+                    val left = insetPx + fraction * thumbW
+                    val top = insetPx
+                    val height = size.height - insetPx * 2f
+                    val radius = height / 2f
+                    val darken = if (pressed) 0.05f else 0f
+                    val drop = if (pressed) 1.dp.toPx() else 4.dp.toPx()
+                    drawRoundRect(
+                        color = Color(0x33000000),
+                        topLeft = Offset(left, top + drop),
+                        size = androidx.compose.ui.geometry.Size(thumbW, height),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius)
+                    )
+                    drawRoundRect(
+                        brush = Brush.verticalGradient(
+                            listOf(darken(0xFF9BC21F.toInt(), darken), darken(0xFF5F8A0F.toInt(), darken)),
+                            startY = top,
+                            endY = top + height
+                        ),
+                        topLeft = Offset(left, top),
+                        size = androidx.compose.ui.geometry.Size(thumbW, height),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius)
+                    )
+                    clipRect(left, top, left + thumbW, top + height) {
+                        drawWoven(left, top, thumbW, height)
+                    }
+                    drawRoundRect(
+                        color = Color(0xFFEAF4CF),
+                        topLeft = Offset(left, top),
+                        size = androidx.compose.ui.geometry.Size(thumbW, height),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius),
+                        style = Stroke(width = 3.dp.toPx())
+                    )
+                }
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth().height(60.dp)) {
+            SwitchLabel("Words", Modifier.weight(1f).fillMaxHeight().clickable(
+                interactionSource = wordsInteraction,
+                indication = null
+            ) { onChoose(BubbleChromeStyle.ORIGINAL) })
+            SwitchLabel("Mini", Modifier.weight(1f).fillMaxHeight().clickable(
+                interactionSource = miniInteraction,
+                indication = null
+            ) { onChoose(BubbleChromeStyle.COMPACT) })
+        }
     }
 }
 
 @Composable
-private fun SwitchHalf(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val shape = RoundedCornerShape(20.dp)
-    Box(
-        modifier = modifier
-            .fillMaxHeight()
-            .then(if (selected) Modifier.shadow(6.dp, shape) else Modifier)
-            .clip(shape)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        if (selected) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val cell = 8.dp.toPx()
-                val light = Color(0xFF9CCC65)
-                val dark = Color(0xFF7CB342)
-                var row = 0
-                var y = 0f
-                while (y < size.height) {
-                    var col = 0
-                    var x = 0f
-                    while (x < size.width) {
-                        drawRect(
-                            color = if ((row + col) % 2 == 0) light else dark,
-                            topLeft = Offset(x, y),
-                            size = androidx.compose.ui.geometry.Size(cell, cell)
-                        )
-                        x += cell
-                        col++
-                    }
-                    y += cell
-                    row++
-                }
-                drawRect(
-                    color = Color(0xFFDCEDC8),
-                    size = androidx.compose.ui.geometry.Size(size.width, 3.dp.toPx())
-                )
-            }
-        } else {
-            Box(modifier = Modifier.fillMaxSize().background(Color(0xFFAED581)))
-        }
+private fun SwitchLabel(text: String, modifier: Modifier) {
+    Box(modifier, contentAlignment = Alignment.Center) {
         Text(
-            text = label,
-            color = if (selected) Color(0xFF1B3A1A) else Color(0xFF2E4A28),
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 15.sp
+            text = text,
+            color = Color.White,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Medium,
+            style = TextStyle(
+                shadow = Shadow(color = Color(0xFF1A2A0A), offset = Offset(0f, 1.5f), blurRadius = 2f)
+            )
         )
+    }
+}
+
+private fun darken(argb: Int, amount: Float): Color {
+    val color = Color(argb)
+    val keep = 1f - amount
+    return Color(color.red * keep, color.green * keep, color.blue * keep, 1f)
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWoven(
+    left: Float,
+    top: Float,
+    width: Float,
+    height: Float
+) {
+    val stripe = 6.dp.toPx()
+    val span = width + height
+    var offset = -span
+    while (offset < span) {
+        drawLine(
+            color = Color.White.copy(alpha = 0.18f),
+            start = Offset(left + offset, top + height),
+            end = Offset(left + offset + height, top),
+            strokeWidth = stripe
+        )
+        drawLine(
+            color = Color.Black.copy(alpha = 0.12f),
+            start = Offset(left + offset, top),
+            end = Offset(left + offset + height, top + height),
+            strokeWidth = stripe
+        )
+        offset += stripe * 2f
     }
 }

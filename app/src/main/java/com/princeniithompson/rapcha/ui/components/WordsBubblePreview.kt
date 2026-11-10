@@ -1,19 +1,20 @@
 package com.princeniithompson.rapcha.ui.components
 
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.runtime.remember
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -21,24 +22,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.princeniithompson.rapcha.R
-import com.princeniithompson.rapcha.ui.components.overlay.PillActionButton
-import com.princeniithompson.rapcha.ui.components.overlay.isColorDark
-import com.princeniithompson.rapcha.ui.components.overlay.rememberDynamicAuroraPalette
-import com.princeniithompson.rapcha.ui.components.overlay.sections.FloatingAuroraGlowSection
-import com.princeniithompson.rapcha.ui.components.overlay.sections.FloatingDictationPopupState
+import com.princeniithompson.rapcha.service.floating.DynamicTonePolicy
 import com.princeniithompson.rapcha.ui.components.overlay.sections.rememberNotchedContainerShape
 
 /**
- * Settings preview of the original bubble. It is not the live recording surface.
- * Fixed height, no transcript, labels are only Cancel and Polish.
+ * Settings preview of the original bubble. Fixed outline, no transcript.
+ * The only words are Cancel and Polish.
  */
 object WordsBubblePreviewSpec {
     const val HEIGHT_DP = 168
@@ -48,106 +43,103 @@ object WordsBubblePreviewSpec {
 @Composable
 fun WordsBubblePreview(
     glowStyleId: String,
+    tone: String = DynamicTonePolicy.LUMINOUS,
     modifier: Modifier = Modifier
 ) {
-    val palette = rememberDynamicAuroraPalette()
-    val scrollState = rememberScrollState()
-    val state = remember(scrollState) {
-        FloatingDictationPopupState(
-            glowPulse = 1f,
-            phase1 = 0f,
-            phase2 = 0f,
-            animatedAmplitude = 0f,
-            idleBreathing = 0.12f,
-            cursorAlpha = 0f,
-            morphProgress = 0f,
-            sunsetEntranceProgress = 1f,
-            waitingLoopProgress = 0f,
-            isFinalizing = false,
-            isPolishing = false,
-            scrollState = scrollState,
-            onLocalCompleteTriggered = {}
-        )
-    }
+    val glow = RecordingGlowList.byId(glowStyleId)
+    val deep = tone == DynamicTonePolicy.DEEP
     val shape = rememberNotchedContainerShape()
-    val onPolish = if (isColorDark(palette.primaryVibrant)) Color.White else Color(0xFF042F2E)
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(WordsBubblePreviewSpec.HEIGHT_DP.dp)
             .testTag("words-bubble-preview")
     ) {
-        FloatingAuroraGlowSection(
-            notchedShape = shape,
-            palette = palette,
-            glowStyleId = glowStyleId,
-            state = state,
-            isRecording = false,
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(WordsBubblePreviewSpec.HEIGHT_DP.dp)
+                .padding(top = 22.dp)
+                .height((WordsBubblePreviewSpec.HEIGHT_DP - 22).dp)
+                .clip(shape)
+                .drawBehind { drawRecordingGlow(glow, deep) }
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(36.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, bottom = 10.dp)
+                    .height(38.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PreviewPill(
+                    fill = Color(0x66000000),
+                    border = Color(0x80FF8C78),
+                    modifier = Modifier.weight(1f)
                 ) {
-                    PillActionButton(
-                        onClick = {},
-                        backgroundColor = Color(0x381E1E24),
-                        borderColor = Color(0x26FF5252),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Filled.Close,
-                                contentDescription = "Cancel",
-                                tint = Color(0xFFFF5252),
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = "Cancel",
-                                color = Color(0xFFFF7B7B),
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    PillActionButton(
-                        onClick = {},
-                        backgroundColor = palette.primaryVibrant,
-                        borderColor = Color.Transparent,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            text = "Polish",
-                            color = onPolish,
-                            fontSize = 13.5.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = null,
+                        tint = Color(RecordingGlowColors.CANCEL_TEXT),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Cancel",
+                        color = Color(RecordingGlowColors.CANCEL_TEXT),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                PreviewPill(
+                    fill = Color(RecordingGlowColors.POLISH),
+                    border = Color.Transparent,
+                    modifier = Modifier.weight(1.4f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.AutoAwesome,
+                        contentDescription = null,
+                        tint = Color(RecordingGlowColors.POLISH_TEXT),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Polish",
+                        color = Color(RecordingGlowColors.POLISH_TEXT),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
             }
         }
-        Box(
+        Canvas(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(end = 4.dp)
-                .size(48.dp)
-                .clip(CircleShape),
-            contentAlignment = Alignment.Center
+                .padding(top = 10.dp, end = 10.dp)
+                .size(36.dp)
         ) {
-            Image(
-                painter = painterResource(id = R.drawable.ic_lifebuoy_ring),
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.size(46.dp)
-            )
+            drawLifebuoy(size.minDimension)
         }
+    }
+}
+
+@Composable
+private fun PreviewPill(
+    fill: Color,
+    border: Color,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    val shape = RoundedCornerShape(percent = 50)
+    Row(
+        modifier = modifier
+            .fillMaxSize()
+            .clip(shape)
+            .drawBehind { drawRect(fill) }
+            .then(if (border == Color.Transparent) Modifier else Modifier.border(1.dp, border, shape)),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        content()
     }
 }

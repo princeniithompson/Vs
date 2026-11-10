@@ -1,6 +1,8 @@
 package com.princeniithompson.rapcha.service.floating
 
 import com.princeniithompson.rapcha.ui.components.GlowAnimationCatalogue
+import com.princeniithompson.rapcha.ui.components.RecordingGlowColors
+import com.princeniithompson.rapcha.ui.components.RecordingGlowList
 import com.princeniithompson.rapcha.ui.components.WordsBubblePreviewSpec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,6 +39,8 @@ class BubbleChromeTest {
         assertEquals(mini, RecordingGlowPreview.styleAfterPreview(words, page = 1, explicitChoice = true))
         assertEquals(words, RecordingGlowPreview.styleForPage(0))
         assertEquals(mini, RecordingGlowPreview.styleForPage(1))
+        assertEquals(0, RecordingGlowPreview.pageFor(words))
+        assertEquals(1, RecordingGlowPreview.pageFor(mini))
     }
 
     @Test
@@ -58,24 +62,30 @@ class BubbleChromeTest {
         val washed = 0x4034D399
         assertTrue(GlowModePaint.isOpaque(GlowModePaint.opaque(washed)))
         assertEquals(0xFF34D399.toInt(), GlowModePaint.opaque(washed))
+        RecordingGlowColors.solidControls.forEach { color ->
+            assertTrue(RecordingGlowColors.isOpaque(color))
+        }
     }
 
     @Test
-    fun `glow list keeps its names in catalogue order and the words bubble stays blank`() {
+    fun `the screen lists five glows and retired ones become breathing horizon`() {
         assertEquals(
             listOf(
                 "Breathing Horizon",
+                "Electric Sunburst",
                 "Sunset Mirage",
                 "Gentle Wave Slice",
-                "Flashlight Core Beacon",
-                "Electric Sunburst",
-                "Bioluminescent Shimmer",
-                "Liquid Specular Glass",
-                "Velvet Ambient Calm"
+                "Flashlight Core"
             ),
-            GlowAnimationCatalogue.styles.map { it.name }
+            RecordingGlowList.names
         )
+        assertEquals("breathing_horizon", RecordingGlowList.resolve("breathing_horizon"))
+        assertEquals("breathing_horizon", RecordingGlowList.resolve("bioluminescent_deep"))
+        assertEquals("breathing_horizon", RecordingGlowList.resolve("liquid_glass"))
+        assertEquals("breathing_horizon", RecordingGlowList.resolve("velvet_aura"))
+        assertEquals("electric_sunburst", RecordingGlowList.resolve("electric_sunburst"))
         assertEquals(listOf("Cancel", "Polish"), WordsBubblePreviewSpec.labels)
+        assertEquals("Flashlight Core", GlowAnimationCatalogue.getById("pulsing_spotlight").name)
     }
 
     @Test
