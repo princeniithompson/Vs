@@ -88,6 +88,8 @@ fun FloatingOverlayContent(
                         appName = locked?.appName ?: "App",
                         glowStyleId = selectedGlowStyleId,
                         palette = palette,
+                        audioAmplitude = audioAmplitude,
+                        processing = polishing || pendingFinalizing,
                         statusLabel = status,
                         onCancel = onCancelClick,
                         onComplete = onCompleteClick,

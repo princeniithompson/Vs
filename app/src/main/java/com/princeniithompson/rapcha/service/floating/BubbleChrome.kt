@@ -4,9 +4,8 @@ package com.princeniithompson.rapcha.service.floating
  * Global recording chrome. Original stays the default until the user taps
  * Select as active on the compact page. Swiping the preview does not switch it.
  *
- * Compact sizes are Rapcha measurements chosen to match the supplied mockups.
- * They are not Wispr tokens. The idle-dot size is not used for the recording pill.
- * Cancel 52dp, pill 176×76dp with a 38dp corner, Complete ring 64dp, gaps 12dp.
+ * Compact sizes are taken from the phone screenshot at about 2.6 px/dp.
+ * Cancel 47dp, pill 90×47dp with a 23.5dp corner, Complete 47dp, gaps 6dp.
  */
 enum class BubbleChromeStyle {
     ORIGINAL,
@@ -22,12 +21,39 @@ enum class BubbleChromeStyle {
 }
 
 object BubbleChromeGeometry {
-    const val CANCEL_DP = 52
-    const val PILL_WIDTH_DP = 176
-    const val PILL_HEIGHT_DP = 76
-    const val COMPLETE_DP = 64
-    const val GAP_DP = 12
+    const val CANCEL_DP = 47
+    const val PILL_WIDTH_DP = 90
+    const val PILL_HEIGHT_DP = 47
+    const val COMPLETE_DP = 47
+    const val GAP_DP = 6
     const val SESSION_CAP_SECONDS = 600
+}
+
+/**
+ * Expanded full-width chrome stays pinned to x = 0.
+ * A compact window, even while the session is expanded, can move on both axes.
+ */
+object OverlayDragMath {
+    fun nextX(
+        currentX: Int,
+        dx: Int,
+        screenWidth: Int,
+        windowWidth: Int,
+        lockHorizontal: Boolean
+    ): Int {
+        if (lockHorizontal) return 0
+        val maxX = (screenWidth - windowWidth).coerceAtLeast(0)
+        return (currentX + dx).coerceIn(0, maxX)
+    }
+
+    fun locksHorizontal(expanded: Boolean, matchParentWidth: Boolean): Boolean {
+        return expanded && matchParentWidth
+    }
+}
+
+object CompactGlowLevel {
+    /** Same 0–1 amplitude as the original container, with extra gain for the small pill. */
+    fun fromAmplitude(raw: Float): Float = (raw.coerceIn(0f, 1f) * 1.85f).coerceAtMost(1f)
 }
 
 object RecordingGlowPreview {

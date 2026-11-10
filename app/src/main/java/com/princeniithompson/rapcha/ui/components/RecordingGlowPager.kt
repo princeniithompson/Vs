@@ -49,6 +49,7 @@ import com.princeniithompson.rapcha.service.floating.BubbleChromeStyle
 import com.princeniithompson.rapcha.service.floating.DynamicTonePolicy
 import com.princeniithompson.rapcha.service.floating.RecordingGlowPreview
 import com.princeniithompson.rapcha.ui.components.overlay.CompactRecordingBar
+import com.princeniithompson.rapcha.ui.components.FloatingDictationPopup
 import com.princeniithompson.rapcha.ui.components.overlay.getDynamicTonePalette
 import com.princeniithompson.rapcha.ui.components.overlay.rememberDynamicAuroraPalette
 import kotlin.math.PI
@@ -89,7 +90,7 @@ fun RecordingGlowCustomization(
             state = pagerState,
             contentPadding = PaddingValues(horizontal = 4.dp),
             pageSpacing = 10.dp,
-            modifier = Modifier.fillMaxWidth().height(210.dp)
+            modifier = Modifier.fillMaxWidth().height(250.dp)
         ) { page ->
             val pageStyle = if (page == 0) BubbleChromeStyle.ORIGINAL else BubbleChromeStyle.COMPACT
             val active = activeChrome == pageStyle
@@ -97,7 +98,7 @@ fun RecordingGlowCustomization(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(150.dp)
+                        .height(190.dp)
                         .clip(RoundedCornerShape(22.dp))
                         .background(
                             if (pageStyle == BubbleChromeStyle.COMPACT) Color(0xFF101418)
@@ -107,21 +108,25 @@ fun RecordingGlowCustomization(
                     contentAlignment = Alignment.Center
                 ) {
                     if (pageStyle == BubbleChromeStyle.ORIGINAL) {
-                        Canvas(modifier = Modifier.fillMaxSize()) {
-                            renderGlowAnimation(selectedStyleId, palette, 0.6f, 0.9f, phase1, phase2)
-                        }
-                        Text(
-                            text = "Original bubble keeps the transcript on screen.",
-                            color = Color.White,
-                            fontSize = 13.sp,
-                            modifier = Modifier.align(Alignment.CenterStart).padding(16.dp)
+                        FloatingDictationPopup(
+                            transcriptText = "floating bubble looks like. So currently, I would like you to look at the current uploaded image.",
+                            isRecording = true,
+                            isPendingFinalizing = false,
+                            isPolishing = false,
+                            audioAmplitude = 0.55f,
+                            glowStyleId = selectedStyleId,
+                            onCancelClick = {},
+                            onPolishClick = {},
+                            onCompleteClick = {},
+                            onLifebuoyClick = {}
                         )
                     } else {
                         CompactRecordingBar(
-                            elapsedSeconds = 84,
+                            elapsedSeconds = 3,
                             appName = "App",
                             glowStyleId = selectedStyleId,
                             palette = palette,
+                            audioAmplitude = 0.55f,
                             onCancel = {},
                             onComplete = {}
                         )

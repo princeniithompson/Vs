@@ -31,6 +31,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
@@ -40,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.princeniithompson.rapcha.R
 import com.princeniithompson.rapcha.service.floating.BubbleChromeGeometry
+import com.princeniithompson.rapcha.service.floating.CompactGlowLevel
 import com.princeniithompson.rapcha.service.floating.SessionClockFormat
 import com.princeniithompson.rapcha.ui.components.renderGlowAnimation
 import kotlin.math.PI
@@ -54,6 +56,8 @@ fun CompactRecordingBar(
     appName: String,
     glowStyleId: String,
     palette: AuroraColorPalette,
+    audioAmplitude: Float = 0.35f,
+    processing: Boolean = false,
     statusLabel: String? = null,
     onCancel: () -> Unit,
     onComplete: () -> Unit,
@@ -75,7 +79,14 @@ fun CompactRecordingBar(
         animationSpec = infiniteRepeatable(tween(3600, easing = LinearEasing), RepeatMode.Restart),
         label = "p2"
     )
-    val pillShape = RoundedCornerShape((BubbleChromeGeometry.PILL_HEIGHT_DP / 2).dp)
+    val spin by motion.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(2500, easing = LinearEasing), RepeatMode.Restart),
+        label = "spin"
+    )
+    val level = CompactGlowLevel.fromAmplitude(audioAmplitude)
+    val pillShape = RoundedCornerShape((BubbleChromeGeometry.PILL_HEIGHT_DP / 2f).dp)
     Row(
         modifier = modifier.padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -118,7 +129,7 @@ fun CompactRecordingBar(
                 renderGlowAnimation(
                     styleId = glowStyleId,
                     palette = palette,
-                    effectiveAmp = 0.55f,
+                    effectiveAmp = level,
                     glowBrightness = 1f,
                     phase1 = phase1,
                     phase2 = phase2
@@ -131,17 +142,20 @@ fun CompactRecordingBar(
             )
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = SessionClockFormat.format(elapsedSeconds),
+                    text = if (processing) "Polishing..." else SessionClockFormat.format(elapsedSeconds),
                     color = Color.White,
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = statusLabel?.takeIf { it.isNotBlank() } ?: appName.ifBlank { "App" },
-                    color = Color.White.copy(alpha = 0.92f),
-                    fontSize = 12.sp,
+                    fontSize = if (processing) 11.sp else 16.sp,
+                    fontWeight = FontWeight.Bold,
                     maxLines = 1
                 )
+                if (!processing) {
+                    Text(
+                        text = statusLabel?.takeIf { it.isNotBlank() } ?: appName.ifBlank { "App" },
+                        color = Color.White.copy(alpha = 0.92f),
+                        fontSize = 10.sp,
+                        maxLines = 1
+                    )
+                }
             }
         }
         Box(
@@ -154,13 +168,17 @@ fun CompactRecordingBar(
             Image(
                 painter = painterResource(id = R.drawable.ic_lifebuoy_ring),
                 contentDescription = "Complete",
-                modifier = Modifier.size(BubbleChromeGeometry.COMPLETE_DP.dp)
+                modifier = Modifier
+                    .size(BubbleChromeGeometry.COMPLETE_DP.dp)
+                    .graphicsLayer { if (processing) rotationZ = spin }
             )
             Icon(
                 imageVector = Icons.Filled.Check,
                 contentDescription = null,
                 tint = Color(0xFF111111),
-                modifier = Modifier.size(22.dp)
+                modifier = Modifier
+                    .size(16.dp)
+                    .graphicsLayer { if (processing) rotationZ = spin }
             )
         }
     }

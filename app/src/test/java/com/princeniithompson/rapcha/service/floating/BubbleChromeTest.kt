@@ -51,5 +51,22 @@ class BubbleChromeTest {
         assertEquals("01:24", SessionClockFormat.format(84))
         assertEquals("10:00", SessionClockFormat.format(600))
         assertEquals("10:00", SessionClockFormat.format(601))
+        assertEquals(47, BubbleChromeGeometry.CANCEL_DP)
+        assertEquals(90, BubbleChromeGeometry.PILL_WIDTH_DP)
+        assertEquals(47, BubbleChromeGeometry.PILL_HEIGHT_DP)
+        assertEquals(47, BubbleChromeGeometry.COMPLETE_DP)
+        assertEquals(6, BubbleChromeGeometry.GAP_DP)
+    }
+
+    @Test
+    fun `expanded full-width chrome locks x and a compact window can move sideways`() {
+        assertTrue(OverlayDragMath.locksHorizontal(expanded = true, matchParentWidth = true))
+        assertFalse(OverlayDragMath.locksHorizontal(expanded = true, matchParentWidth = false))
+        assertEquals(0, OverlayDragMath.nextX(40, 30, 1080, 1080, lockHorizontal = true))
+        assertEquals(70, OverlayDragMath.nextX(40, 30, 1080, 200, lockHorizontal = false))
+        assertEquals(880, OverlayDragMath.nextX(860, 40, 1080, 200, lockHorizontal = false))
+        assertEquals(0, OverlayDragMath.nextX(10, -40, 1080, 200, lockHorizontal = false))
+        assertEquals(0.2f, CompactGlowLevel.fromAmplitude(0.2f / 1.85f), 0.001f)
+        assertEquals(1f, CompactGlowLevel.fromAmplitude(0.9f), 0.001f)
     }
 }

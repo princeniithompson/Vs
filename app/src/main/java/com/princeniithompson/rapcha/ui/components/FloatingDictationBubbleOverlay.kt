@@ -146,6 +146,7 @@ fun FloatingDictationPopup(
             onDragStart = onDragStart,
             onDrag = onDrag,
             onDragEnd = onDragEnd,
+            spinning = state.isFinalizing || state.isPolishing,
             modifier = Modifier.align(Alignment.TopEnd)
         )
     }

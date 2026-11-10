@@ -128,32 +128,10 @@ fun GlowStylesBottomSheet(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Recording Glows",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(palette.primaryVibrant.copy(alpha = 0.20f))
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
-                        ) {
-                            Text(
-                                text = "${GlowAnimationCatalogue.styles.size} Styles",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = palette.primaryVibrant
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Choose your favorite ambient glow style for live dictation.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "Recording Glows",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
                     )
                 }
 
@@ -253,32 +231,12 @@ fun GlowStylesBottomSheet(
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.weight(1f, fill = false)
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(
-                                                if (isSelected) palette.primaryVibrant.copy(alpha = 0.20f)
-                                                else MaterialTheme.colorScheme.surfaceVariant
-                                            )
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    ) {
-                                        Text(
-                                            text = style.category,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontSize = 9.5.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            softWrap = false,
-                                            maxLines = 1,
-                                            color = if (isSelected) palette.primaryVibrant else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
                                 }
 
                                 Spacer(modifier = Modifier.height(3.dp))
 
                                 Text(
-                                    text = style.subtitle,
+                                    text = GlowAnimationCatalogue.shortCaption(style.id),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 11.5.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,

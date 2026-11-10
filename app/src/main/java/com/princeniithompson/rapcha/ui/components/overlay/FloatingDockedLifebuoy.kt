@@ -12,7 +12,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
@@ -28,8 +36,15 @@ fun FloatingDockedLifebuoy(
     onDragStart: () -> Unit = {},
     onDrag: (Float, Float) -> Unit = { _, _ -> },
     onDragEnd: () -> Unit = {},
+    spinning: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    val spin by rememberInfiniteTransition(label = "ring").animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(2500, easing = LinearEasing), RepeatMode.Restart),
+        label = "spin"
+    )
     Box(
         modifier = modifier
             .padding(end = 4.dp)
@@ -56,7 +71,9 @@ fun FloatingDockedLifebuoy(
         Image(
             painter = painterResource(id = R.drawable.ic_lifebuoy_ring),
             contentDescription = "Lifebuoy voice typing",
-            modifier = Modifier.size(46.dp)
+            modifier = Modifier
+                .size(46.dp)
+                .graphicsLayer { if (spinning) rotationZ = spin }
         )
     }
 }
