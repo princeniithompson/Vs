@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
             val selectedTone by FloatingBubbleManager.selectedColorTone.collectAsState()
 
             MyApplicationTheme(
-                dynamicColor = isAppDynamicColor,
+                dynamicColor = true,
                 toneId = selectedTone
             ) {
                 Surface(modifier = Modifier.fillMaxSize()) {

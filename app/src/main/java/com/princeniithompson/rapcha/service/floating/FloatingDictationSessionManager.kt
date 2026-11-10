@@ -33,6 +33,13 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 
+data class Stage1Endpoint(
+    val text: String,
+    val timedOut: Boolean
+) {
+    val completed: Boolean get() = !timedOut && text.isNotBlank()
+}
+
 class FloatingDictationSessionManager(
     private val context: Context,
     private val onTranscriptUpdated: (fullText: String) -> Unit,
@@ -67,15 +74,20 @@ class FloatingDictationSessionManager(
 
     private var durationJob: Job? = null
     private var retryStopJob: Job? = null
+    private var liveSocketClosed: kotlinx.coroutines.CompletableDeferred<Unit>? = null
 
     @Volatile
     private var liveAbandoned = false
+
+    @Volatile
+    private var stage1Dropped = false
     private val sessionEndLogged = AtomicBoolean(false)
     var durationSeconds: Int = 0
         private set
 
     var isRecording: Boolean = false
-        private set
+    var capturePrefinal: Boolean = false
+    var prefinalListener: ((String) -> Unit)? = null
 
     var sessionChunksSent: Int = 0
         private set
@@ -211,6 +223,7 @@ class FloatingDictationSessionManager(
         if (isRecording) return
         isRecording = true
         liveAbandoned = false
+        stage1Dropped = false
         sessionEndLogged.set(false)
 
         sessionJob?.cancel()
@@ -360,6 +373,7 @@ class FloatingDictationSessionManager(
             },
             onError = { err ->
                 Log.e(TAG, "WebSocket error: $err")
+                stage1Dropped = true
                 AppLogRepository.updateLiveStats { it.copy(lastError = err) }
                 FloatingBubbleManager.setNetworkProblem(true)
                 onError(err)
@@ -371,8 +385,12 @@ class FloatingDictationSessionManager(
             val customVocab = CustomVocabularyRepository.getVocabulary()
             try {
                 connect(apiKey = apiKey, model = model, smartMode = smartMode, customVocabulary = customVocab)
+                if (capturePrefinal) {
+                    enablePrefinalCapture { text -> prefinalListener?.invoke(text) }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to connect WebSocket: ${e.message}")
+                stage1Dropped = true
                 FloatingBubbleManager.setNetworkProblem(true)
                 onError(e.message ?: "Connection error")
             }
@@ -444,6 +462,8 @@ class FloatingDictationSessionManager(
         sessionJob?.cancel()
         sessionJob = null
         sessionScope = null
+        val liveClosed = kotlinx.coroutines.CompletableDeferred<Unit>()
+        liveSocketClosed = liveClosed
 
         retryStopJob = scope.launch(Dispatchers.IO) {
             try {
@@ -452,6 +472,7 @@ class FloatingDictationSessionManager(
             } catch (e: Exception) {
                 Log.e(TAG, "Error stopping audio/websocket", e)
             } finally {
+                if (!liveClosed.isCompleted) liveClosed.complete(Unit)
                 try {
                     if (discardRetryClip) {
                         RetryClipStore.discard(retryClipId)
@@ -484,6 +505,14 @@ class FloatingDictationSessionManager(
         retryStopJob?.join()
     }
 
+    /**
+     * Happy-path Polish waits only until the Live socket is closed.
+     * Discarding the retry WAV continues after that and must not block the paste.
+     */
+    suspend fun awaitLiveSocketClosed() {
+        liveSocketClosed?.await()
+    }
+
     fun settleRetryClip(discard: Boolean) {
         val id = RetryClipStore.currentId()
         try {
@@ -510,8 +539,32 @@ class FloatingDictationSessionManager(
      * User pressed Complete. Stop the mic, send activityEnd, and wait for the
      * authoritative transcript. Pauses never reach this path.
      */
+    /**
+     * True after Stage 1's Live socket failed. Complete still has the raw buffer
+     * and, when Live two-step is on, that buffer is what Stage 2 polishes.
+     */
+    fun consumeStage1Drop(): Boolean {
+        val dropped = stage1Dropped
+        stage1Dropped = false
+        return dropped
+    }
+
     suspend fun finishActivityAndAwaitTranscript(): String {
-        if (!isRecording && webSocketClient == null) return getFullTranscriptText()
+        return finishActivity(endedReason = "completed").text
+    }
+
+    /**
+     * Same Complete gate as [finishActivityAndAwaitTranscript]. The caller uses
+     * [Stage1Endpoint.completed] so a timeout is not treated as a Smart final.
+     */
+    suspend fun finishActivityForLyra(): Stage1Endpoint {
+        return finishActivity(endedReason = "polished", discardRetryClip = true)
+    }
+
+    private suspend fun finishActivity(endedReason: String, discardRetryClip: Boolean = false): Stage1Endpoint {
+        if (!isRecording && webSocketClient == null) {
+            return Stage1Endpoint(getFullTranscriptText(), timedOut = true)
+        }
         releaseMicrophoneNow()
 
         refreshDurationFromClock()
@@ -531,16 +584,18 @@ class FloatingDictationSessionManager(
                 }
             }
             val finalText = ws?.endActivityAndAwaitFinal().orEmpty().trim()
+            val timedOut = ws?.endpointTimedOut != false
             if (finalizedTranscript.isEmpty() && finalText.isNotEmpty()) {
                 finalizedTranscript.append(finalText)
             }
             interimTranscript = ""
             val text = getFullTranscriptText().ifBlank { finalText }
             onTranscriptUpdated(text)
-            text
+            Stage1Endpoint(text, timedOut = timedOut || text.isBlank())
         } catch (e: Exception) {
             Log.e(TAG, "Error finishing manual activity", e)
-            getFullTranscriptText()
+            stage1Dropped = true
+            Stage1Endpoint(getFullTranscriptText(), timedOut = true)
         } finally {
             try {
                 ws?.disconnect()
@@ -549,10 +604,10 @@ class FloatingDictationSessionManager(
             }
             webSocketClient = null
             withContext(NonCancellable + Dispatchers.IO) {
-                settleRetryClip(discard = false)
+                settleRetryClip(discard = discardRetryClip)
             }
             logSessionEndOnce(
-                "ended_reason: completed | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${ws?.sessionSummary().orEmpty()}"
+                "ended_reason: $endedReason | Duration: ${durationAtEnd}s, Chunks: $chunksAtEnd, Streamed: ${bytesAtEnd / 1024} KB | ${ws?.sessionSummary().orEmpty()}"
             )
             AppLogRepository.updateConnectionState(ConnectionState.Idle, DiagnosticSource.BUBBLE)
             try {

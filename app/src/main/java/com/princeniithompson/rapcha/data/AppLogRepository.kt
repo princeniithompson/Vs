@@ -319,7 +319,9 @@ object AppLogRepository {
                 }
             }
 
-            append("\n==================== END OF EXPORT ====================\n")
+            append("\n")
+            append(LyraReviewExport.section(HistoryRepository.lyraReviewSessions()))
+            append("==================== END OF EXPORT ====================\n")
         }
     }
 

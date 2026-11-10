@@ -125,6 +125,9 @@ fun VoiceTypingScreen(
 
     val isRecording by viewModel.isRecording.collectAsState()
     val isSmartMode by viewModel.isSmartMode.collectAsState()
+    val liveTwoStepPolish by viewModel.liveTwoStepPolish.collectAsState()
+    val polishOverride by viewModel.polishOverride.collectAsState()
+    val threeStepPolish by viewModel.threeStepPolish.collectAsState()
     val isBubbleEnabled by viewModel.isBubbleEnabled.collectAsState()
     val isSmartSafeModeEnabled by viewModel.isSmartSafeModeEnabled.collectAsState()
     val isAccessibilityConnected by viewModel.isAccessibilityConnected.collectAsState()
@@ -449,6 +452,65 @@ fun VoiceTypingScreen(
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                ) {
+                    Text(
+                        text = "Polish route",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Auto uses two-step Live in AI apps and Smart everywhere else. Force Live or Force Smart applies on the next dictation, not while you are speaking.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    listOf(
+                        com.princeniithompson.rapcha.service.floating.Stage2PolishBackend.AUTO to "Auto",
+                        com.princeniithompson.rapcha.service.floating.Stage2PolishBackend.LIVE to "Force two-step Live",
+                        com.princeniithompson.rapcha.service.floating.Stage2PolishBackend.NON_LIVE to "Force Smart"
+                    ).forEach { (mode, label) ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = polishOverride == mode,
+                                onClick = { viewModel.setPolishOverride(mode) },
+                                enabled = !isRecording
+                            )
+                            Text(text = label, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Three-step polish",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = if (threeStepPolish) {
+                                    "On for AI apps: Smart cleanup on gemini-3.5-transcribe-live, then gemini-3.8-live prompt optimization. Force Smart stays one-step. Applies on the next section."
+                                } else {
+                                    "Off: AI Live stays verbatim, then gemini-3.8-live. Turn it on again for the next section."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Switch(
+                            checked = threeStepPolish,
+                            onCheckedChange = { viewModel.setThreeStepPolish(it) },
+                            enabled = !isRecording,
+                            modifier = Modifier.testTag("three_step_polish_switch")
+                        )
+                    }
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -460,22 +522,26 @@ fun VoiceTypingScreen(
                             text = "Smart Mode",
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (isRecording) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            color = if (isRecording || liveTwoStepPolish) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                                     else MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "On: cleans up filler words and adds punctuation. Off: raw verbatim transcript, fastest.",
+                            text = if (liveTwoStepPolish) {
+                                "Forced off while Live two-step polish is on, so Stage 1 stays verbatim. Your Smart setting is kept for when you switch back."
+                            } else {
+                                "On: cleans up filler words and adds punctuation. Off: raw verbatim transcript, fastest."
+                            },
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (isRecording) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                            color = if (isRecording || liveTwoStepPolish) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
                                     else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Switch(
-                        checked = isSmartMode,
+                        checked = isSmartMode && !liveTwoStepPolish,
                         onCheckedChange = { viewModel.setSmartMode(it) },
-                        enabled = !isRecording,
+                        enabled = !isRecording && !liveTwoStepPolish,
                         modifier = Modifier.testTag("smart_mode_switch")
                     )
                 }

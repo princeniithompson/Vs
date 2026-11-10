@@ -20,7 +20,8 @@ data class HistoryItem(
     val appContext: String = "AI · Rapcha",
     val wordCount: Int = text.split("\\s+".toRegex()).count { it.isNotBlank() },
     val durationSeconds: Int = 0,
-    val retryClipId: String? = null
+    val retryClipId: String? = null,
+    val session: VoiceSessionRecord? = null
 ) {
     fun getFormattedTime(): String {
         val sdf = SimpleDateFormat("h:mm a", Locale.getDefault())
@@ -117,12 +118,13 @@ object HistoryRepository {
                     appContext = obj.optString("appContext", "AI · Rapcha"),
                     wordCount = obj.optInt("wordCount", 0),
                     durationSeconds = obj.optInt("durationSeconds", 0),
-                    retryClipId = obj.optString("retryClipId", "").ifBlank { null }
+                    retryClipId = obj.optString("retryClipId", "").ifBlank { null },
+                    session = obj.optJSONObject("session")?.let { VoiceSessionJson.fromJson(it) }
                 )
                 list.add(item)
             }
             _historyItems.value = list
-            saveHistory(list)
+            saveHistory(list, durable = false)
             CustomVocabularyRepository.syncUsageFromHistory(list)
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing history json", e)
@@ -131,7 +133,7 @@ object HistoryRepository {
         }
     }
 
-    private fun saveHistory(list: List<HistoryItem>) {
+    private fun saveHistory(list: List<HistoryItem>, durable: Boolean = false) {
         val sp = prefs ?: return
         try {
             val jsonArray = JSONArray()
@@ -146,10 +148,12 @@ object HistoryRepository {
                     if (!item.retryClipId.isNullOrBlank()) {
                         put("retryClipId", item.retryClipId)
                     }
+                    item.session?.let { put("session", VoiceSessionJson.toJson(it)) }
                 }
                 jsonArray.put(obj)
             }
-            sp.edit().putString(KEY_HISTORY, jsonArray.toString()).apply()
+            val editor = sp.edit().putString(KEY_HISTORY, jsonArray.toString())
+            if (durable) editor.commit() else editor.apply()
         } catch (e: Exception) {
             Log.e(TAG, "Error saving history json", e)
         }
@@ -169,7 +173,7 @@ object HistoryRepository {
         )
         current.add(0, newItem) // Add to top
         _historyItems.value = current
-        saveHistory(current)
+        saveHistory(current, durable = false)
         // Discarded silence never reaches here: callers pass the accepted transcript only.
         CustomVocabularyRepository.recordUsageFromTranscript(trimmed)
         return newItem
@@ -178,6 +182,107 @@ object HistoryRepository {
     /**
      * Convenience method to save a history entry with explicit mode and appName tags.
      */
+    fun saveVoiceSession(record: VoiceSessionRecord, durationSeconds: Int = 0): HistoryItem? {
+        val text = record.finalText.trim()
+        if (text.isBlank()) return null
+        val label = when (record.pipeline) {
+            SessionPipeline.TWO_STEP -> "Two-step"
+            SessionPipeline.THREE_STEP -> "Three-step"
+            SessionPipeline.SMART_ONLY -> "Smart"
+            SessionPipeline.DIRECT -> "Transcript"
+        }
+        val current = _historyItems.value.toMutableList()
+        val item = HistoryItem(
+            text = text,
+            timestamp = record.timestamp,
+            appContext = "${record.appName} · $label",
+            wordCount = text.split("\\s+".toRegex()).count { it.isNotBlank() },
+            durationSeconds = durationSeconds,
+            session = record
+        )
+        current.add(0, item)
+        _historyItems.value = current
+        saveHistory(current, durable = false)
+        CustomVocabularyRepository.recordUsageFromTranscript(text)
+        return item
+    }
+
+    fun sessionById(sessionId: String): VoiceSessionRecord? {
+        if (sessionId.isBlank()) return null
+        return _historyItems.value.firstOrNull { it.session?.sessionId == sessionId }?.session
+    }
+
+    /**
+     * Inserts or replaces one session and waits until the row is on disk.
+     * The raw freeze uses this before activityEnd.
+     */
+    fun commitSession(record: VoiceSessionRecord, durationSeconds: Int = 0): HistoryItem? {
+        val text = record.finalText.trim()
+        if (text.isBlank() && record.stages.isEmpty()) return null
+        val label = when (record.pipeline) {
+            SessionPipeline.TWO_STEP -> "Two-step"
+            SessionPipeline.THREE_STEP -> "Three-step"
+            SessionPipeline.SMART_ONLY -> "Smart"
+            SessionPipeline.DIRECT -> "Transcript"
+        }
+        val current = _historyItems.value.toMutableList()
+        val index = current.indexOfFirst { it.session?.sessionId == record.sessionId }
+        val item = if (index >= 0) {
+            current[index].copy(
+                text = text.ifBlank { current[index].text },
+                appContext = "${record.appName} · $label",
+                wordCount = text.split("\\s+".toRegex()).count { it.isNotBlank() },
+                session = record
+            )
+        } else {
+            HistoryItem(
+                text = text,
+                timestamp = record.timestamp,
+                appContext = "${record.appName} · $label",
+                wordCount = text.split("\\s+".toRegex()).count { it.isNotBlank() },
+                durationSeconds = durationSeconds,
+                session = record
+            )
+        }
+        if (index >= 0) current[index] = item else current.add(0, item)
+        _historyItems.value = current
+        saveHistory(current, durable = true)
+        return item
+    }
+
+    fun replaceVoiceSession(sessionId: String, record: VoiceSessionRecord) {
+        if (sessionId.isBlank()) return
+        val current = _historyItems.value.toMutableList()
+        val index = current.indexOfFirst { it.session?.sessionId == sessionId }
+        if (index < 0) return
+        current[index] = current[index].copy(session = record, text = record.finalText.ifBlank { current[index].text })
+        _historyItems.value = current
+        saveHistory(current)
+    }
+
+    fun updateLyraReview(
+        sessionId: String,
+        rating: LyraRating,
+        tags: List<LyraReviewTag>? = null,
+        comment: String? = null
+    ): VoiceSessionRecord? {
+        if (sessionId.isBlank()) return null
+        val current = _historyItems.value.toMutableList()
+        val index = current.indexOfFirst { it.session?.sessionId == sessionId }
+        if (index < 0) return null
+        val existing = current[index].session ?: return null
+        val updated = LyraReviewPolicy.apply(existing, rating, tags ?: existing.tags, comment)
+        if (updated == existing) return existing
+        current[index] = current[index].copy(session = updated)
+        _historyItems.value = current
+        saveHistory(current)
+        return updated
+    }
+
+    fun lyraReviewSessions(): List<VoiceSessionRecord> {
+        return _historyItems.value.mapNotNull { it.session }.filter { it.reviewable }
+    }
+
     fun saveEntry(text: String, mode: String = "POLISHED", appName: String = "App", durationSeconds: Int = 0): HistoryItem? {
         val contextTag = if (mode.isNotBlank()) "$appName · $mode" else appName
         return addHistoryItem(text = text, appContext = contextTag, durationSeconds = durationSeconds)

@@ -45,6 +45,7 @@ fun FloatingNotchedCutoutSection(
     onDragStart: () -> Unit = {},
     onDrag: (Float, Float) -> Unit = { _, _ -> },
     onDragEnd: () -> Unit = {},
+    spinning: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     FloatingDockedLifebuoy(
@@ -52,6 +53,7 @@ fun FloatingNotchedCutoutSection(
         onDragStart = onDragStart,
         onDrag = onDrag,
         onDragEnd = onDragEnd,
+        spinning = spinning,
         modifier = modifier
     )
 }

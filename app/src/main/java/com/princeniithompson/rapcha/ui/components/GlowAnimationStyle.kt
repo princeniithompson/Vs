@@ -51,7 +51,7 @@ object GlowAnimationCatalogue {
         ),
         GlowAnimationStyle(
             id = "pulsing_spotlight",
-            name = "Flashlight Core Beacon",
+            name = "Flashlight Core",
             subtitle = "Focused central flashlight beam swelling dynamically with voice intensity",
             category = "Ambient Beam"
         ),
@@ -83,6 +83,18 @@ object GlowAnimationCatalogue {
 
     fun getById(id: String): GlowAnimationStyle {
         return styles.find { it.id == id } ?: styles.first()
+    }
+
+    fun shortCaption(id: String): String = when (id) {
+        "breathing_horizon" -> "Soft band"
+        "sunset_mirage" -> "Warm colors"
+        "gentle_slice" -> "Flowing ribbon"
+        "pulsing_spotlight" -> "Focused beam"
+        "electric_sunburst" -> "Radiant energy"
+        "bioluminescent_deep" -> "Soft shimmer"
+        "liquid_glass" -> "Liquid glass"
+        "velvet_aura" -> "Quiet glow"
+        else -> "Glow"
     }
 }
 

@@ -92,6 +92,10 @@
             android:name=".service.floating.VocabSuggestionReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".service.floating.LyraReviewReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

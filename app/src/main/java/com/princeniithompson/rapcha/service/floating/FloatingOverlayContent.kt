@@ -6,9 +6,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.princeniithompson.rapcha.service.FloatingBubbleManager
+import com.princeniithompson.rapcha.service.floating.BubbleChromeStyle
 import com.princeniithompson.rapcha.ui.components.FloatingDictationPopup
+import com.princeniithompson.rapcha.ui.components.overlay.CompactRecordingBar
 import com.princeniithompson.rapcha.ui.components.overlay.FloatingCollapsedBubble
+import com.princeniithompson.rapcha.ui.components.overlay.rememberDynamicAuroraPalette
+import com.princeniithompson.rapcha.ui.components.overlay.toDangerPalette
 import com.princeniithompson.rapcha.ui.components.overlay.FloatingSafeModeShieldBadge
 import com.princeniithompson.rapcha.ui.components.overlay.FloatingScreenScanOverlay
 import com.princeniithompson.rapcha.ui.theme.MyApplicationTheme
@@ -35,6 +42,7 @@ fun FloatingOverlayContent(
     isContextLoaded: Boolean,
     selectedGlowStyleId: String,
     selectedFinishingStyleId: String,
+    elapsedSeconds: Int = 0,
     isCurrentAppSensitive: Boolean,
     onRingClick: () -> Unit,
     onCancelClick: () -> Unit,
@@ -47,9 +55,10 @@ fun FloatingOverlayContent(
     onDragEnd: () -> Unit
 ) {
     MyApplicationTheme(darkTheme = true, dynamicColor = true) {
+        val chrome by FloatingBubbleManager.bubbleChrome.collectAsState()
         val rootModifier = when {
             isScanningAnimation -> Modifier.fillMaxSize()
-            isExpanded -> Modifier.fillMaxWidth().wrapContentHeight()
+            isExpanded && chrome != BubbleChromeStyle.COMPACT -> Modifier.fillMaxWidth().wrapContentHeight()
             else -> Modifier.wrapContentSize()
         }
         Box(modifier = rootModifier) {
@@ -64,7 +73,31 @@ fun FloatingOverlayContent(
                 // Auto-Hide: Render empty box so no visual pixels or touch targets exist
                 Box(modifier = Modifier)
             } else if (isExpanded) {
-                FloatingDictationPopup(
+                if (chrome == BubbleChromeStyle.COMPACT) {
+                    val locked by FloatingBubbleManager.lockedPolishSection.collectAsState()
+                    val problem by FloatingBubbleManager.isNetworkProblem.collectAsState()
+                    val base = rememberDynamicAuroraPalette()
+                    val palette = if (problem) base.toDangerPalette() else base
+                    val status = when {
+                        polishing || pendingFinalizing -> "Finishing"
+                        problem -> "Offline"
+                        else -> null
+                    }
+                    CompactRecordingBar(
+                        elapsedSeconds = elapsedSeconds,
+                        appName = locked?.appName ?: "App",
+                        glowStyleId = selectedGlowStyleId,
+                        palette = palette,
+                        audioAmplitude = audioAmplitude,
+                        processing = polishing || pendingFinalizing,
+                        statusLabel = status,
+                        onCancel = onCancelClick,
+                        onComplete = onCompleteClick,
+                        onDragStart = onDragStart,
+                        onDrag = onDrag,
+                        onDragEnd = onDragEnd
+                    )
+                } else FloatingDictationPopup(
                     transcriptText = transcript,
                     isRecording = recording,
                     isPendingFinalizing = pendingFinalizing,

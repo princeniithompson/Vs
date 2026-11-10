@@ -79,17 +79,23 @@ class FloatingDragSnapHandler(private val context: Context) {
 
         val topY = (32 * density).toInt()
         val maxY = if (isExpanded) {
-            (screenHeight - (210 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
+            (screenHeight - (320 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
         } else {
             (screenHeight - (80 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
         }
 
+        snapAnimator?.cancel()
         lp.y = (lp.y + dy.toInt()).coerceIn(topY, maxY)
+
+        val matchParent = lp.width == WindowManager.LayoutParams.MATCH_PARENT
+        val lockX = OverlayDragMath.locksHorizontal(isExpanded, matchParent)
+        val windowWidth = if (matchParent) screenWidth else lp.width.coerceAtLeast(1)
+        lp.x = OverlayDragMath.nextX(lp.x, dx.toInt(), screenWidth, windowWidth, lockX)
 
         if (!isExpanded) {
             val bubbleSize = (56 * density).toInt()
             val maxX = (screenWidth - bubbleSize).coerceAtLeast(0)
-            val proposedX = (lp.x + dx.toInt()).coerceIn(0, maxX)
+            val proposedX = lp.x.coerceIn(0, maxX)
 
             val magneticCenterX = (screenWidth - bubbleSize) / 2
             val magneticCenterY = maxY
@@ -108,8 +114,6 @@ class FloatingDragSnapHandler(private val context: Context) {
             } else {
                 lp.x = proposedX
             }
-        } else {
-            lp.x = 0
         }
 
         try {
@@ -232,7 +236,11 @@ class FloatingDragSnapHandler(private val context: Context) {
                     val currentMainY = startY + totalDistY * mainProgress
                     val finalX = currentMainX + bounceDirX * reboundOffset
 
-                    lp.x = finalX.toInt().coerceIn(0, screenWidth - bubbleSize)
+                    if (lp.width == WindowManager.LayoutParams.MATCH_PARENT) {
+                        lp.x = 0
+                    } else {
+                        lp.x = finalX.toInt().coerceIn(0, screenWidth - bubbleSize)
+                    }
                     lp.y = currentMainY.toInt()
 
                     try {
@@ -243,7 +251,11 @@ class FloatingDragSnapHandler(private val context: Context) {
                 }
                 addListener(object : android.animation.AnimatorListenerAdapter() {
                     override fun onAnimationEnd(animation: android.animation.Animator) {
-                        lp.x = targetX
+                        if (lp.width == WindowManager.LayoutParams.MATCH_PARENT) {
+                            lp.x = 0
+                        } else {
+                            lp.x = targetX
+                        }
                         lp.y = targetY
                         try {
                             windowManager?.updateViewLayout(overlayView, lp)
@@ -255,6 +267,19 @@ class FloatingDragSnapHandler(private val context: Context) {
                 })
                 start()
             }
+        } else if (lp.width != WindowManager.LayoutParams.MATCH_PARENT) {
+            val windowWidth = lp.width.coerceAtLeast(1)
+            val snapRight = (lp.x + windowWidth / 2) >= screenWidth / 2
+            lp.x = if (snapRight) (screenWidth - windowWidth).coerceAtLeast(0) else 0
+            isSnappedToRight = snapRight
+            savedY = lp.y
+            savePreferences(snapRight, savedY)
+            try {
+                windowManager?.updateViewLayout(overlayView, lp)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed updating compact layout after drag end", e)
+            }
+            FloatingHapticManager.trigger(context, FloatingHapticType.BUBBLE_SETTLE)
         } else {
             lp.x = 0
             savedY = lp.y

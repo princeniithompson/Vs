@@ -1,19 +1,32 @@
 package com.princeniithompson.rapcha.ui.components
 
 import android.content.Context
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.princeniithompson.rapcha.ui.components.overlay.PillActionButton
+import com.princeniithompson.rapcha.ui.components.overlay.isColorDark
 import com.princeniithompson.rapcha.ui.components.overlay.AuroraColorPalette
 import com.princeniithompson.rapcha.ui.components.overlay.NotchedContainerShape
 import com.princeniithompson.rapcha.ui.components.overlay.toDangerPalette
@@ -86,7 +99,12 @@ fun FloatingDictationPopup(
     onDragStart: () -> Unit = {},
     onDrag: (Float, Float) -> Unit = { _, _ -> },
     onDragEnd: () -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * Settings preview only. The live overlay leaves this false, so it still
+     * shows the transcript and the live Cancel/Complete row.
+     */
+    blankPreview: Boolean = false
 ) {
     val isNetworkProblem by com.princeniithompson.rapcha.service.FloatingBubbleManager.isNetworkProblem.collectAsState()
     val offlineRetry by com.princeniithompson.rapcha.service.FloatingBubbleManager.offlineRetry.collectAsState()
@@ -114,6 +132,62 @@ fun FloatingDictationPopup(
             state = state,
             isRecording = isRecording
         ) {
+            if (blankPreview) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(96.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        PillActionButton(
+                            onClick = onCancelClick,
+                            backgroundColor = Color(0x381E1E24),
+                            borderColor = Color(0x26FF5252),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = null,
+                                    tint = Color(0xFFFF5252),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "Cancel",
+                                    color = Color(0xFFFF7B7B),
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                        val polishInk = if (isColorDark(palette.primaryVibrant)) Color.White else Color(0xFF042F2E)
+                        PillActionButton(
+                            onClick = onPolishClick,
+                            backgroundColor = palette.primaryVibrant,
+                            borderColor = Color.Transparent,
+                            modifier = Modifier.weight(1.4f)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(text = "✦", color = polishInk, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "Polish",
+                                    color = polishInk,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -138,6 +212,7 @@ fun FloatingDictationPopup(
                     onCompleteClick = onCompleteClick
                 )
             }
+            }
         }
 
         // 2. Docked Lifebuoy Ring (Unclipped, nested in notch)
@@ -146,6 +221,7 @@ fun FloatingDictationPopup(
             onDragStart = onDragStart,
             onDrag = onDrag,
             onDragEnd = onDragEnd,
+            spinning = state.isFinalizing || state.isPolishing,
             modifier = Modifier.align(Alignment.TopEnd)
         )
     }

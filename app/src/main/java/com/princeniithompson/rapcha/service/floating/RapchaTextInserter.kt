@@ -45,7 +45,8 @@ class RapchaTextInserter(private val context: Context) {
      */
     suspend fun insertTranscript(
         transcript: String,
-        inputMethod: Any? = null
+        inputMethod: Any? = null,
+        clipboardText: String = transcript
     ): InsertionResult = insertionMutex.withLock {
         if (transcript.isBlank()) {
             return@withLock InsertionResult.Failed
@@ -69,7 +70,7 @@ class RapchaTextInserter(private val context: Context) {
             is DirectInjectionResult.NoFocusedField -> {
                 // Requirement 2: Only fall back to clipboard when there is NO focused editable text field at all
                 Log.d(TAG, "No focused editable text field detected on screen. Falling back to clipboard.")
-                val fallbackSuccess = fallbackToClipboard(transcript)
+                val fallbackSuccess = fallbackToClipboard(clipboardText.ifBlank { transcript })
                 logDiagnosticInsertion(if (fallbackSuccess) "clipboard" else "failed", success = fallbackSuccess)
                 return@withLock if (fallbackSuccess) {
                     InsertionResult.SuccessClipboardFallback
@@ -140,13 +141,28 @@ class RapchaTextInserter(private val context: Context) {
         }
     }
 
-    private fun logDiagnosticInsertion(method: String, success: Boolean) {
+    /**
+     * Polish had no focused field to land in. The full text replaces the clipboard.
+     */
+    suspend fun copyNoField(text: String): InsertionResult = insertionMutex.withLock {
+        if (text.isBlank()) return@withLock InsertionResult.Failed
+        val copied = fallbackToClipboard(text)
+        logDiagnosticInsertion(
+            method = if (copied) "clipboard" else "failed",
+            success = copied,
+            reason = "no_field"
+        )
+        if (copied) InsertionResult.SuccessClipboardFallback else InsertionResult.Failed
+    }
+
+    private fun logDiagnosticInsertion(method: String, success: Boolean, reason: String? = null) {
         val label = if (success) method else "failed"
         val pkg = FloatingBubbleManager.currentForegroundPackage.value?.takeIf { it.isNotBlank() } ?: "unknown"
+        val why = if (reason.isNullOrBlank()) "" else " reason=$reason"
         AppLogRepository.logEvent(
             DiagnosticSource.BUBBLE,
             DiagnosticType.TEXT_INSERTED,
-            "method=$label package=$pkg"
+            "method=$label package=$pkg$why"
         )
     }
 
@@ -220,6 +236,37 @@ class RapchaTextInserter(private val context: Context) {
             durationMs = 30L
         )
         InjectionLogRepository.logInjection(event)
+    }
+
+    /**
+     * The Live stream already committed [previousLength] characters and the new
+     * snapshot is not a suffix of that paste. Delete them, then commit [fullText] once.
+     */
+    suspend fun rewriteCommitted(previousLength: Int, fullText: String): InsertionResult = insertionMutex.withLock {
+        if (fullText.isBlank()) return@withLock InsertionResult.Failed
+        val a11y = RapchaAccessibilityService.instance
+        val rewritten = a11y?.rewriteLastCommit(previousLength, fullText)
+        when (rewritten) {
+            true -> {
+                logDiagnosticInsertion("commitText", success = true)
+                InsertionResult.SuccessDirect
+            }
+            false -> {
+                logDiagnosticInsertion("failed", success = false)
+                InsertionResult.Failed
+            }
+            null -> {
+                if (a11y?.hasActiveEditableNode() == true) {
+                    Log.w(TAG, "Live rewrite has a field but no input connection. Refusing to append the full sentence.")
+                    logDiagnosticInsertion("failed", success = false)
+                    InsertionResult.Failed
+                } else {
+                    val copied = fallbackToClipboard(fullText)
+                    logDiagnosticInsertion(if (copied) "clipboard" else "failed", success = copied)
+                    if (copied) InsertionResult.SuccessClipboardFallback else InsertionResult.Failed
+                }
+            }
+        }
     }
 
     sealed interface InsertionResult {
