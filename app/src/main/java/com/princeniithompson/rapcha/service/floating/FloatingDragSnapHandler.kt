@@ -93,11 +93,12 @@ class FloatingDragSnapHandler(private val context: Context) {
         lp.x = OverlayDragMath.nextX(lp.x, dx.toInt(), screenWidth, windowWidth, lockX)
 
         if (!isExpanded) {
-            val bubbleSize = (56 * density).toInt()
-            val maxX = (screenWidth - bubbleSize).coerceAtLeast(0)
+            val windowSize = (BubbleChromeGeometry.IDLE_WINDOW_SIZE_DP * density).toInt()
+            val windowPaddingPx = (BubbleChromeGeometry.WINDOW_PADDING_DP * density).toInt()
+            val maxX = (screenWidth - windowSize).coerceAtLeast(0)
             val proposedX = lp.x.coerceIn(0, maxX)
 
-            val magneticCenterX = (screenWidth - bubbleSize) / 2
+            val magneticCenterX = (screenWidth - windowSize) / 2
             val magneticCenterY = maxY
             val magneticRadius = 135 * density
 
@@ -143,8 +144,9 @@ class FloatingDragSnapHandler(private val context: Context) {
         savedY = lp.y
 
         if (!isExpanded) {
-            val bubbleSize = (56 * density).toInt()
-            val magneticCenterX = (screenWidth - bubbleSize) / 2
+            val windowSize = (BubbleChromeGeometry.IDLE_WINDOW_SIZE_DP * density).toInt()
+            val windowPaddingPx = (BubbleChromeGeometry.WINDOW_PADDING_DP * density).toInt()
+            val magneticCenterX = (screenWidth - windowSize) / 2
             val maxY = (displayMetrics.heightPixels - (80 * density).toInt())
             val magneticRadius = 135 * density
 
@@ -157,13 +159,14 @@ class FloatingDragSnapHandler(private val context: Context) {
             val targetY: Int
             val snapRight: Boolean
 
+            val edgeMarginPx = (BubbleChromeGeometry.EDGE_MARGIN_DP * density).toInt()
             if (distToMagnetic < magneticRadius * 0.85f) {
                 targetX = magneticCenterX
                 targetY = maxY
                 snapRight = lp.x >= screenWidth / 2
             } else {
-                snapRight = (lp.x + bubbleSize / 2) >= screenWidth / 2
-                targetX = if (snapRight) (screenWidth - bubbleSize) else 0
+                snapRight = (lp.x + windowSize / 2) >= screenWidth / 2
+                targetX = if (snapRight) (screenWidth - windowSize - edgeMarginPx + windowPaddingPx) else (edgeMarginPx - windowPaddingPx)
                 targetY = lp.y
             }
 
@@ -239,7 +242,8 @@ class FloatingDragSnapHandler(private val context: Context) {
                     if (lp.width == WindowManager.LayoutParams.MATCH_PARENT) {
                         lp.x = 0
                     } else {
-                        lp.x = finalX.toInt().coerceIn(0, screenWidth - bubbleSize)
+                        val currentWindowWidth = if (lp.width > 0) lp.width else windowSize
+                        lp.x = finalX.toInt().coerceIn(0, screenWidth - currentWindowWidth)
                     }
                     lp.y = currentMainY.toInt()
 
@@ -269,8 +273,14 @@ class FloatingDragSnapHandler(private val context: Context) {
             }
         } else if (lp.width != WindowManager.LayoutParams.MATCH_PARENT) {
             val windowWidth = lp.width.coerceAtLeast(1)
+            val windowPaddingPx = (BubbleChromeGeometry.WINDOW_PADDING_DP * density).toInt()
             val snapRight = (lp.x + windowWidth / 2) >= screenWidth / 2
-            lp.x = if (snapRight) (screenWidth - windowWidth).coerceAtLeast(0) else 0
+            val edgeMarginPx = (BubbleChromeGeometry.EDGE_MARGIN_DP * density).toInt()
+            lp.x = if (snapRight) {
+                (screenWidth - windowWidth - edgeMarginPx + windowPaddingPx).coerceAtLeast(0)
+            } else {
+                (edgeMarginPx - windowPaddingPx).coerceAtLeast(0)
+            }
             isSnappedToRight = snapRight
             savedY = lp.y
             savePreferences(snapRight, savedY)

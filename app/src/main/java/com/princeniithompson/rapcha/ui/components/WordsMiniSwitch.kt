@@ -3,7 +3,7 @@ package com.princeniithompson.rapcha.ui.components
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -26,14 +27,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -41,149 +42,159 @@ import androidx.compose.ui.unit.sp
 import com.princeniithompson.rapcha.service.floating.BubbleChromeStyle
 
 /**
- * Raised Words/Mini control. Choosing a side saves that bubble.
- * The carousel scroll is the caller's job.
+ * Clean Words/Mini Segmented Switch
+ * 52dp tall, fully rounded (percent = 50), flat track, raised tonal thumb with shadow/highlight.
  */
 @Composable
 fun WordsMiniSwitch(
     active: BubbleChromeStyle,
     onChoose: (BubbleChromeStyle) -> Unit,
-    modifier: Modifier = Modifier,
-    rimColor: Color = Color(0xFFEEF6DC),
-    trackColor: Color = Color(0xFFB7D07A)
+    modifier: Modifier = Modifier
 ) {
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val wordsInteraction = remember { MutableInteractionSource() }
     val miniInteraction = remember { MutableInteractionSource() }
     val wordsPressed by wordsInteraction.collectIsPressedAsState()
     val miniPressed by miniInteraction.collectIsPressedAsState()
-    val pressed = wordsPressed || miniPressed
+    val isPressed = wordsPressed || miniPressed
+
+    val pressScale by animateFloatAsState(
+        targetValue = if (isPressed) 0.97f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+        label = "pressScale"
+    )
+
     val fraction by animateFloatAsState(
         targetValue = if (active == BubbleChromeStyle.COMPACT) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow),
-        label = "thumb"
+        animationSpec = spring(
+            dampingRatio = 0.75f,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "thumbFraction"
     )
+
     var trackSize by remember { mutableStateOf(IntSize.Zero) }
-    val rim = RoundedCornerShape(percent = 50)
+
+    val trackColor = if (isDark) {
+        Color.White.copy(alpha = 0.08f)
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+    }
+
+    val thumbColor = MaterialTheme.colorScheme.primaryContainer
+    val selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer
+    val unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+
+    val shape = RoundedCornerShape(percent = 50)
+
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(8.dp, rim, ambientColor = Color(0x33000000), spotColor = Color(0x33000000))
-            .clip(rim)
-            .drawBehind {
-                drawRect(rimColor)
-                drawLine(
-                    color = Color.White,
-                    start = Offset(0f, 1.dp.toPx()),
-                    end = Offset(size.width, 1.dp.toPx()),
-                    strokeWidth = 1.dp.toPx()
+            .height(52.dp)
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
+            .clip(shape)
+            .background(trackColor)
+            .padding(4.dp)
+            .onSizeChanged { trackSize = it }
+    ) {
+        // Draw Thumb
+        if (trackSize.width > 0) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .drawBehind {
+                        val thumbW = (size.width) / 2f
+                        val thumbH = size.height
+                        val left = fraction * thumbW
+                        val radius = thumbH / 2f
+
+                        if (isDark) {
+                            // Dark mode: faint top highlight
+                            drawRoundRect(
+                                color = thumbColor,
+                                topLeft = Offset(left, 0f),
+                                size = Size(thumbW, thumbH),
+                                cornerRadius = CornerRadius(radius, radius)
+                            )
+                            drawRoundRect(
+                                color = Color.White.copy(alpha = 0.12f),
+                                topLeft = Offset(left, 0f),
+                                size = Size(thumbW, 1.dp.toPx()),
+                                cornerRadius = CornerRadius(radius, radius)
+                            )
+                        } else {
+                            // Light mode: soft 2-layer ambient and spot shadow
+                            drawRoundRect(
+                                color = Color.Black.copy(alpha = 0.06f),
+                                topLeft = Offset(left, 1.5.dp.toPx()),
+                                size = Size(thumbW, thumbH),
+                                cornerRadius = CornerRadius(radius, radius)
+                            )
+                            drawRoundRect(
+                                color = Color.Black.copy(alpha = 0.08f),
+                                topLeft = Offset(left, 3.dp.toPx()),
+                                size = Size(thumbW, thumbH),
+                                cornerRadius = CornerRadius(radius, radius)
+                            )
+                            drawRoundRect(
+                                color = thumbColor,
+                                topLeft = Offset(left, 0f),
+                                size = Size(thumbW, thumbH),
+                                cornerRadius = CornerRadius(radius, radius)
+                            )
+                        }
+                    }
+            )
+        }
+
+        // Labels Row
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val wordsColor = lerp(selectedTextColor, unselectedTextColor, fraction)
+            val miniColor = lerp(unselectedTextColor, selectedTextColor, fraction)
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(shape)
+                    .clickable(
+                        interactionSource = wordsInteraction,
+                        indication = null
+                    ) { onChoose(BubbleChromeStyle.ORIGINAL) },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Words",
+                    color = wordsColor,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium
                 )
             }
-            .padding(6.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(60.dp)
-                .onSizeChanged { trackSize = it }
-                .clip(RoundedCornerShape(34.dp))
-                .drawBehind { drawRect(trackColor) }
-        ) {
-            if (trackSize.width > 0) {
-                val inset = 5.dp
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val insetPx = inset.toPx()
-                    val thumbW = (size.width - insetPx * 2f) / 2f
-                    val left = insetPx + fraction * thumbW
-                    val top = insetPx
-                    val height = size.height - insetPx * 2f
-                    val radius = height / 2f
-                    val darken = if (pressed) 0.05f else 0f
-                    val drop = if (pressed) 1.dp.toPx() else 4.dp.toPx()
-                    drawRoundRect(
-                        color = Color(0x33000000),
-                        topLeft = Offset(left, top + drop),
-                        size = androidx.compose.ui.geometry.Size(thumbW, height),
-                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius)
-                    )
-                    drawRoundRect(
-                        brush = Brush.verticalGradient(
-                            listOf(darken(0xFF9BC21F.toInt(), darken), darken(0xFF5F8A0F.toInt(), darken)),
-                            startY = top,
-                            endY = top + height
-                        ),
-                        topLeft = Offset(left, top),
-                        size = androidx.compose.ui.geometry.Size(thumbW, height),
-                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius)
-                    )
-                    clipRect(left, top, left + thumbW, top + height) {
-                        drawWoven(left, top, thumbW, height)
-                    }
-                    drawRoundRect(
-                        color = Color(0xFFEAF4CF),
-                        topLeft = Offset(left, top),
-                        size = androidx.compose.ui.geometry.Size(thumbW, height),
-                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius),
-                        style = Stroke(width = 3.dp.toPx())
-                    )
-                }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(shape)
+                    .clickable(
+                        interactionSource = miniInteraction,
+                        indication = null
+                    ) { onChoose(BubbleChromeStyle.COMPACT) },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Mini",
+                    color = miniColor,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium
+                )
             }
         }
-        Row(modifier = Modifier.fillMaxWidth().height(60.dp)) {
-            SwitchLabel("Words", Modifier.weight(1f).fillMaxHeight().clickable(
-                interactionSource = wordsInteraction,
-                indication = null
-            ) { onChoose(BubbleChromeStyle.ORIGINAL) })
-            SwitchLabel("Mini", Modifier.weight(1f).fillMaxHeight().clickable(
-                interactionSource = miniInteraction,
-                indication = null
-            ) { onChoose(BubbleChromeStyle.COMPACT) })
-        }
-    }
-}
-
-@Composable
-private fun SwitchLabel(text: String, modifier: Modifier) {
-    Box(modifier, contentAlignment = Alignment.Center) {
-        Text(
-            text = text,
-            color = Color.White,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium,
-            style = TextStyle(
-                shadow = Shadow(color = Color(0xFF1A2A0A), offset = Offset(0f, 1.5f), blurRadius = 2f)
-            )
-        )
-    }
-}
-
-private fun darken(argb: Int, amount: Float): Color {
-    val color = Color(argb)
-    val keep = 1f - amount
-    return Color(color.red * keep, color.green * keep, color.blue * keep, 1f)
-}
-
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWoven(
-    left: Float,
-    top: Float,
-    width: Float,
-    height: Float
-) {
-    val stripe = 6.dp.toPx()
-    val span = width + height
-    var offset = -span
-    while (offset < span) {
-        drawLine(
-            color = Color.White.copy(alpha = 0.18f),
-            start = Offset(left + offset, top + height),
-            end = Offset(left + offset + height, top),
-            strokeWidth = stripe
-        )
-        drawLine(
-            color = Color.Black.copy(alpha = 0.12f),
-            start = Offset(left + offset, top),
-            end = Offset(left + offset + height, top + height),
-            strokeWidth = stripe
-        )
-        offset += stripe * 2f
     }
 }

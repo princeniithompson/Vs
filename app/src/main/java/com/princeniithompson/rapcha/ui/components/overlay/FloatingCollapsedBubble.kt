@@ -16,6 +16,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -29,8 +30,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -40,6 +43,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.princeniithompson.rapcha.R
+import com.princeniithompson.rapcha.service.floating.BubbleChromeGeometry
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -81,11 +85,13 @@ fun FloatingCollapsedBubble(
         label = "pulse"
     )
 
+    val baseBubbleSize = BubbleChromeGeometry.CIRCLE_SIZE_DP.dp
+
     val animatedBubbleSize by animateDpAsState(
         targetValue = when {
             isScanMode -> 62.dp
-            isShrunk -> 45.dp
-            else -> 56.dp
+            isShrunk -> 38.dp
+            else -> baseBubbleSize
         },
         animationSpec = spring(
             dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
@@ -95,7 +101,7 @@ fun FloatingCollapsedBubble(
     )
 
     val animatedImageSize by animateDpAsState(
-        targetValue = if (isShrunk) 40.dp else 48.dp,
+        targetValue = if (isShrunk) 34.dp else baseBubbleSize,
         animationSpec = spring(
             dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
             stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
@@ -109,9 +115,12 @@ fun FloatingCollapsedBubble(
         label = "bubbleAlpha"
     )
 
+    val windowSize = if (isScanMode) 64.dp else BubbleChromeGeometry.IDLE_WINDOW_SIZE_DP.dp
+
     Box(
         modifier = modifier
-            .size(if (isScanMode) 64.dp else 56.dp)
+            .size(windowSize)
+            .padding(BubbleChromeGeometry.WINDOW_PADDING_DP.dp)
             .pointerInput(isScanMode) {
                 coroutineScope {
                     awaitEachGesture {
@@ -174,6 +183,12 @@ fun FloatingCollapsedBubble(
         Box(
             modifier = Modifier
                 .size(animatedBubbleSize)
+                .shadow(
+                    elevation = 4.dp,
+                    shape = CircleShape,
+                    ambientColor = Color.Black.copy(alpha = 0.28f),
+                    spotColor = Color.Black.copy(alpha = 0.28f)
+                )
                 .clip(CircleShape),
             contentAlignment = Alignment.Center
         ) {
@@ -251,12 +266,24 @@ fun FloatingCollapsedBubble(
                         )
                     }
                 }
-                Image(
-                    painter = painterResource(id = R.drawable.ic_lifebuoy_ring),
-                    contentDescription = "Floating voice bubble",
-                    alpha = animatedAlpha,
-                    modifier = Modifier.size(animatedImageSize)
-                )
+                Box(
+                    modifier = Modifier.size(animatedImageSize),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_lifebuoy_ring),
+                        contentDescription = "Floating voice bubble",
+                        alpha = animatedAlpha,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    // Dark center disc filling the hole (same color 0xFF111116, 56% of diameter)
+                    Box(
+                        modifier = Modifier
+                            .size(animatedImageSize * 0.56f)
+                            .clip(CircleShape)
+                            .background(Color(0xFF111116))
+                    )
+                }
 
                 // 3. AI Context Loaded Badge (Neon Cyan Sparkle Ring on top-right)
                 if (isContextLoaded) {

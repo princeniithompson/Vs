@@ -214,7 +214,7 @@ fun DrawScope.renderGlowAnimation(
         when (styleId) {
             // 1. Gemini Live Aurora (Dynamic)
             "gemini_live" -> {
-                val swellHeight = (42.dp.toPx() + (h * 0.72f) * effectiveAmp).coerceAtMost(h)
+                val swellHeight = (h * 0.35f + (h * 0.50f) * effectiveAmp).coerceAtMost(h * 0.85f)
                 val topY = (h - swellHeight).coerceAtLeast(0f)
                 drawRect(
                     brush = Brush.verticalGradient(
@@ -230,7 +230,7 @@ fun DrawScope.renderGlowAnimation(
                     topLeft = Offset(curL, topY),
                     size = Size(blockW, swellHeight)
                 )
-                val bloomRadius = blockW * 0.65f + (w * 0.35f) * effectiveAmp
+                val bloomRadius = blockW * 0.50f + (w * 0.35f) * effectiveAmp
                 drawRect(
                     brush = Brush.radialGradient(
                         colors = listOf(
@@ -239,7 +239,7 @@ fun DrawScope.renderGlowAnimation(
                             palette.secondary.copy(alpha = 0.22f * effAlpha),
                             Color.Transparent
                         ),
-                        center = Offset(blockCenterX, h + 12.dp.toPx()),
+                        center = Offset(blockCenterX, h * 0.85f),
                         radius = bloomRadius
                     ),
                     topLeft = Offset(curL, topY),
@@ -249,7 +249,7 @@ fun DrawScope.renderGlowAnimation(
 
             // 2. Gentle Wave Slice (Dynamic)
             "gentle_slice" -> {
-                val baseHeight = (28.dp.toPx() + 45.dp.toPx() * effectiveAmp).coerceAtMost(h)
+                val baseHeight = (h * 0.35f + (h * 0.50f) * effectiveAmp).coerceAtMost(h * 0.85f)
                 val topY = (h - baseHeight).coerceAtLeast(0f)
                 drawRect(
                     brush = Brush.verticalGradient(
@@ -273,8 +273,8 @@ fun DrawScope.renderGlowAnimation(
                     val x = curL + i * stepW
                     val normX = (i.toFloat() / steps.toFloat()) * 2f - 1f
                     val envelope = (1f - normX * normX * 0.70f).coerceAtLeast(0.2f)
-                    val waveOffset = sin(phase1.toDouble() + (x / w) * 2.5 * PI).toFloat()
-                    val waveH = 14.dp.toPx() + (36.dp.toPx() * effectiveAmp * envelope * (0.6f + 0.4f * waveOffset))
+                    val waveOffset = sin(phase1.toDouble() + (x / w) * 1.75 * PI).toFloat()
+                    val waveH = h * 0.20f + (h * 0.50f * effectiveAmp * envelope * (0.6f + 0.4f * waveOffset))
                     val y = (h - waveH).coerceAtLeast(0f)
                     slicePath.lineTo(x, y)
                 }
@@ -299,7 +299,7 @@ fun DrawScope.renderGlowAnimation(
             "northern_lights" -> {
                 val curtainCount = 5
                 for (c in 0 until curtainCount) {
-                    val curX = curL + (blockW / (curtainCount + 1)) * (c + 1) + (18.dp.toPx() * sin((phase1 + c * 1.2).toDouble())).toFloat()
+                    val curX = curL + (blockW / (curtainCount + 1)) * (c + 1) + (blockW * 0.10f * sin((phase1 + c * 1.2).toDouble())).toFloat()
                     val curW = blockW * 0.40f
                     val curAlpha = (0.25f + 0.55f * effectiveAmp) * (0.7f + 0.3f * cos((phase2 + c).toDouble()).toFloat()) * effAlpha
                     drawRect(
@@ -321,7 +321,7 @@ fun DrawScope.renderGlowAnimation(
 
             // 4. Flashlight Core Beacon (Dynamic)
             "pulsing_spotlight" -> {
-                val spotRadius = (blockW * 0.85f) * (0.75f + 0.45f * effectiveAmp)
+                val spotRadius = (blockW * 0.65f) * (0.65f + 0.45f * effectiveAmp)
                 drawRect(
                     brush = Brush.radialGradient(
                         colors = listOf(
@@ -330,7 +330,7 @@ fun DrawScope.renderGlowAnimation(
                             palette.secondary.copy(alpha = 0.20f * effAlpha),
                             Color.Transparent
                         ),
-                        center = Offset(blockCenterX, h + 15.dp.toPx()),
+                        center = Offset(blockCenterX, h * 0.85f),
                         radius = spotRadius
                     ),
                     topLeft = Offset(curL, 0f),
@@ -340,12 +340,12 @@ fun DrawScope.renderGlowAnimation(
 
             // 5. Dual Orbital Fusion (Dynamic)
             "dual_orbit" -> {
-                val orbitRadius = 45.dp.toPx() + 25.dp.toPx() * effectiveAmp
+                val orbitRadius = h * 0.45f + h * 0.30f * effectiveAmp
                 val angle = phase1.toDouble()
                 val o1X = blockCenterX + (cos(angle) * blockW * 0.26f).toFloat()
-                val o1Y = h * 0.78f + (sin(angle) * 16.dp.toPx()).toFloat()
+                val o1Y = h * 0.78f + (sin(angle) * h * 0.15f).toFloat()
                 val o2X = blockCenterX - (cos(angle) * blockW * 0.26f).toFloat()
-                val o2Y = h * 0.78f - (sin(angle) * 16.dp.toPx()).toFloat()
+                val o2Y = h * 0.78f - (sin(angle) * h * 0.15f).toFloat()
 
                 drawCircle(
                     brush = Brush.radialGradient(
@@ -377,7 +377,7 @@ fun DrawScope.renderGlowAnimation(
 
             // 6. Breathing Horizon (Dynamic)
             "breathing_horizon" -> {
-                val barH = (18.dp.toPx() + (h * 0.55f) * effectiveAmp).coerceAtMost(h)
+                val barH = (h * 0.35f + (h * 0.50f) * effectiveAmp).coerceAtMost(h * 0.85f)
                 val topY = (h - barH).coerceAtLeast(0f)
                 drawRect(
                     brush = Brush.verticalGradient(
@@ -397,8 +397,8 @@ fun DrawScope.renderGlowAnimation(
 
             // 7. Liquid Neon Pool (Dynamic)
             "liquid_neon" -> {
-                val poolCenterY = h + 10.dp.toPx()
-                val morphX = blockCenterX + (14.dp.toPx() * sin(phase1.toDouble())).toFloat()
+                val poolCenterY = h * 0.90f
+                val morphX = blockCenterX + (blockW * 0.08f * sin(phase1.toDouble())).toFloat()
                 drawRect(
                     brush = Brush.radialGradient(
                         colors = listOf(
@@ -408,7 +408,7 @@ fun DrawScope.renderGlowAnimation(
                             Color.Transparent
                         ),
                         center = Offset(morphX, poolCenterY),
-                        radius = blockW * 0.75f + (w * 0.35f) * effectiveAmp
+                        radius = blockW * 0.65f + (w * 0.35f) * effectiveAmp
                     ),
                     topLeft = Offset(curL, 0f),
                     size = Size(blockW, h)
@@ -417,7 +417,7 @@ fun DrawScope.renderGlowAnimation(
 
             // 8. Ethereal Nebula Vapor (Dynamic)
             "ethereal_vapor" -> {
-                val cloudSpread = blockW * 0.65f + 40.dp.toPx() * effectiveAmp
+                val cloudSpread = blockW * 0.55f + h * 0.45f * effectiveAmp
                 drawRect(
                     brush = Brush.radialGradient(
                         colors = listOf(
@@ -450,7 +450,7 @@ fun DrawScope.renderGlowAnimation(
             "prism_ripple" -> {
                 val rippleCount = 4
                 for (r in 1..rippleCount) {
-                    val rRadius = (22.dp.toPx() * r) + (35.dp.toPx() * effectiveAmp)
+                    val rRadius = (h * 0.25f * r) + (h * 0.45f * effectiveAmp)
                     drawCircle(
                         brush = Brush.radialGradient(
                             colors = listOf(
@@ -470,7 +470,7 @@ fun DrawScope.renderGlowAnimation(
 
             // 10. Electric Sunburst (Dynamic)
             "electric_sunburst" -> {
-                val rayH = (32.dp.toPx() + (h * 0.65f) * effectiveAmp).coerceAtMost(h)
+                val rayH = (h * 0.35f + (h * 0.50f) * effectiveAmp).coerceAtMost(h * 0.85f)
                 val topY = (h - rayH).coerceAtLeast(0f)
                 drawRect(
                     brush = Brush.verticalGradient(
@@ -486,6 +486,7 @@ fun DrawScope.renderGlowAnimation(
                     size = Size(blockW, rayH)
                 )
                 val rayCenter = Offset(blockCenterX, h)
+                val sunburstRadius = h * 0.55f + h * 0.45f * effectiveAmp
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
@@ -494,16 +495,16 @@ fun DrawScope.renderGlowAnimation(
                             Color.Transparent
                         ),
                         center = rayCenter,
-                        radius = 48.dp.toPx() + 65.dp.toPx() * effectiveAmp
+                        radius = sunburstRadius
                     ),
                     center = rayCenter,
-                    radius = 48.dp.toPx() + 65.dp.toPx() * effectiveAmp
+                    radius = sunburstRadius
                 )
             }
 
             // 11. Cyberpunk Synthwave (Fixed Signature Colors: Neon Cyan #00E5FF & Hot Pink #FF007F)
             "cyberpunk_synth" -> {
-                val cyberH = (30.dp.toPx() + (h * 0.68f) * effectiveAmp).coerceAtMost(h)
+                val cyberH = (h * 0.35f + (h * 0.50f) * effectiveAmp).coerceAtMost(h * 0.85f)
                 val topY = (h - cyberH).coerceAtLeast(0f)
                 drawRect(
                     brush = Brush.horizontalGradient(
@@ -534,7 +535,7 @@ fun DrawScope.renderGlowAnimation(
 
             // 12. Supernova Flash (Dynamic)
             "supernova_bloom" -> {
-                val coreRadius = 40.dp.toPx() + 85.dp.toPx() * effectiveAmp
+                val coreRadius = h * 0.45f + h * 0.65f * effectiveAmp
                 drawRect(
                     brush = Brush.radialGradient(
                         colors = listOf(
@@ -553,7 +554,7 @@ fun DrawScope.renderGlowAnimation(
 
             // 13. Zenith Light Pillar (Dynamic)
             "zenith_pillar" -> {
-                val pillarW = (60.dp.toPx() + 50.dp.toPx() * effectiveAmp).coerceAtMost(blockW)
+                val pillarW = (blockW * 0.45f + blockW * 0.40f * effectiveAmp).coerceAtMost(blockW)
                 drawRect(
                     brush = Brush.horizontalGradient(
                         colors = listOf(
@@ -572,7 +573,7 @@ fun DrawScope.renderGlowAnimation(
 
             // 14. Bioluminescent Shimmer (Dynamic)
             "bioluminescent_deep" -> {
-                val bioH = (26.dp.toPx() + 55.dp.toPx() * effectiveAmp).coerceAtMost(h)
+                val bioH = (h * 0.35f + (h * 0.50f) * effectiveAmp).coerceAtMost(h * 0.85f)
                 val topY = (h - bioH).coerceAtLeast(0f)
                 val shimmerAlpha = (0.35f + 0.45f * effectiveAmp) * (0.85f + 0.15f * sin(phase2.toDouble() * 2).toFloat())
                 drawRect(
@@ -594,11 +595,11 @@ fun DrawScope.renderGlowAnimation(
             "sunset_mirage" -> {
                 val sunsetH = if (p > 0.001f && p < 0.999f) {
                     val cr = if (p < 0.42f) (p / 0.42f).coerceIn(0f, 1f) else 1f
-                    val activeH = (35.dp.toPx() + (h * 0.65f) * effectiveAmp).coerceAtMost(h)
-                    val calmH = 35.dp.toPx().coerceAtMost(h)
+                    val activeH = (h * 0.35f + (h * 0.50f) * effectiveAmp).coerceAtMost(h * 0.85f)
+                    val calmH = (h * 0.35f).coerceAtMost(h * 0.85f)
                     activeH * (1f - cr) + calmH * cr
                 } else {
-                    (35.dp.toPx() + (h * 0.65f) * effectiveAmp).coerceAtMost(h)
+                    (h * 0.35f + (h * 0.50f) * effectiveAmp).coerceAtMost(h * 0.85f)
                 }
                 val topY = (h - sunsetH).coerceAtLeast(0f)
                 drawRect(
@@ -619,9 +620,9 @@ fun DrawScope.renderGlowAnimation(
 
             // 16. Cosmic Galaxy Vortex (Dynamic)
             "cosmic_vortex" -> {
-                val vortexRadius = blockW * 0.65f + 35.dp.toPx() * effectiveAmp
-                val vx = blockCenterX + (10.dp.toPx() * cos(phase1.toDouble())).toFloat()
-                val vy = h + (8.dp.toPx() * sin(phase1.toDouble())).toFloat()
+                val vortexRadius = blockW * 0.55f + h * 0.45f * effectiveAmp
+                val vx = blockCenterX + (blockW * 0.08f * cos(phase1.toDouble())).toFloat()
+                val vy = h + (h * 0.15f * sin(phase1.toDouble())).toFloat()
                 drawRect(
                     brush = Brush.radialGradient(
                         colors = listOf(
@@ -646,8 +647,8 @@ fun DrawScope.renderGlowAnimation(
                 ribbonPath.moveTo(curL, h)
                 for (i in 0..steps) {
                     val x = curL + i * stepW
-                    val wave = sin(phase1.toDouble() + (x / w) * 3.0 * PI).toFloat()
-                    val waveH = 12.dp.toPx() + (32.dp.toPx() * effectiveAmp * (0.5f + 0.5f * wave))
+                    val wave = sin(phase1.toDouble() + (x / w) * 1.75 * PI).toFloat()
+                    val waveH = h * 0.20f + (h * 0.45f * effectiveAmp * (0.5f + 0.5f * wave))
                     val y = (h - waveH).coerceAtLeast(0f)
                     ribbonPath.lineTo(x, y)
                 }
@@ -662,7 +663,7 @@ fun DrawScope.renderGlowAnimation(
                             palette.primaryVibrant.copy(alpha = 0.75f * effAlpha),
                             Color.Transparent
                         ),
-                        startY = (h - 45.dp.toPx()).coerceAtLeast(0f),
+                        startY = (h - h * 0.65f).coerceAtLeast(0f),
                         endY = h
                     )
                 )
@@ -670,7 +671,7 @@ fun DrawScope.renderGlowAnimation(
 
             // 18. Plasma Fusion Wave (Dynamic)
             "plasma_fusion" -> {
-                val plasmaH = (30.dp.toPx() + 65.dp.toPx() * effectiveAmp).coerceAtMost(h)
+                val plasmaH = (h * 0.35f + (h * 0.50f) * effectiveAmp).coerceAtMost(h * 0.85f)
                 val topY = (h - plasmaH).coerceAtLeast(0f)
                 drawRect(
                     brush = Brush.verticalGradient(
@@ -702,7 +703,7 @@ fun DrawScope.renderGlowAnimation(
             // 19. Quantum Halos (Dynamic)
             "quantum_halos" -> {
                 for (k in 1..3) {
-                    val kRadius = (35.dp.toPx() * k) + (45.dp.toPx() * effectiveAmp)
+                    val kRadius = (h * 0.35f * k) + (h * 0.45f * effectiveAmp)
                     drawCircle(
                         brush = Brush.radialGradient(
                             colors = listOf(
@@ -721,7 +722,7 @@ fun DrawScope.renderGlowAnimation(
 
             // 20. Liquid Specular Glass (Dynamic)
             "liquid_glass" -> {
-                val glassH = (22.dp.toPx() + 45.dp.toPx() * effectiveAmp).coerceAtMost(h)
+                val glassH = (h * 0.35f + (h * 0.50f) * effectiveAmp).coerceAtMost(h * 0.85f)
                 val topY = (h - glassH).coerceAtLeast(0f)
                 drawRect(
                     brush = Brush.verticalGradient(
@@ -741,7 +742,7 @@ fun DrawScope.renderGlowAnimation(
 
             // 21. Velvet Ambient Calm (Dynamic)
             "velvet_aura" -> {
-                val calmH = (20.dp.toPx() + 35.dp.toPx() * effectiveAmp).coerceAtMost(h)
+                val calmH = (h * 0.35f + (h * 0.50f) * effectiveAmp).coerceAtMost(h * 0.85f)
                 val topY = (h - calmH).coerceAtLeast(0f)
                 drawRect(
                     brush = Brush.verticalGradient(
@@ -760,7 +761,7 @@ fun DrawScope.renderGlowAnimation(
 
             else -> {
                 // Fallback to Breathing Horizon (Default)
-                val barH = (18.dp.toPx() + (h * 0.55f) * effectiveAmp).coerceAtMost(h)
+                val barH = (h * 0.35f + (h * 0.50f) * effectiveAmp).coerceAtMost(h * 0.85f)
                 val topY = (h - barH).coerceAtLeast(0f)
                 drawRect(
                     brush = Brush.verticalGradient(

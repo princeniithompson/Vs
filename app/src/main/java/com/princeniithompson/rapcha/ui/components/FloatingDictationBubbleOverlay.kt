@@ -104,7 +104,8 @@ fun FloatingDictationPopup(
      * Settings preview only. The live overlay leaves this false, so it still
      * shows the transcript and the live Cancel/Complete row.
      */
-    blankPreview: Boolean = false
+    blankPreview: Boolean = false,
+    mimicTalkingWhenSilent: Boolean = false
 ) {
     val isNetworkProblem by com.princeniithompson.rapcha.service.FloatingBubbleManager.isNetworkProblem.collectAsState()
     val offlineRetry by com.princeniithompson.rapcha.service.FloatingBubbleManager.offlineRetry.collectAsState()
@@ -115,7 +116,8 @@ fun FloatingDictationPopup(
         isRecording = isRecording,
         isPendingFinalizing = isPendingFinalizing,
         isPolishing = isPolishing,
-        audioAmplitude = audioAmplitude
+        audioAmplitude = audioAmplitude,
+        mimicTalkingWhenSilent = mimicTalkingWhenSilent
     )
     val notchedShape = rememberNotchedContainerShape()
 

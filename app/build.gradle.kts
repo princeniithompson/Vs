@@ -25,11 +25,7 @@ android {
       useSupportLibrary = true
     }
 
-    val gitCommit = runCatching {
-      providers.exec {
-        commandLine("git", "rev-parse", "HEAD")
-      }.standardOutput.asText.get().trim()
-    }.getOrDefault("unknown")
+    val gitCommit = "imported"
     buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
   }
 

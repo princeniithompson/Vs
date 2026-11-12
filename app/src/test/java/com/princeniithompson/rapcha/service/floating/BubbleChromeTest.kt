@@ -118,11 +118,13 @@ class BubbleChromeTest {
         assertEquals("01:24", SessionClockFormat.format(84))
         assertEquals("10:00", SessionClockFormat.format(600))
         assertEquals("10:00", SessionClockFormat.format(601))
-        assertEquals(47, BubbleChromeGeometry.CANCEL_DP)
+        assertEquals(48, BubbleChromeGeometry.CIRCLE_SIZE_DP)
+        assertEquals(48, BubbleChromeGeometry.CANCEL_DP)
         assertEquals(90, BubbleChromeGeometry.PILL_WIDTH_DP)
-        assertEquals(47, BubbleChromeGeometry.PILL_HEIGHT_DP)
-        assertEquals(47, BubbleChromeGeometry.COMPLETE_DP)
-        assertEquals(6, BubbleChromeGeometry.GAP_DP)
+        assertEquals(48, BubbleChromeGeometry.PILL_HEIGHT_DP)
+        assertEquals(48, BubbleChromeGeometry.COMPLETE_DP)
+        assertEquals(5, BubbleChromeGeometry.GAP_DP)
+        assertEquals(20, BubbleChromeGeometry.EDGE_MARGIN_DP)
     }
 
     @Test

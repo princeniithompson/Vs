@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Check
@@ -101,6 +102,7 @@ import com.princeniithompson.rapcha.ui.components.DiagnosticsBottomSheet
 import com.princeniithompson.rapcha.ui.components.GlowAnimationCatalogue
 import com.princeniithompson.rapcha.ui.components.GlowStylesBottomSheet
 import com.princeniithompson.rapcha.ui.components.PulsatingRecordButton
+import com.princeniithompson.rapcha.service.FloatingBubbleManager
 import com.princeniithompson.rapcha.ui.screens.DictionaryScreen
 import com.princeniithompson.rapcha.ui.screens.HomeScreen
 import com.princeniithompson.rapcha.ui.screens.onboarding.AccessibilityDisclosureSheet
@@ -108,7 +110,8 @@ import kotlinx.coroutines.launch
 
 enum class MainScreenTab {
     HOME,
-    DICTIONARY
+    DICTIONARY,
+    STYLE
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -836,7 +839,7 @@ fun VoiceTypingScreen(
                 WisprFlowBottomNav(
                     selectedTab = selectedTab,
                     onTabSelected = { selectedTab = it },
-                    onOpenStyle = { showGlowStylesSheet = true },
+                    onOpenStyle = { selectedTab = MainScreenTab.STYLE },
                     onOpenSnippets = { showDiagnostics = true }
                 )
             },
@@ -866,6 +869,32 @@ fun VoiceTypingScreen(
                         },
                         draftTerm = dictionaryDraft,
                         onDraftConsumed = onDictionaryDraftConsumed,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding)
+                    )
+                }
+                MainScreenTab.STYLE -> {
+                    val chrome by FloatingBubbleManager.bubbleChrome.collectAsState()
+                    val tone by FloatingBubbleManager.selectedColorTone.collectAsState()
+                    val recordingNow by FloatingBubbleManager.isRecording.collectAsState()
+                    com.princeniithompson.rapcha.ui.components.RecordingGlowScreen(
+                        selectedStyleId = selectedGlowStyleId,
+                        activeChrome = chrome,
+                        tone = tone,
+                        idle = !recordingNow,
+                        onSelectStyle = { styleId ->
+                            viewModel.setGlowStyle(styleId)
+                        },
+                        onChooseChrome = { style ->
+                            FloatingBubbleManager.setBubbleChrome(context, style)
+                        },
+                        onChooseTone = { mode ->
+                            FloatingBubbleManager.setColorTone(context, mode)
+                        },
+                        onDismiss = {
+                            selectedTab = MainScreenTab.HOME
+                        },
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(innerPadding)
@@ -969,62 +998,58 @@ private fun WisprFlowBottomNav(
     onOpenSnippets: () -> Unit
 ) {
     Surface(
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 3.dp,
+        color = MaterialTheme.colorScheme.background,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("wispr_bottom_nav")
     ) {
-        Column {
-            HorizontalDivider(
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
-                thickness = 0.8.dp
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp, horizontal = 12.dp),
+            horizontalArrangement = Arrangement.SpaceAround,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 1. Home Tab
+            val isHome = selectedTab == MainScreenTab.HOME
+            BottomNavItem(
+                icon = Icons.Filled.Home,
+                label = "Home",
+                isSelected = isHome,
+                onClick = { onTabSelected(MainScreenTab.HOME) },
+                testTag = "nav_tab_home"
             )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp, horizontal = 12.dp),
-                horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // 1. Home Tab
-                val isHome = selectedTab == MainScreenTab.HOME
-                BottomNavItem(
-                    icon = Icons.Filled.Home,
-                    label = "Home",
-                    isSelected = isHome,
-                    onClick = { onTabSelected(MainScreenTab.HOME) },
-                    testTag = "nav_tab_home"
-                )
 
-                // 2. Dictionary Tab
-                val isDictionary = selectedTab == MainScreenTab.DICTIONARY
-                BottomNavItem(
-                    icon = Icons.Filled.Description,
-                    label = "Dictionary",
-                    isSelected = isDictionary,
-                    onClick = { onTabSelected(MainScreenTab.DICTIONARY) },
-                    testTag = "nav_tab_dictionary"
-                )
+            // 2. Dictionary Tab
+            val isDictionary = selectedTab == MainScreenTab.DICTIONARY
+            BottomNavItem(
+                icon = Icons.Filled.Description,
+                label = "Dictionary",
+                isSelected = isDictionary,
+                onClick = { onTabSelected(MainScreenTab.DICTIONARY) },
+                testTag = "nav_tab_dictionary"
+            )
 
-                // 3. Style Tab
-                BottomNavItem(
-                    icon = Icons.Filled.FormatSize,
-                    label = "Style",
-                    isSelected = false,
-                    onClick = onOpenStyle,
-                    testTag = "nav_tab_style"
-                )
+            // 3. Style Tab
+            val isStyle = selectedTab == MainScreenTab.STYLE
+            BottomNavItem(
+                icon = Icons.Filled.Palette,
+                label = "Style",
+                isSelected = isStyle,
+                onClick = onOpenStyle,
+                testTag = "nav_tab_style"
+            )
 
-                // 4. Snippets Tab
-                BottomNavItem(
-                    icon = Icons.Filled.ContentCut,
-                    label = "Snippets",
-                    isSelected = false,
-                    onClick = onOpenSnippets,
-                    testTag = "nav_tab_snippets"
-                )
-            }
+            // 4. Snippets Tab
+            BottomNavItem(
+                icon = Icons.Filled.ContentCut,
+                label = "Snippets",
+                isSelected = false,
+                onClick = onOpenSnippets,
+                testTag = "nav_tab_snippets"
+            )
         }
     }
 }

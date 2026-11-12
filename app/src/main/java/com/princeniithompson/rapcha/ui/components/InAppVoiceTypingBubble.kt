@@ -230,13 +230,10 @@ fun InAppVoiceTypingBubble(
                 )
 
                 // Render Aurora Glow (strictly clipped inside container)
-                val voiceWeight = (amplitude / 0.18f).coerceIn(0f, 1f)
-                val baseAmp = if (isRecording) {
-                    ((1f - voiceWeight) * idleBreathing + amplitude).coerceIn(0.08f, 1f)
-                } else {
-                    0.06f
-                }
-                val glowBrightness = 0.38f + 0.62f * baseAmp
+                val simulatedTalking = 0.45f + 0.35f * kotlin.math.abs(kotlin.math.sin(phase1 * 2f)) + 0.2f * kotlin.math.abs(kotlin.math.cos(phase2 * 1.5f))
+                val effectiveAmp = if (amplitude > 0.05f) amplitude.coerceIn(0.15f, 1f) else simulatedTalking.coerceIn(0.25f, 0.85f)
+                val baseAmp = effectiveAmp
+                val glowBrightness = 0.45f + 0.55f * baseAmp
 
                 if (glowBrightness > 0.005f) {
                     renderGlowAnimation(

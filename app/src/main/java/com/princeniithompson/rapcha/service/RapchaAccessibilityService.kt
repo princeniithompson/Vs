@@ -123,33 +123,32 @@ open class RapchaAccessibilityService : AccessibilityService() {
         }
 
         val info = serviceInfo ?: AccessibilityServiceInfo()
-        info.eventTypes = AccessibilityEvent.TYPE_VIEW_FOCUSED or
+        val targetEventTypes = AccessibilityEvent.TYPE_VIEW_FOCUSED or
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                 AccessibilityEvent.TYPE_WINDOWS_CHANGED or
                 AccessibilityEvent.TYPE_VIEW_CLICKED or
                 AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
                 AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED or
                 AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
-        info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
 
-        // FLAG_RETRIEVE_INTERACTIVE_WINDOWS: Required to extract window titles across all active foreground applications
-        // FLAG_REPORT_VIEW_IDS: Required to resolve view resource IDs in target editable fields for direct text injection
-        // FLAG_INCLUDE_NOT_IMPORTANT_VIEWS: Required to access nested or custom editor view hierarchies in rich text and messaging inputs
-        // FLAG_INPUT_METHOD_EDITOR (API 33+): binds an input connection so commitText can type into the focused editor
-        var flags = info.flags or
+        var targetFlags = info.flags or
                 AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                 AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                 AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            flags = flags or AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
-            Log.i(TAG, "FLAG_INPUT_METHOD_EDITOR enabled (API ${Build.VERSION.SDK_INT})")
-        } else {
-            Log.i(TAG, "FLAG_INPUT_METHOD_EDITOR skipped; API ${Build.VERSION.SDK_INT} is below 33")
+            targetFlags = targetFlags or AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
         }
 
-        info.flags = flags
-        info.notificationTimeout = 0
-        serviceInfo = info
+        // Only update serviceInfo if configuration actually differs from static XML declarations
+        // to prevent desynchronizing bindInput/unbindInput session state in InputMethodManagerService
+        if (info.flags != targetFlags || info.eventTypes != targetEventTypes || info.feedbackType != AccessibilityServiceInfo.FEEDBACK_GENERIC) {
+            info.eventTypes = targetEventTypes
+            info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            info.flags = targetFlags
+            info.notificationTimeout = 0
+            serviceInfo = info
+        }
 
         // Check initial keyboard state, then watch for a stuck bubble and a frozen main thread.
         // The stall watchdog uses uptimeMillis and stays quiet while the screen is off.

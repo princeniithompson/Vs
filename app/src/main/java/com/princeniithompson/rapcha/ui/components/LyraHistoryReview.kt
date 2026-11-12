@@ -27,13 +27,13 @@ import com.princeniithompson.rapcha.data.LyraReviewTag
 import com.princeniithompson.rapcha.data.VoiceSessionRecord
 
 @Composable
-fun LyraHistoryStages(record: VoiceSessionRecord) {
+fun LyraHistoryStages(record: VoiceSessionRecord, isDark: Boolean = false) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
         if (!record.rawNote.isNullOrBlank() && record.stage("raw") != null) {
             Text(
                 text = record.rawNote,
                 fontSize = 12.sp,
-                color = Color(0xFF475569),
+                color = if (isDark) Color(0xFF94A3B8) else Color(0xFF475569),
                 modifier = Modifier.padding(bottom = 8.dp)
             )
         }
@@ -42,13 +42,13 @@ fun LyraHistoryStages(record: VoiceSessionRecord) {
                 text = stage.label,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF334155)
+                color = if (isDark) Color(0xFFCBD5E1) else Color(0xFF334155)
             )
             Text(
                 text = stage.text,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
-                color = Color(0xFF1A202C),
+                color = if (isDark) Color(0xFFF8FAFC) else Color(0xFF1A202C),
                 modifier = Modifier.padding(bottom = 8.dp)
             )
         }

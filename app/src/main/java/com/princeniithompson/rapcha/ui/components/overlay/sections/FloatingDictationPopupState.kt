@@ -41,10 +41,14 @@ class FloatingDictationPopupState(
     val isFinalizing: Boolean,
     val isPolishing: Boolean,
     val scrollState: ScrollState,
+    val mimicTalkingWhenSilent: Boolean = false,
     private val onLocalCompleteTriggered: () -> Unit
 ) {
     val effectiveAmp: Float
         get() {
+            if (mimicTalkingWhenSilent) {
+                return animatedAmplitude.coerceIn(0.85f, 1.0f)
+            }
             val voiceWeight = (animatedAmplitude / 0.18f).coerceIn(0f, 1f)
             return ((1f - voiceWeight) * idleBreathing + animatedAmplitude).coerceIn(0.08f, 1f)
         }
@@ -60,7 +64,8 @@ fun rememberFloatingDictationPopupState(
     isRecording: Boolean,
     isPendingFinalizing: Boolean,
     isPolishing: Boolean,
-    audioAmplitude: Float
+    audioAmplitude: Float,
+    mimicTalkingWhenSilent: Boolean = false
 ): FloatingDictationPopupState {
     val infiniteTransition = rememberInfiniteTransition(label = "auroraGlow")
 
@@ -78,7 +83,7 @@ fun rememberFloatingDictationPopupState(
         initialValue = 0f,
         targetValue = (2f * Math.PI).toFloat(),
         animationSpec = infiniteRepeatable(
-            animation = tween(2600, easing = LinearEasing),
+            animation = tween(2200, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "phase1"
@@ -88,14 +93,19 @@ fun rememberFloatingDictationPopupState(
         initialValue = (2f * Math.PI).toFloat(),
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(3600, easing = LinearEasing),
+            animation = tween(3000, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "phase2"
     )
 
+    val simulatedTalking = 0.88f + 0.12f * kotlin.math.abs(kotlin.math.sin(phase1 * 3.2f))
     // Asymmetric audio amplitude tracking
-    val rawTargetAmp = if (isRecording) audioAmplitude.coerceIn(0f, 1f) else 0f
+    val rawTargetAmp = if (isRecording || mimicTalkingWhenSilent) {
+        if (audioAmplitude > 0.05f) audioAmplitude.coerceIn(0f, 1f)
+        else if (mimicTalkingWhenSilent) simulatedTalking.coerceIn(0.85f, 1.0f)
+        else 0f
+    } else 0f
     var prevTargetAmp by remember { mutableFloatStateOf(0f) }
     val isAttacking = rawTargetAmp > prevTargetAmp
 
@@ -195,6 +205,7 @@ fun rememberFloatingDictationPopupState(
             isFinalizing = isFinalizing,
             isPolishing = isPolishing,
             scrollState = scrollState,
+            mimicTalkingWhenSilent = mimicTalkingWhenSilent,
             onLocalCompleteTriggered = {
                 isCompletingLocally = true
             }

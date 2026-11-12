@@ -110,12 +110,14 @@ class FloatingOverlayWindowManager(private val context: Context) {
         val density = displayMetrics.density
         val screenHeight = displayMetrics.heightPixels
         val screenWidth = displayMetrics.widthPixels
-        val bubbleSize = (56 * density).toInt()
+        val windowSize = (BubbleChromeGeometry.IDLE_WINDOW_SIZE_DP * density).toInt()
+        val windowPaddingPx = (BubbleChromeGeometry.WINDOW_PADDING_DP * density).toInt()
 
         val topY = (36 * density).toInt()
         val maxY = (screenHeight - (80 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
+        val edgeMarginPx = (BubbleChromeGeometry.EDGE_MARGIN_DP * density).toInt()
         val initialY = dragSnapHandler.savedY.coerceIn(topY, maxY)
-        val initialX = if (dragSnapHandler.isSnappedToRight) (screenWidth - bubbleSize) else 0
+        val initialX = if (dragSnapHandler.isSnappedToRight) (screenWidth - windowSize - edgeMarginPx + windowPaddingPx) else (edgeMarginPx - windowPaddingPx)
 
         val windowType = if (accessService != null) {
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
@@ -127,8 +129,8 @@ class FloatingOverlayWindowManager(private val context: Context) {
         }
 
         layoutParams = WindowManager.LayoutParams(
-            bubbleSize,
-            bubbleSize,
+            windowSize,
+            windowSize,
             windowType,
             OVERLAY_WINDOW_FLAGS,
             PixelFormat.TRANSLUCENT
@@ -243,6 +245,13 @@ class FloatingOverlayWindowManager(private val context: Context) {
                 }
             }
         }
+        scope.launch {
+            FloatingBubbleManager.bubbleChrome.collect {
+                if (overlayExpanded.value) {
+                    expandPanel()
+                }
+            }
+        }
 
         resetInactivityTimer()
     }
@@ -284,30 +293,26 @@ class FloatingOverlayWindowManager(private val context: Context) {
         val topY = (36 * density).toInt()
         val maxY = (screenHeight - (320 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
 
-        val compact = FloatingBubbleManager.bubbleChrome.value ==
-            com.princeniithompson.rapcha.service.floating.BubbleChromeStyle.COMPACT
-        if (compact) {
-            val rowWidth = (
-                com.princeniithompson.rapcha.service.floating.BubbleChromeGeometry.CANCEL_DP +
-                    com.princeniithompson.rapcha.service.floating.BubbleChromeGeometry.GAP_DP +
-                    com.princeniithompson.rapcha.service.floating.BubbleChromeGeometry.PILL_WIDTH_DP +
-                    com.princeniithompson.rapcha.service.floating.BubbleChromeGeometry.GAP_DP +
-                    com.princeniithompson.rapcha.service.floating.BubbleChromeGeometry.COMPLETE_DP +
-                    16
-                ) * density
-            lp.width = rowWidth.toInt()
-            lp.height = WindowManager.LayoutParams.WRAP_CONTENT
+        val isCompact = FloatingBubbleManager.bubbleChrome.value == BubbleChromeStyle.COMPACT
+        val edgeMarginPx = (BubbleChromeGeometry.EDGE_MARGIN_DP * density).toInt()
+        val windowPaddingPx = (BubbleChromeGeometry.WINDOW_PADDING_DP * density).toInt()
+        if (isCompact) {
+            val windowWidth = (BubbleChromeGeometry.RECORDING_WINDOW_WIDTH_DP * density).toInt()
+            val windowHeight = (BubbleChromeGeometry.RECORDING_WINDOW_HEIGHT_DP * density).toInt()
+            lp.width = windowWidth
+            lp.height = windowHeight
+            lp.x = if (dragSnapHandler.isSnappedToRight) {
+                (displayMetrics.widthPixels - windowWidth - edgeMarginPx + windowPaddingPx).coerceAtLeast(0)
+            } else {
+                (edgeMarginPx - windowPaddingPx).coerceAtLeast(0)
+            }
         } else {
             lp.width = WindowManager.LayoutParams.MATCH_PARENT
             lp.height = WindowManager.LayoutParams.WRAP_CONTENT
+            lp.x = 0
         }
         lp.gravity = Gravity.TOP or Gravity.START
         lp.flags = OVERLAY_WINDOW_FLAGS
-        lp.x = if (compact && dragSnapHandler.isSnappedToRight) {
-            (displayMetrics.widthPixels - lp.width).coerceAtLeast(0)
-        } else {
-            0
-        }
         lp.y = dragSnapHandler.savedY.coerceIn(topY, maxY)
 
         try {
@@ -324,16 +329,18 @@ class FloatingOverlayWindowManager(private val context: Context) {
         val density = displayMetrics.density
         val screenWidth = displayMetrics.widthPixels
         val screenHeight = displayMetrics.heightPixels
-        val bubbleSize = (56 * density).toInt()
+        val windowSize = (BubbleChromeGeometry.IDLE_WINDOW_SIZE_DP * density).toInt()
+        val edgeMarginPx = (BubbleChromeGeometry.EDGE_MARGIN_DP * density).toInt()
+        val windowPaddingPx = (BubbleChromeGeometry.WINDOW_PADDING_DP * density).toInt()
 
         val topY = (36 * density).toInt()
         val maxY = (screenHeight - (80 * density).toInt()).coerceAtLeast(topY + (60 * density).toInt())
 
-        lp.width = bubbleSize
-        lp.height = bubbleSize
+        lp.width = windowSize
+        lp.height = windowSize
         lp.gravity = Gravity.TOP or Gravity.START
         lp.flags = OVERLAY_WINDOW_FLAGS
-        lp.x = if (dragSnapHandler.isSnappedToRight) (screenWidth - bubbleSize) else 0
+        lp.x = if (dragSnapHandler.isSnappedToRight) (screenWidth - windowSize - edgeMarginPx + windowPaddingPx) else (edgeMarginPx - windowPaddingPx)
         lp.y = dragSnapHandler.savedY.coerceIn(topY, maxY)
 
         try {

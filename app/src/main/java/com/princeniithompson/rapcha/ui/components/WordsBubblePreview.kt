@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -73,39 +74,39 @@ fun WordsBubblePreview(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 PreviewPill(
-                    fill = Color(0x66000000),
-                    border = Color(0x80FF8C78),
+                    fill = MaterialTheme.colorScheme.surface.copy(alpha = 0.25f),
+                    border = MaterialTheme.colorScheme.error.copy(alpha = 0.5f),
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.Close,
                         contentDescription = null,
-                        tint = Color(RecordingGlowColors.CANCEL_TEXT),
+                        tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Cancel",
-                        color = Color(RecordingGlowColors.CANCEL_TEXT),
+                        color = MaterialTheme.colorScheme.error,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium
                     )
                 }
                 PreviewPill(
-                    fill = Color(RecordingGlowColors.POLISH),
+                    fill = MaterialTheme.colorScheme.primary,
                     border = Color.Transparent,
                     modifier = Modifier.weight(1.4f)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.AutoAwesome,
                         contentDescription = null,
-                        tint = Color(RecordingGlowColors.POLISH_TEXT),
+                        tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Polish",
-                        color = Color(RecordingGlowColors.POLISH_TEXT),
+                        color = MaterialTheme.colorScheme.onPrimary,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium
                     )

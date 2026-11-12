@@ -52,7 +52,7 @@ fun FloatingAuroraGlowSection(
                 val cx = size.width - notchCenterOffsetX.toPx()
                 val cy = notchCenterOffsetY.toPx()
 
-                val baseAmp = if (isRecording) state.effectiveAmp else 0.06f
+                val baseAmp = if (isRecording || state.mimicTalkingWhenSilent) state.effectiveAmp else 0.06f
 
                 drawNotchedOverlayBackground(
                     path = path,

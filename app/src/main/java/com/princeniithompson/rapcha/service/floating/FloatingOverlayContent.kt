@@ -8,7 +8,10 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import com.princeniithompson.rapcha.service.AppContextResolver
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
 import com.princeniithompson.rapcha.service.floating.BubbleChromeStyle
 import com.princeniithompson.rapcha.ui.components.FloatingDictationPopup
@@ -75,6 +78,24 @@ fun FloatingOverlayContent(
             } else if (isExpanded) {
                 if (chrome == BubbleChromeStyle.COMPACT) {
                     val locked by FloatingBubbleManager.lockedPolishSection.collectAsState()
+                    val currentAppContext by FloatingBubbleManager.currentResolvedAppContext.collectAsState()
+                    val currentPkg by FloatingBubbleManager.currentForegroundPackage.collectAsState()
+                    val context = LocalContext.current
+                    val detectedAppName = remember(locked?.appName, currentAppContext?.name, currentPkg) {
+                        val lockedName = locked?.appName
+                        val resolvedContextName = currentAppContext?.name
+                        val pkgResolved = if (!currentPkg.isNullOrBlank()) AppContextResolver.resolveAppName(context, currentPkg) else null
+
+                        when {
+                            !lockedName.isNullOrBlank() && lockedName != "App" -> lockedName
+                            !resolvedContextName.isNullOrBlank() && resolvedContextName != "App" -> resolvedContextName
+                            !pkgResolved.isNullOrBlank() && pkgResolved != "App" -> pkgResolved
+                            !lockedName.isNullOrBlank() -> lockedName
+                            !resolvedContextName.isNullOrBlank() -> resolvedContextName
+                            !pkgResolved.isNullOrBlank() -> pkgResolved
+                            else -> "WhatsApp"
+                        }
+                    }
                     val problem by FloatingBubbleManager.isNetworkProblem.collectAsState()
                     val base = rememberDynamicAuroraPalette()
                     val palette = if (problem) base.toDangerPalette() else base
@@ -85,7 +106,7 @@ fun FloatingOverlayContent(
                     }
                     CompactRecordingBar(
                         elapsedSeconds = elapsedSeconds,
-                        appName = locked?.appName ?: "App",
+                        appName = detectedAppName,
                         glowStyleId = selectedGlowStyleId,
                         palette = palette,
                         audioAmplitude = audioAmplitude,

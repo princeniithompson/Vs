@@ -140,7 +140,30 @@ fun getAppDynamicColorScheme(context: Context, darkTheme: Boolean, toneId: Strin
                     onErrorContainer = Color(0xFF7F1D1D)
                 )
             } else {
-                return dynamicDarkColorScheme(context)
+                // Deep / Dark mode with wallpaper-derived deep violet/neutral background & inverted surfaces
+                return darkColorScheme(
+                    primary = a1_200,
+                    onPrimary = a1_900,
+                    primaryContainer = a1_800,
+                    onPrimaryContainer = Color.White,
+                    secondary = a2_200,
+                    onSecondary = a2_700,
+                    secondaryContainer = a2_700,
+                    onSecondaryContainer = Color.White,
+                    tertiary = a3_200,
+                    onTertiary = a3_700,
+                    background = n1_900,
+                    surface = n1_800,
+                    surfaceVariant = n1_800,
+                    onSurface = n1_50,
+                    onSurfaceVariant = n1_100,
+                    outline = n2_200.copy(alpha = 0.4f),
+                    outlineVariant = a1_800,
+                    error = Color(0xFFEF4444),
+                    errorContainer = Color(0xFF7F1D1D),
+                    onError = Color.White,
+                    onErrorContainer = Color(0xFFFECACA)
+                )
             }
         } catch (_: Throwable) {
             return if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)

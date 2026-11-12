@@ -39,8 +39,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             val isAppDynamicColor by FloatingBubbleManager.isAppDynamicColorEnabled.collectAsState()
             val selectedTone by FloatingBubbleManager.selectedColorTone.collectAsState()
+            val isDeepTheme = selectedTone == com.princeniithompson.rapcha.service.floating.DynamicTonePolicy.DEEP
 
             MyApplicationTheme(
+                darkTheme = isDeepTheme,
                 dynamicColor = true,
                 toneId = selectedTone
             ) {

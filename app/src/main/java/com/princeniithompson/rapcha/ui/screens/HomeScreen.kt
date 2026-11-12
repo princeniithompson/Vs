@@ -59,6 +59,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -103,6 +104,8 @@ fun HomeScreen(
         visibleHistory.groupBy { it.getFormattedDateHeader() }
     }
 
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -114,45 +117,48 @@ fun HomeScreen(
         ) {
             // 1. Top Header Bar
             item {
-                CenterAlignedTopAppBar(
-                    title = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            androidx.compose.foundation.Image(
-                                painter = androidx.compose.ui.res.painterResource(id = com.princeniithompson.rapcha.R.drawable.ic_lifebuoy_ring),
-                                contentDescription = "Rapcha Logo",
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .padding(end = 8.dp)
-                            )
-                            Text(
-                                text = "Rapcha",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onOpenMenu) {
-                            Icon(
-                                imageVector = Icons.Filled.Menu,
-                                contentDescription = "Open Settings Menu",
-                                tint = MaterialTheme.colorScheme.onBackground
-                            )
-                        }
-                    },
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                        containerColor = Color.Transparent
-                    )
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    IconButton(
+                        onClick = onOpenMenu,
+                        modifier = Modifier.align(Alignment.CenterStart)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Menu,
+                            contentDescription = "Open Settings Menu",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.align(Alignment.Center)
+                    ) {
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(id = com.princeniithompson.rapcha.R.drawable.ic_lifebuoy_ring),
+                            contentDescription = "Rapcha Logo",
+                            modifier = Modifier
+                                .size(34.dp)
+                                .padding(end = 8.dp)
+                        )
+                        Text(
+                            text = "Rapcha",
+                            color = MaterialTheme.colorScheme.onBackground,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
 
             // 2. Top Carousel: Voice-Typing Bubble (Page 0) + Real Stats Cards (Pages 1, 2, 3)
             item {
-                TopCarouselSection(viewModel = viewModel)
+                TopCarouselSection(viewModel = viewModel, isDark = isDark)
                 Spacer(modifier = Modifier.height(20.dp))
             }
 
@@ -187,7 +193,7 @@ fun HomeScreen(
                         Text(
                             text = "No dictations yet",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFF718096),
+                            color = if (isDark) Color(0xFF94A3B8) else Color(0xFF718096),
                             textAlign = TextAlign.Center,
                             modifier = Modifier.padding(horizontal = 32.dp)
                         )
@@ -202,7 +208,7 @@ fun HomeScreen(
                             fontSize = 28.sp,
                             fontFamily = FontFamily.Serif,
                             fontWeight = FontWeight.Normal,
-                            color = Color(0xFF1A202C),
+                            color = if (isDark) Color(0xFFF1F5F9) else Color(0xFF1A202C),
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
                         )
                     }
@@ -211,6 +217,7 @@ fun HomeScreen(
                     items(itemsInGroup, key = { it.id }) { item ->
                         HistoryCardItem(
                             item = item,
+                            isDark = isDark,
                             onCopy = {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                 val clip = android.content.ClipData.newPlainText("Transcription", item.text)
@@ -264,7 +271,7 @@ fun HomeScreen(
  * Features 19-second automatic scrolling when idle. Auto-scrolling is disabled during active dictation.
  */
 @Composable
-private fun TopCarouselSection(viewModel: VoiceTypingViewModel) {
+private fun TopCarouselSection(viewModel: VoiceTypingViewModel, isDark: Boolean = false) {
     val isRecording by viewModel.isRecording.collectAsState()
     val finalizedTranscript by viewModel.finalizedTranscript.collectAsState()
     val interimTranscript by viewModel.interimTranscript.collectAsState()
@@ -338,20 +345,22 @@ private fun TopCarouselSection(viewModel: VoiceTypingViewModel) {
                             } else {
                                 "spoken so far\nComplete a dictation session to start tracking"
                             },
-                            pageIndex = 1
+                            pageIndex = 1,
+                            isDark = isDark
                         )
                     }
                     2 -> {
                         // Page 2: Apps Used (100% Real Data)
                         StatCardView(
                             statNumber = "$uniqueApps ${if (uniqueApps == 1) "app" else "apps"}",
-                            statColor = Color(0xFF1E293B), // Dark slate
+                            statColor = if (isDark) Color(0xFF93C5FD) else Color(0xFF1E293B),
                             description = if (uniqueApps > 0) {
                                 "Number of applications you are flowing in"
                             } else {
                                 "Number of applications you are flowing in\nDictate across apps to track usage"
                             },
-                            pageIndex = 2
+                            pageIndex = 2,
+                            isDark = isDark
                         )
                     }
                     3 -> {
@@ -364,7 +373,8 @@ private fun TopCarouselSection(viewModel: VoiceTypingViewModel) {
                             } else {
                                 "Words per minute\nCalculated automatically from your voice typing"
                             },
-                            pageIndex = 3
+                            pageIndex = 3,
+                            isDark = isDark
                         )
                     }
                 }
@@ -414,7 +424,8 @@ private fun StatCardView(
     statNumber: String,
     statColor: Color,
     description: String,
-    pageIndex: Int
+    pageIndex: Int,
+    isDark: Boolean = false
 ) {
     Card(
         modifier = Modifier
@@ -422,8 +433,9 @@ private fun StatCardView(
             .testTag("stats_card_$pageIndex"),
         shape = RoundedCornerShape(26.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color.White
+            containerColor = if (isDark) Color(0xFF16151F) else Color.White
         ),
+        border = if (isDark) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262433)) else null,
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(
@@ -446,7 +458,7 @@ private fun StatCardView(
                 text = description,
                 fontSize = 14.5.sp,
                 fontWeight = FontWeight.Normal,
-                color = Color(0xFF4A5568),
+                color = if (isDark) Color(0xFFCBD5E1) else Color(0xFF4A5568),
                 textAlign = TextAlign.Center,
                 lineHeight = 20.sp
             )
@@ -463,7 +475,8 @@ private fun HistoryCardItem(
     onCopy: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    isDark: Boolean = false
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -474,8 +487,9 @@ private fun HistoryCardItem(
             .testTag("history_card_${item.id}"),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color.White
+            containerColor = if (isDark) Color(0xFF16151F) else Color.White
         ),
+        border = if (isDark) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262433)) else null,
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(
@@ -495,10 +509,10 @@ private fun HistoryCardItem(
                     fontSize = 15.sp,
                     lineHeight = 22.sp,
                     fontWeight = FontWeight.Normal,
-                    color = Color(0xFF1A202C)
+                    color = if (isDark) Color(0xFFF8FAFC) else Color(0xFF1A202C)
                 )
             } else {
-                LyraHistoryStages(comparison)
+                LyraHistoryStages(comparison, isDark = isDark)
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -507,7 +521,7 @@ private fun HistoryCardItem(
             Text(
                 text = "${item.getFormattedTime()} · ${item.appContext}",
                 fontSize = 12.sp,
-                color = Color(0xFF718096),
+                color = if (isDark) Color(0xFF94A3B8) else Color(0xFF718096),
                 fontWeight = FontWeight.Medium
             )
 
@@ -519,11 +533,14 @@ private fun HistoryCardItem(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                val btnBg = if (isDark) Color(0xFF232230) else Color(0xFFF1F5F9)
+                val btnInk = if (isDark) Color(0xFFE2E8F0) else Color(0xFF334155)
+
                 // Copy Button
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xFFF1F5F9))
+                        .background(btnBg)
                         .clickable(onClick = onCopy)
                         .padding(horizontal = 14.dp, vertical = 7.dp)
                 ) {
@@ -531,7 +548,7 @@ private fun HistoryCardItem(
                         Icon(
                             imageVector = Icons.Filled.ContentCopy,
                             contentDescription = "Copy",
-                            tint = Color(0xFF334155),
+                            tint = btnInk,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
@@ -539,7 +556,7 @@ private fun HistoryCardItem(
                             text = "Copy",
                             fontSize = 12.5.sp,
                             fontWeight = FontWeight.Medium,
-                            color = Color(0xFF334155)
+                            color = btnInk
                         )
                     }
                 }
@@ -548,7 +565,7 @@ private fun HistoryCardItem(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xFFF1F5F9))
+                        .background(btnBg)
                         .clickable(onClick = onShare)
                         .padding(horizontal = 14.dp, vertical = 7.dp)
                 ) {
@@ -556,7 +573,7 @@ private fun HistoryCardItem(
                         Icon(
                             imageVector = Icons.Filled.Share,
                             contentDescription = "Share",
-                            tint = Color(0xFF334155),
+                            tint = btnInk,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
@@ -564,7 +581,7 @@ private fun HistoryCardItem(
                             text = "Share",
                             fontSize = 12.5.sp,
                             fontWeight = FontWeight.Medium,
-                            color = Color(0xFF334155)
+                            color = btnInk
                         )
                     }
                 }

@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.unit.dp
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
 
@@ -33,7 +34,8 @@ fun GlowStylesBottomSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(RecordingGlowColors.PAGE),
+        containerColor = MaterialTheme.colorScheme.background,
+        scrimColor = MaterialTheme.colorScheme.scrim.copy(alpha = 0.35f),
         shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
         dragHandle = null,
         tonalElevation = 0.dp

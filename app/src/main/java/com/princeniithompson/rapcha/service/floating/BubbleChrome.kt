@@ -31,11 +31,18 @@ enum class BubbleChromeStyle {
 }
 
 object BubbleChromeGeometry {
-    const val CANCEL_DP = 47
+    const val EDGE_MARGIN_DP = 20
+    const val WINDOW_PADDING_DP = 12
+    const val CIRCLE_SIZE_DP = 48
+    const val CANCEL_DP = 48
     const val PILL_WIDTH_DP = 90
-    const val PILL_HEIGHT_DP = 47
-    const val COMPLETE_DP = 47
-    const val GAP_DP = 6
+    const val PILL_HEIGHT_DP = 48
+    const val COMPLETE_DP = 48
+    const val GAP_DP = 5
+    const val TOTAL_COMPACT_WIDTH_DP = 48 + 5 + 90 + 5 + 48 // 196
+    const val IDLE_WINDOW_SIZE_DP = 48 + 2 * WINDOW_PADDING_DP // 72
+    const val RECORDING_WINDOW_WIDTH_DP = 196 + 2 * WINDOW_PADDING_DP // 220
+    const val RECORDING_WINDOW_HEIGHT_DP = 48 + 2 * WINDOW_PADDING_DP // 72
     const val SESSION_CAP_SECONDS = 600
 }
 
