@@ -25,6 +25,7 @@ object FloatingHapticManager {
     private const val TAG = "FloatingHaptic"
 
     fun trigger(context: Context, type: FloatingHapticType) {
+        if (com.princeniithompson.rapcha.core.LiteMode.enabled) return // v24 Lite: no haptics
         try {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager

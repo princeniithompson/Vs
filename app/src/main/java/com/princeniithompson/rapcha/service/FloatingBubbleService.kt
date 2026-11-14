@@ -33,6 +33,7 @@ import com.princeniithompson.rapcha.service.floating.DictationAlerts
 import com.princeniithompson.rapcha.service.floating.FloatingDictationSessionManager
 import com.princeniithompson.rapcha.service.floating.OfflineRetryCoordinator
 import com.princeniithompson.rapcha.service.floating.FloatingHapticManager
+import com.princeniithompson.rapcha.core.LiteMode
 import com.princeniithompson.rapcha.service.floating.FloatingHapticType
 import com.princeniithompson.rapcha.service.floating.FloatingNotificationManager
 import com.princeniithompson.rapcha.service.floating.FloatingOverlayWindowManager
@@ -307,7 +308,9 @@ class FloatingBubbleService : Service() {
         Log.d(TAG, "FloatingBubbleService onCreate promoted=$promotedToForeground")
         serviceScope.launch(Dispatchers.IO) {
             try {
-                if (com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.consumeUncleanShutdownPossible(this@FloatingBubbleService)) {
+                // v24 Lite: skip the exit-reason lookup (diagnostics only).
+                if (!com.princeniithompson.rapcha.core.LiteMode.enabled &&
+                    com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.consumeUncleanShutdownPossible(this@FloatingBubbleService)) {
                     val killReason = com.princeniithompson.rapcha.diagnostics.ProcessExitDiagnostics.lastUncleanKillReason(this@FloatingBubbleService)
                     if (killReason != null) {
                         com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastRestartReason(
@@ -342,7 +345,7 @@ class FloatingBubbleService : Service() {
             context = this,
             onTranscriptUpdated = { fullText ->
                 overlayWindowManager.overlayTranscript.value = fullText
-                FloatingBubbleManager.updateSmartDefaultPolishMode(fullText)
+                if (!com.princeniithompson.rapcha.core.LiteMode.enabled) FloatingBubbleManager.updateSmartDefaultPolishMode(fullText)
             },
             onInterimReceived = { _ -> },
             onFinalSegmentReceived = { _ ->
@@ -365,7 +368,8 @@ class FloatingBubbleService : Service() {
                 refreshRetryOffer()
             },
             onAmplitudeChanged = { amp ->
-                overlayWindowManager.overlayAudioAmplitude.value = amp
+                // v24 Lite: static bubble, so no per-chunk amplitude recomposition.
+                if (!com.princeniithompson.rapcha.core.LiteMode.enabled) overlayWindowManager.overlayAudioAmplitude.value = amp
             },
             onError = { err ->
                 val endedReasonTag = DictationEndedReason.fromMessage(err)
@@ -839,7 +843,7 @@ class FloatingBubbleService : Service() {
         val keyboard = access?.isImeVisibleNow() == true
         val field = access?.hasFocusedEditableField() == true
         val recording = ::sessionManager.isInitialized && sessionManager.isRecording
-        val netTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag(this)
+        val netTag = if (com.princeniithompson.rapcha.core.LiteMode.enabled) "" else com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag(this)
         val outcome = when {
             FloatingBubbleManager.isCurrentAppSensitive.value -> "blocked_sensitive_app"
             FloatingBubbleManager.offlineRetry.value != null && !recording -> "opened_offline_retry"
@@ -920,7 +924,8 @@ class FloatingBubbleService : Service() {
             return
         }
 
-        val offlineReason = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.checkOfflineOrAirplaneReason(this)
+        val lite = com.princeniithompson.rapcha.core.LiteMode.enabled
+        val offlineReason = if (lite) null else com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.checkOfflineOrAirplaneReason(this)
         if (offlineReason != null) {
             com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.recordNetworkFailure(
                 source = DiagnosticSource.BUBBLE,
@@ -936,8 +941,9 @@ class FloatingBubbleService : Service() {
         activeDetectionJob?.cancel()
         activeDetectionJob = null
 
-        val a11y = RapchaAccessibilityService.instance
-        val pkg = a11y?.getActivePackageName() ?: FloatingBubbleManager.currentForegroundPackage.value
+        // v24 Lite: no app detection at all (no window lookup, no Gemini classify, no per-app polish).
+        val a11y = if (lite) null else RapchaAccessibilityService.instance
+        val pkg = if (lite) null else a11y?.getActivePackageName() ?: FloatingBubbleManager.currentForegroundPackage.value
         completeTargetPackage = pkg?.takeUnless {
             it == packageName || com.princeniithompson.rapcha.util.AppResolutionEngine.defaultInstance.isSystemOrIme(this, it)
         }
@@ -991,21 +997,33 @@ class FloatingBubbleService : Service() {
         val savedSmartMode = prefs.getBoolean("smart_mode", false)
         val override = Stage2PolishSettings.read(prefs)
         val threeStepEnabled = ThreeStepPolishSettings.read(prefs)
-        val target = polishCoordinator.stage2Target(
-            this,
-            completeTargetPackage,
-            null,
-            allowLiveHint = false
-        )
+        val target = if (lite) {
+            com.princeniithompson.rapcha.service.floating.FloatingPolishCoordinator.Stage2Target(
+                com.princeniithompson.rapcha.service.floating.Stage2Category.OTHER,
+                com.princeniithompson.rapcha.service.AppCategory.OTHER,
+                "App"
+            )
+        } else {
+            polishCoordinator.stage2Target(
+                this,
+                completeTargetPackage,
+                null,
+                allowLiveHint = false
+            )
+        }
         val aiApp = HybridPolishPolicy.isAiTarget(target.stage2Category, target.polishCategory)
         val quotaStatus = com.princeniithompson.rapcha.service.floating.PolishQuotaMonitor.status(this)
-        val plan = ThreeStepPolicy.resolve(
-            override = override,
-            aiApp = aiApp,
-            threeStepEnabled = threeStepEnabled,
-            savedSmartMode = savedSmartMode,
-            quotaAvailable = quotaStatus.available
-        )
+        val plan = if (lite) {
+            LiteMode.smartOnlyPlan()
+        } else {
+            ThreeStepPolicy.resolve(
+                override = override,
+                aiApp = aiApp,
+                threeStepEnabled = threeStepEnabled,
+                savedSmartMode = savedSmartMode,
+                quotaAvailable = quotaStatus.available
+            )
+        }
         val mode = plan.mode
         val liveCategory = HybridPolishPolicy.liveCategory(target.stage2Category, aiApp)
         val instruction = if (mode == SectionPolishMode.TWO_STEP_LIVE) {
@@ -1031,6 +1049,8 @@ class FloatingBubbleService : Service() {
             mode == SectionPolishMode.TWO_STEP_LIVE,
             quotaStatus.available
         ) ?: "none"
+        // v24 Lite: no session-start diagnostics (device snapshot read on the mic tap).
+        if (!lite) {
         val deviceTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.compactDeviceTag(this)
         val netTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag(this)
         AppLogRepository.logEvent(
@@ -1038,6 +1058,7 @@ class FloatingBubbleService : Service() {
             DiagnosticType.SESSION_START,
             "build=${com.princeniithompson.rapcha.BuildConfig.VERSION_NAME} code=${com.princeniithompson.rapcha.BuildConfig.VERSION_CODE} commit=${com.princeniithompson.rapcha.BuildConfig.GIT_COMMIT} $deviceTag $netTag section_lock=${mode.name} category=${section.stage2Category.name} app=${section.appName} override=${override.storedValue()} three_step=${if (plan.threeStep) "yes" else "no"} quota_ok=${if (quotaStatus.available) "yes" else "cooldown:${quotaStatus.reason.name}:${quotaStatus.cooldownRemainingMs / 1000L}s"} rpm=${quotaStatus.rpmUsed}/${quotaStatus.rpmLimit} rpd=${quotaStatus.rpdUsed}/${quotaStatus.rpdLimit} stage1=${plan.stage1.name} stage1_model=${GeminiLiveWebSocketClient.DEFAULT_MODEL} stage2_model=$stage2ModelTag"
         )
+        }
         Stage2WarmLine.close()
 
         FloatingBubbleManager.setRecordingState(true)

@@ -256,7 +256,8 @@ open class RapchaAccessibilityService : AccessibilityService() {
         Log.d(TAG, "RapchaAccessibilityService active ($reason)")
 
         val appCtx = applicationContext ?: this
-        contextExecutor.execute {
+        // v24 Lite: no app detection, so AppDetector is never loaded.
+        if (!com.princeniithompson.rapcha.core.LiteMode.enabled) contextExecutor.execute {
             AppDetector.init(appCtx)
         }
         ensureEvalWorker()
@@ -315,7 +316,8 @@ open class RapchaAccessibilityService : AccessibilityService() {
 
     private fun registerServiceReceivers() {
         if (receiversRegistered) return
-        try {
+        // v24 Lite: the package receiver only refreshes app detection's WebAPK list.
+        if (!com.princeniithompson.rapcha.core.LiteMode.enabled) try {
             val packageFilter = android.content.IntentFilter().apply {
                 addAction(Intent.ACTION_PACKAGE_ADDED)
                 addAction(Intent.ACTION_PACKAGE_REMOVED)
@@ -576,8 +578,12 @@ open class RapchaAccessibilityService : AccessibilityService() {
                 resolvedPkgForGuard = resolvedPkg
                 if (resolvedPkg != null) {
                     holdPackageSafeModeIfNeeded(resolvedPkg)
-                    mainHandler.post {
-                        contextScheduler.submit(resolvedPkg, lastSeenClassName, windowTitle)
+                    if (com.princeniithompson.rapcha.core.LiteMode.enabled) {
+                        publishLiteForeground(resolvedPkg)
+                    } else {
+                        mainHandler.post {
+                            contextScheduler.submit(resolvedPkg, lastSeenClassName, windowTitle)
+                        }
                     }
                 }
             } else {
@@ -686,6 +692,31 @@ open class RapchaAccessibilityService : AccessibilityService() {
         if (!SessionPlacement.holdsImmediately(verdict)) return
         mainHandler.post {
             FloatingBubbleManager.engagePackageImmediately(verdict, pkg)
+        }
+    }
+
+    /**
+     * v24 Lite: Safe Mode from the package name and the focused field only. No AppDetector,
+     * no label lookup, no window-tree walk, no second getWindows(), no detection log.
+     */
+    private fun publishLiteForeground(pkg: String) {
+        val verdict = if (!FloatingBubbleManager.isSmartSafeModeEnabled.value) {
+            null
+        } else {
+            try {
+                SafeModeClassifier.classifyFromNodes(
+                    context = this,
+                    packageName = pkg,
+                    focusedNode = lastFocusedEditableNode,
+                    rootNode = null
+                )
+            } catch (_: Throwable) {
+                SafeModeClassifier.classify(context = this, packageName = pkg)
+            }
+        }
+        mainHandler.post {
+            FloatingBubbleManager.noteForegroundPackage(pkg)
+            if (verdict != null) FloatingBubbleManager.submitSafeMode(verdict)
         }
     }
 
@@ -850,6 +881,7 @@ open class RapchaAccessibilityService : AccessibilityService() {
 
     private fun armStallProbe() {
         mainHandler.removeCallbacks(stallProbe)
+        if (com.princeniithompson.rapcha.core.LiteMode.enabled) return // v24 Lite: no main-thread stall diagnostics
         if (!MainThreadStall.shouldSchedule(screenInteractive)) return
         stallProbePostedAt = SystemClock.uptimeMillis()
         mainHandler.postDelayed(stallProbe, MainThreadStall.INTERVAL_MS)

@@ -204,7 +204,10 @@ object FloatingBubbleManager {
         if (storedChrome != chrome.stored()) {
             prefs.edit().putString(KEY_BUBBLE_CHROME, chrome.stored()).apply()
         }
-        _bubbleChrome.value = chrome
+        // v24 Lite: always the compact pill (the Words popup runs many animations).
+        _bubbleChrome.value = if (com.princeniithompson.rapcha.core.LiteMode.enabled) {
+            com.princeniithompson.rapcha.service.floating.BubbleChromeStyle.COMPACT
+        } else chrome
         _isSmartSafeModeEnabled.value = prefs.getBoolean(KEY_SMART_SAFE_MODE, true)
         _isAppDynamicColorEnabled.value = true
         if (!prefs.getBoolean(KEY_APP_DYNAMIC_COLOR, true)) {
@@ -280,7 +283,7 @@ object FloatingBubbleManager {
     }
 
     fun setBubbleChrome(context: Context, style: com.princeniithompson.rapcha.service.floating.BubbleChromeStyle) {
-        _bubbleChrome.value = style
+        if (!com.princeniithompson.rapcha.core.LiteMode.enabled) _bubbleChrome.value = style
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putString(KEY_BUBBLE_CHROME, style.stored()).apply()
     }
