@@ -11,16 +11,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import com.princeniithompson.rapcha.service.A11yRepairKind
 import com.princeniithompson.rapcha.service.AppContextResolver
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
-import com.princeniithompson.rapcha.service.floating.BubbleChromeStyle
 import com.princeniithompson.rapcha.ui.components.FloatingDictationPopup
 import com.princeniithompson.rapcha.ui.components.overlay.CompactRecordingBar
 import com.princeniithompson.rapcha.ui.components.overlay.FloatingCollapsedBubble
+import com.princeniithompson.rapcha.ui.components.overlay.FloatingScreenScanOverlay
 import com.princeniithompson.rapcha.ui.components.overlay.rememberDynamicAuroraPalette
 import com.princeniithompson.rapcha.ui.components.overlay.toDangerPalette
-import com.princeniithompson.rapcha.ui.components.overlay.FloatingSafeModeShieldBadge
-import com.princeniithompson.rapcha.ui.components.overlay.FloatingScreenScanOverlay
 import com.princeniithompson.rapcha.ui.theme.MyApplicationTheme
 
 /**
@@ -47,6 +46,9 @@ fun FloatingOverlayContent(
     selectedFinishingStyleId: String,
     elapsedSeconds: Int = 0,
     isCurrentAppSensitive: Boolean,
+    bubbleVisible: Boolean = true,
+    repairKind: A11yRepairKind = A11yRepairKind.NONE,
+    onRepairClick: () -> Unit = {},
     onRingClick: () -> Unit,
     onCancelClick: () -> Unit,
     onPolishClick: () -> Unit,
@@ -59,6 +61,7 @@ fun FloatingOverlayContent(
 ) {
     MyApplicationTheme(darkTheme = true, dynamicColor = true) {
         val chrome by FloatingBubbleManager.bubbleChrome.collectAsState()
+        val lowPower by RenderBudget.lowPower.collectAsState()
         val rootModifier = when {
             isScanningAnimation -> Modifier.fillMaxSize()
             isExpanded && chrome != BubbleChromeStyle.COMPACT -> Modifier.fillMaxWidth().wrapContentHeight()
@@ -81,18 +84,25 @@ fun FloatingOverlayContent(
                     val currentAppContext by FloatingBubbleManager.currentResolvedAppContext.collectAsState()
                     val currentPkg by FloatingBubbleManager.currentForegroundPackage.collectAsState()
                     val context = LocalContext.current
-                    val detectedAppName = remember(locked?.appName, currentAppContext?.name, currentPkg) {
+                    // v24 Lite: no app name lookup (no app detection); Lite is fixed per process.
+                    val detectedAppName = if (com.princeniithompson.rapcha.core.LiteMode.enabled) "Listening" else remember(locked?.appName, currentAppContext?.name, currentPkg) {
                         val lockedName = locked?.appName
                         val resolvedContextName = currentAppContext?.name
-                        val pkgResolved = if (!currentPkg.isNullOrBlank()) AppContextResolver.resolveAppName(context, currentPkg) else null
 
                         when {
                             !lockedName.isNullOrBlank() && lockedName != "App" -> lockedName
                             !resolvedContextName.isNullOrBlank() && resolvedContextName != "App" -> resolvedContextName
-                            !pkgResolved.isNullOrBlank() && pkgResolved != "App" -> pkgResolved
+                            !currentPkg.isNullOrBlank() -> {
+                                val pkgResolved = AppContextResolver.resolveAppName(context, currentPkg)
+                                when {
+                                    pkgResolved.isNotBlank() && pkgResolved != "App" -> pkgResolved
+                                    !lockedName.isNullOrBlank() -> lockedName
+                                    !resolvedContextName.isNullOrBlank() -> resolvedContextName
+                                    else -> pkgResolved.ifBlank { "WhatsApp" }
+                                }
+                            }
                             !lockedName.isNullOrBlank() -> lockedName
                             !resolvedContextName.isNullOrBlank() -> resolvedContextName
-                            !pkgResolved.isNullOrBlank() -> pkgResolved
                             else -> "WhatsApp"
                         }
                     }
@@ -112,28 +122,34 @@ fun FloatingOverlayContent(
                         audioAmplitude = audioAmplitude,
                         processing = polishing || pendingFinalizing,
                         statusLabel = status,
+                        bubbleVisible = bubbleVisible,
+                        lowPower = lowPower,
                         onCancel = onCancelClick,
                         onComplete = onCompleteClick,
                         onDragStart = onDragStart,
                         onDrag = onDrag,
                         onDragEnd = onDragEnd
                     )
-                } else FloatingDictationPopup(
-                    transcriptText = transcript,
-                    isRecording = recording,
-                    isPendingFinalizing = pendingFinalizing,
-                    isPolishing = polishing,
-                    audioAmplitude = audioAmplitude,
-                    glowStyleId = selectedGlowStyleId,
-                    finishingStyleId = selectedFinishingStyleId,
-                    onCancelClick = onCancelClick,
-                    onPolishClick = onPolishClick,
-                    onCompleteClick = onCompleteClick,
-                    onLifebuoyClick = onRingClick,
-                    onDragStart = onDragStart,
-                    onDrag = onDrag,
-                    onDragEnd = onDragEnd
-                )
+                } else {
+                    FloatingDictationPopup(
+                        transcriptText = transcript,
+                        isRecording = recording,
+                        isPendingFinalizing = pendingFinalizing,
+                        isPolishing = polishing,
+                        audioAmplitude = audioAmplitude,
+                        glowStyleId = selectedGlowStyleId,
+                        finishingStyleId = selectedFinishingStyleId,
+                        bubbleVisible = bubbleVisible,
+                        lowPower = lowPower,
+                        onCancelClick = onCancelClick,
+                        onPolishClick = onPolishClick,
+                        onCompleteClick = onCompleteClick,
+                        onLifebuoyClick = onRingClick,
+                        onDragStart = onDragStart,
+                        onDrag = onDrag,
+                        onDragEnd = onDragEnd
+                    )
+                }
             } else {
                 FloatingCollapsedBubble(
                     isRecording = recording,
@@ -141,6 +157,10 @@ fun FloatingOverlayContent(
                     isSnappedToRight = isSnappedToRight,
                     isScanMode = isScanMode,
                     isContextLoaded = isContextLoaded,
+                    bubbleVisible = bubbleVisible,
+                    lowPower = lowPower,
+                    repairKind = repairKind,
+                    onRepairClick = onRepairClick,
                     onClick = onRingClick,
                     onLongPress = onLongPressBubble,
                     onScanTriggered = onScanTriggered,

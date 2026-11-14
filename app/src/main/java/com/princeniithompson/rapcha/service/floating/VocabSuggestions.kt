@@ -52,7 +52,7 @@ object VocabSuggestions {
      * Blank text is ignored. A failed inject must not call this.
      */
     fun onOutgoingText(context: Context, text: String) {
-        if (text.isBlank()) return
+        if (text.isBlank() || com.princeniithompson.rapcha.core.LiteMode.enabled) return // v24 Lite: no learning
         try {
             val app = context.applicationContext
             ensureReady(app)

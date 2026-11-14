@@ -194,6 +194,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
         val composeContext = createFontWeightSafeContext(context)
         val composeView = ComposeView(composeContext).apply {
             lifecycleOwner.attachToView(this)
+            isHapticFeedbackEnabled = !com.princeniithompson.rapcha.core.LiteMode.enabled // v24 Lite
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnLifecycleDestroyed(lifecycleOwner))
             setContent {
                 val transcript by overlayTranscript.collectAsState()

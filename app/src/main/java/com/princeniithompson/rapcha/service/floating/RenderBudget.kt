@@ -212,6 +212,16 @@ object RenderBudget {
         return weak
     }
 
+    /** v24: the same weak-device check light rendering uses; Lite mode is decided from it. */
+    fun detectWeakDevice(context: Context): Boolean {
+        val app = context.applicationContext ?: context
+        val am = app.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val memInfo = ActivityManager.MemoryInfo()
+        try { am?.getMemoryInfo(memInfo) } catch (_: Throwable) {}
+        val isLowRam = try { am?.isLowRamDevice == true } catch (_: Throwable) { false }
+        return weakDevice(isLowRam, memInfo.totalMem)
+    }
+
     fun init(context: Context) {
         val app = context.applicationContext ?: context
         appContext = app
@@ -283,7 +293,8 @@ object RenderBudget {
         val powerSave = try { pm?.isPowerSaveMode == true } catch (_: Throwable) { false }
 
         val weak = weakDevice(isLowRam, totalBytes)
-        val shouldLowPower = RenderBudgetEngine.shouldUseLowPower(
+        // v24: Lite mode always renders the static, light overlay.
+        val shouldLowPower = com.princeniithompson.rapcha.core.LiteMode.enabled || RenderBudgetEngine.shouldUseLowPower(
             preference = _preference.value,
             isLowRamDevice = isLowRam,
             totalRamBytes = totalBytes,
