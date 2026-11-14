@@ -103,11 +103,18 @@ object ApiConfig {
         return if (kept.isEmpty()) base else "$base?${kept.joinToString("&")}"
     }
 
-    fun createOkHttpClient(): OkHttpClient {
-        return OkHttpClient.Builder()
+    /**
+     * v23: one process-wide client. Callers that need different settings use newBuilder(), which
+     * shares the same connection pool, dispatcher threads and TLS session cache, so a new Live
+     * session no longer pays a fresh DNS + TCP + TLS handshake and its own thread pool.
+     */
+    private val sharedClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
             .connectTimeout(60, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
             .build()
     }
+
+    fun createOkHttpClient(): OkHttpClient = sharedClient
 }

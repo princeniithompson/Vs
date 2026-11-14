@@ -56,6 +56,86 @@ class AudioRecorder(
         private const val SLICE_SIZE_BYTES = 640
         // Head silence baseline energy threshold (0.0 .. 1.0)
         private const val HEAD_SILENCE_THRESHOLD = 0.04f
+        // v23: ~30 Hz UI amplitude updates
+        private const val AMPLITUDE_MIN_INTERVAL_NS = 33_000_000L
+        // v23: mic open retries
+        private const val MIC_OPEN_ATTEMPTS = 3
+        private const val MIC_RETRY_DELAY_MS = 150L
+    }
+
+    @Volatile
+    private var activeSourceName: String = "MIC"
+
+    private fun hasNonZeroSample(buffer: ByteArray, offset: Int, length: Int): Boolean {
+        val end = minOf(buffer.size, offset + length)
+        var i = offset
+        while (i < end) {
+            if (buffer[i].toInt() != 0) return true
+            i++
+        }
+        return false
+    }
+
+    /**
+     * v23: open and start an AudioRecord. Tries AudioSource.MIC up to [MIC_OPEN_ATTEMPTS] times
+     * (150 ms apart), then VOICE_RECOGNITION once. Returns a recorder that is really recording,
+     * or null. Runs on Dispatchers.IO.
+     */
+    @SuppressLint("MissingPermission")
+    private fun openStartedRecorder(bufferSize: Int): AudioRecord? {
+        val plan = ArrayList<Pair<Int, String>>()
+        repeat(MIC_OPEN_ATTEMPTS) { plan.add(MediaRecorder.AudioSource.MIC to "MIC") }
+        plan.add(MediaRecorder.AudioSource.VOICE_RECOGNITION to "VOICE_RECOGNITION")
+        var lastProblem = "unknown"
+        for ((index, attempt) in plan.withIndex()) {
+            if (!isRecording.get()) return null
+            if (index > 0) {
+                try { Thread.sleep(MIC_RETRY_DELAY_MS) } catch (_: InterruptedException) { return null }
+            }
+            var candidate: AudioRecord? = null
+            try {
+                candidate = AudioRecord(attempt.first, SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT, bufferSize)
+                if (candidate.state != AudioRecord.STATE_INITIALIZED) {
+                    lastProblem = "${attempt.second}:not_initialized"
+                    candidate.release()
+                    continue
+                }
+                candidate.startRecording()
+                if (candidate.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    lastProblem = "${attempt.second}:start_refused(busy)"
+                    try { candidate.stop() } catch (_: Throwable) {}
+                    candidate.release()
+                    continue
+                }
+                activeSourceName = attempt.second
+                if (index > 0) {
+                    Log.w(TAG, "Microphone opened on attempt ${index + 1} via ${attempt.second} (last problem: $lastProblem)")
+                    try {
+                        com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
+                            com.princeniithompson.rapcha.data.DiagnosticSource.BUBBLE,
+                            com.princeniithompson.rapcha.data.DiagnosticType.WARNING,
+                            "mic_open_retry attempt=${index + 1} source=${attempt.second} previous=$lastProblem"
+                        )
+                    } catch (_: Throwable) {
+                    }
+                }
+                return candidate
+            } catch (t: Throwable) {
+                lastProblem = "${attempt.second}:${t.javaClass.simpleName}"
+                Log.w(TAG, "Microphone open attempt ${index + 1} failed: $lastProblem")
+                try { candidate?.release() } catch (_: Throwable) {}
+            }
+        }
+        Log.e(TAG, "Microphone could not be opened: $lastProblem")
+        try {
+            com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
+                com.princeniithompson.rapcha.data.DiagnosticSource.BUBBLE,
+                com.princeniithompson.rapcha.data.DiagnosticType.ERROR,
+                "mic_open_failed attempts=${plan.size} last=$lastProblem"
+            )
+        } catch (_: Throwable) {
+        }
+        return null
     }
 
     private var audioRecord: AudioRecord? = null
@@ -112,33 +192,30 @@ class AudioRecorder(
 
             var recorder: AudioRecord? = null
             try {
-                // Whisperflow production setup: Direct Hardware MIC (AudioSource.MIC = 1)
-                recorder = AudioRecord(
-                    MediaRecorder.AudioSource.MIC,
-                    SAMPLE_RATE,
-                    CHANNEL_CONFIG,
-                    AUDIO_FORMAT,
-                    internalBufferSize
-                )
-
-                if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                // Whisperflow production setup: Direct Hardware MIC (AudioSource.MIC = 1).
+                // v23: on budget phones the mic is often briefly busy (Bixby wake word, a call
+                // ending, another recorder releasing). Retry MIC, then fall back to
+                // VOICE_RECOGNITION, instead of failing the whole dictation on the first try.
+                recorder = openStartedRecorder(internalBufferSize)
+                if (recorder == null) {
                     val err = "Microphone initialization failed with AudioSource.MIC"
                     Log.e(TAG, err)
                     _state.value = AudioRecorderState.Error(err)
                     onError(err)
-                    recorder.release()
                     isRecording.set(false)
                     return@launch
                 }
 
                 audioRecord = recorder
-                recorder.startRecording()
                 _state.value = AudioRecorderState.Recording
 
                 Log.i(TAG, "Whisperflow pipeline active: AudioSource.MIC, 16kHz mono 16-bit PCM, raw transmission")
 
                 val chunkBuffer = ByteArray(CHUNK_SIZE_BYTES)
                 var bytesReadTotal = 0
+                var lastAmplitudeEmitNs = 0L
+                var allZeroChecked = false
+                var zeroBytesSeen = 0
 
                 var initialSilenceCount = 0
                 var firstSpeechDetected = false
@@ -169,7 +246,32 @@ class AudioRecorder(
                     if (readResult > 0) {
                         // Calculate volume meter for UI visualizer without modifying PCM data
                         val sliceAmplitude = calculateMeterValue(chunkBuffer, bytesReadTotal, readResult)
-                        onAmplitudeChanged(sliceAmplitude)
+                        // v23: cap UI amplitude updates at ~30 Hz (was 50 Hz); each update
+                        // recomposes the overlay on the main thread.
+                        val nowNs = System.nanoTime()
+                        if (nowNs - lastAmplitudeEmitNs >= AMPLITUDE_MIN_INTERVAL_NS) {
+                            lastAmplitudeEmitNs = nowNs
+                            onAmplitudeChanged(sliceAmplitude)
+                        }
+                        if (!allZeroChecked) {
+                            if (hasNonZeroSample(chunkBuffer, bytesReadTotal, readResult)) {
+                                allZeroChecked = true
+                            } else {
+                                zeroBytesSeen += readResult
+                                if (zeroBytesSeen >= SAMPLE_RATE * 2) {
+                                    allZeroChecked = true
+                                    Log.w(TAG, "Microphone delivered pure digital silence for 1 s (mic blocked?)")
+                                    try {
+                                        com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
+                                            source,
+                                            com.princeniithompson.rapcha.data.DiagnosticType.WARNING,
+                                            "mic_all_zero_first_second source=$activeSourceName (mic may be blocked by another app or the OS)"
+                                        )
+                                    } catch (_: Throwable) {
+                                    }
+                                }
+                            }
+                        }
 
                         bytesReadTotal += readResult
                     }
