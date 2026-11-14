@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -77,6 +78,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -84,6 +86,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -111,14 +114,20 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.princeniithompson.rapcha.data.ConnectionState
 import com.princeniithompson.rapcha.data.CustomVocabularyRepository
+import com.princeniithompson.rapcha.service.FloatingBubbleManager
+import com.princeniithompson.rapcha.service.floating.FloatingNotificationManager
+import com.princeniithompson.rapcha.service.floating.RenderBudget
+import com.princeniithompson.rapcha.service.floating.RenderModePreference
+import com.princeniithompson.rapcha.ui.components.LiteModeSettings
 import com.princeniithompson.rapcha.ui.components.AudioWaveformVisualizer
 import com.princeniithompson.rapcha.ui.components.DiagnosticsBottomSheet
 import com.princeniithompson.rapcha.ui.components.GlowAnimationCatalogue
 import com.princeniithompson.rapcha.ui.components.GlowStylesBottomSheet
 import com.princeniithompson.rapcha.ui.components.PulsatingRecordButton
-import com.princeniithompson.rapcha.service.FloatingBubbleManager
+import com.princeniithompson.rapcha.ui.protection.DeviceProtectionManager
 import com.princeniithompson.rapcha.ui.screens.DictionaryScreen
 import com.princeniithompson.rapcha.ui.screens.HomeScreen
+import com.princeniithompson.rapcha.ui.screens.KeepAwakeScreen
 import com.princeniithompson.rapcha.ui.screens.onboarding.AccessibilityDisclosureSheet
 import com.princeniithompson.rapcha.ui.screens.onboarding.EmbeddedGoogleAuthBrowserContainer
 import com.princeniithompson.rapcha.ui.screens.onboarding.provisioning.AiStudioAutomationEngine
@@ -137,7 +146,9 @@ fun VoiceTypingScreen(
     viewModel: VoiceTypingViewModel,
     modifier: Modifier = Modifier,
     dictionaryDraft: String? = null,
-    onDictionaryDraftConsumed: () -> Unit = {}
+    onDictionaryDraftConsumed: () -> Unit = {},
+    openDestination: String? = null,
+    onOpenDestinationConsumed: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -176,10 +187,13 @@ fun VoiceTypingScreen(
     val activeWebView by automationEngine.activeWebView.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    var resumeTick by remember { mutableIntStateOf(0) }
+
     DisposableEffect(lifecycleOwner, automationEngine) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
+                    resumeTick += 1
                     viewModel.refreshPermissions()
                     viewModel.tryAutoInjectFromClipboard()
                     automationEngine.onHostResumed()
@@ -210,9 +224,28 @@ fun VoiceTypingScreen(
     }
     var showDiagnostics by remember { mutableStateOf(false) }
     var showAccessibilityDisclosure by remember { mutableStateOf(false) }
+    var showKeepAwakeScreen by remember { mutableStateOf(false) }
     val diagnosticsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showGlowStylesSheet by remember { mutableStateOf(false) }
     val glowStylesSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val renderPreference by RenderBudget.preference.collectAsState()
+    val isLowPowerActive by RenderBudget.lowPower.collectAsState()
+    val deviceHealthStatus = remember(resumeTick, drawerState.isOpen) {
+        DeviceProtectionManager.collectStatus(context)
+    }
+
+    LaunchedEffect(openDestination) {
+        when (openDestination) {
+            FloatingNotificationManager.DEST_KEEP_AWAKE -> {
+                showKeepAwakeScreen = true
+                onOpenDestinationConsumed()
+            }
+            FloatingNotificationManager.DEST_ACCESSIBILITY_GUIDE -> {
+                showAccessibilityDisclosure = true
+                onOpenDestinationConsumed()
+            }
+        }
+    }
 
     LaunchedEffect(showDiagnostics, drawerState.isOpen) {
         if (showDiagnostics || drawerState.isOpen) {
@@ -222,6 +255,9 @@ fun VoiceTypingScreen(
 
     androidx.activity.compose.BackHandler(enabled = selectedTab != MainScreenTab.HOME) {
         selectedTab = MainScreenTab.HOME
+    }
+    androidx.activity.compose.BackHandler(enabled = showKeepAwakeScreen) {
+        showKeepAwakeScreen = false
     }
 
     // RECORD_AUDIO Permission Launcher
@@ -303,6 +339,13 @@ fun VoiceTypingScreen(
             )
         }
 
+        if (showKeepAwakeScreen) {
+            KeepAwakeScreen(
+                isOnboarding = false,
+                onBack = { showKeepAwakeScreen = false },
+                onOpenAccessibilityGuide = { showAccessibilityDisclosure = true }
+            )
+        } else {
         ModalNavigationDrawer(
             drawerState = drawerState,
             drawerContent = {
@@ -552,6 +595,92 @@ fun VoiceTypingScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
                         contentDescription = "Open glow styles",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Keep Rapcha Awake Drawer Row
+                val hasProtectionWarning = deviceHealthStatus.hasAnyRed
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .minimumInteractiveComponentSize()
+                        .clickable {
+                            scope.launch {
+                                drawerState.close()
+                                showKeepAwakeScreen = true
+                            }
+                        }
+                        .background(
+                            if (hasProtectionWarning) {
+                                Color(0xFFDC2626).copy(alpha = 0.10f)
+                            } else {
+                                Color(0xFF16A34A).copy(alpha = 0.10f)
+                            }
+                        )
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                        .testTag("drawer_keep_awake_row"),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(if (hasProtectionWarning) Color(0xFFDC2626) else Color(0xFF16A34A)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Shield,
+                            contentDescription = "Keep Rapcha Awake",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(14.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Keep Rapcha Awake",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (hasProtectionWarning) Color(0xFFDC2626).copy(alpha = 0.16f)
+                                        else Color(0xFF16A34A).copy(alpha = 0.16f)
+                                    )
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = if (hasProtectionWarning) "Needs fix" else "Ready",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (hasProtectionWarning) Color(0xFFDC2626) else Color(0xFF16A34A)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (isLowPowerActive) "Overlay render: Light mode" else "Overlay render: Full visuals",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                        contentDescription = "Open Keep Rapcha Awake",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp)
                     )
@@ -939,6 +1068,49 @@ fun VoiceTypingScreen(
                         }
                     }
                 }
+
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 8.dp)
+                ) {
+                    LiteModeSettings(context)
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text(
+                        text = "Overlay Render Quality",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (isLowPowerActive) {
+                            "Active: Light mode (battery & low-RAM friendly)"
+                        } else {
+                            "Active: Full visuals"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    RenderModePreference.entries.forEach { mode ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .minimumInteractiveComponentSize()
+                                .clickable { RenderBudget.setPreference(context, mode) }
+                                .testTag("drawer_render_mode_${mode.stored}"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = renderPreference == mode,
+                                onClick = { RenderBudget.setPreference(context, mode) }
+                            )
+                            Text(text = mode.label, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(20.dp))
             }
         },
@@ -965,6 +1137,7 @@ fun VoiceTypingScreen(
                                 if (drawerState.isClosed) drawerState.open() else drawerState.close()
                             }
                         },
+                        onOpenKeepAwake = { showKeepAwakeScreen = true },
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(innerPadding)
@@ -1012,6 +1185,7 @@ fun VoiceTypingScreen(
                 }
             }
         }
+    }
     }
     }
 

@@ -121,7 +121,8 @@ fun CompactRecordingBar(
     var phase1: () -> Float = { 0f }
     var phase2: () -> Float = { 0f }
     var spin: () -> Float = { 0f }
-    if (bubbleVisible) {
+    // v24 Lite: no running animation at all; the pill is drawn once (static glow).
+    if (bubbleVisible && !com.princeniithompson.rapcha.core.LiteMode.enabled) {
         val infiniteTransition = rememberInfiniteTransition(label = "compact_pill_glow_anim")
         if (lowPower) {
             val animPhase1 = infiniteTransition.animateFloat(

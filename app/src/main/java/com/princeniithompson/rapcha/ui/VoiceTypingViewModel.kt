@@ -182,7 +182,8 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     private val _threeStepPolish = MutableStateFlow(ThreeStepPolishSettings.read(prefs))
     val threeStepPolish: StateFlow<Boolean> = _threeStepPolish.asStateFlow()
 
-    private val _liveTwoStepPolish = MutableStateFlow(_polishOverride.value == Stage2PolishBackend.LIVE)
+    // v24 Lite: in-app dictation is Smart only too (no Live / Lyra).
+    private val _liveTwoStepPolish = MutableStateFlow(!com.princeniithompson.rapcha.core.LiteMode.enabled && _polishOverride.value == Stage2PolishBackend.LIVE)
     val liveTwoStepPolish: StateFlow<Boolean> = _liveTwoStepPolish.asStateFlow()
 
     /** Smart as the next session will actually run it. Live two-step forces verbatim. */
@@ -440,7 +441,7 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         }
         Stage2PolishSettings.write(prefs, mode)
         _polishOverride.value = mode
-        _liveTwoStepPolish.value = mode == Stage2PolishBackend.LIVE
+        _liveTwoStepPolish.value = !com.princeniithompson.rapcha.core.LiteMode.enabled && mode == Stage2PolishBackend.LIVE
         com.princeniithompson.rapcha.service.FloatingBubbleManager.refreshLiveTwoStep(getApplication())
         addLog(LogLevel.INFO, TAG, "Polish route set to ${mode.storedValue()} for the next section")
     }
