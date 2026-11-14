@@ -17,9 +17,21 @@ class RapchaApplication : Application() {
         com.princeniithompson.rapcha.core.ApiKeyVault.init(this)
         AppLogRepository.init(this)
         NetworkAndDeviceDiagnostics.startMonitoring(this)
+        com.princeniithompson.rapcha.service.floating.RenderBudget.init(this)
         com.princeniithompson.rapcha.data.RetryClipStore.init(this)
         publishPendingCrash(this)
         ProcessExitDiagnostics.recordHistoricalExits(this)
+        if (com.princeniithompson.rapcha.service.FloatingBubbleManager.isBubbleEnabledSync(this) &&
+            com.princeniithompson.rapcha.service.FloatingBubbleService.instance == null &&
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.lastStopReason(this) ==
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.STOP_UNEXPECTED &&
+            com.princeniithompson.rapcha.service.FloatingBubbleManager.canDrawOverlays(this)
+        ) {
+            com.princeniithompson.rapcha.service.FloatingBubbleManager.startBubbleService(
+                context = this,
+                source = "app_create_recover"
+            )
+        }
     }
 
     fun installCrashHandler() {
