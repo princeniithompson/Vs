@@ -1,0 +1,16 @@
+# Rapcha app baseline profile: bubble overlay, accessibility service, dictation start.
+HSPLcom/princeniithompson/rapcha/RapchaApplication;->**(**)**
+HSPLcom/princeniithompson/rapcha/service/FloatingBubbleService;->**(**)**
+HSPLcom/princeniithompson/rapcha/service/FloatingBubbleService$**;->**(**)**
+HSPLcom/princeniithompson/rapcha/service/FloatingBubbleManager;->**(**)**
+HSPLcom/princeniithompson/rapcha/service/RapchaAccessibilityService;->**(**)**
+HSPLcom/princeniithompson/rapcha/service/RapchaAccessibilityService$**;->**(**)**
+HSPLcom/princeniithompson/rapcha/service/KeyboardSettleStateMachine;->**(**)**
+HSPLcom/princeniithompson/rapcha/service/floating/**;->**(**)**
+HSPLcom/princeniithompson/rapcha/ui/components/overlay/**;->**(**)**
+HSPLcom/princeniithompson/rapcha/ui/theme/**;->**(**)**
+HSPLcom/princeniithompson/rapcha/audio/AudioRecorder;->**(**)**
+HSPLcom/princeniithompson/rapcha/websocket/**;->**(**)**
+HSPLcom/princeniithompson/rapcha/data/AppLogRepository;->**(**)**
+Lcom/princeniithompson/rapcha/service/**;
+Lcom/princeniithompson/rapcha/ui/components/overlay/**;

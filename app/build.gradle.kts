@@ -16,8 +16,8 @@ android {
     applicationId = "com.princeniithompson.rapcha"
     minSdk = 24
     targetSdk = 36
-    versionCode = 22
-    versionName = "bubble-resilience-22"
+    versionCode = 23
+    versionName = "lowend-23"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -56,6 +56,9 @@ android {
 
   buildTypes {
     release {
+      // Low-end phones: ship a real release build (no debuggable, R8 + resource shrinking,
+      // baseline profile from src/main/baseline-prof.txt is compiled in by AGP).
+      isDebuggable = false
       isCrunchPngs = false
       isMinifyEnabled = true
       isShrinkResources = true
@@ -90,6 +93,9 @@ secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
+  // The app never reads BuildConfig.GEMINI_API_KEY (the key comes from the user's own vault).
+  // Keep any key from a local .env out of BuildConfig so it can never ship inside the APK.
+  ignoreList.add("GEMINI_API_KEY")
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
