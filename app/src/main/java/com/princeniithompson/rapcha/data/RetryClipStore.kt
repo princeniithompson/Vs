@@ -71,24 +71,69 @@ object RetryClipStore {
 
     fun sessionWavFile(): File? = sessionClip?.wavFile ?: activeFile
 
+    /**
+     * v23: non-blocking. The repair/purge pass is queued on the writer thread; every later
+     * writer call runs after it (single-thread FIFO), so callers still see a repaired store.
+     */
     fun init(context: Context) {
         appContext = context.applicationContext
-        runWriter {
+        if (Thread.currentThread() == writerThread.get()) {
             repairAndPurgeLocked(System.currentTimeMillis())
+            return
         }
+        writer.execute {
+            try {
+                repairAndPurgeLocked(System.currentTimeMillis())
+            } catch (t: Throwable) {
+                Log.w(TAG, "Retry clip repair failed: ${t.javaClass.simpleName}", t)
+            }
+        }
+    }
+
+    /** Id handed out by [beginAsync] whose open() task may still be queued on the writer. */
+    @Volatile
+    private var pendingBeginId: String? = null
+
+    /**
+     * v23: mic-tap path. Never blocks the caller (the main thread) on the writer, which may still
+     * be flushing the previous clip. Audio appended right after this call is kept: the open task
+     * is queued first on the same single-thread writer.
+     */
+    fun beginAsync(context: Context): String {
+        appContext = context.applicationContext
+        val id = UUID.randomUUID().toString()
+        pendingBeginId = id
+        peekBytes = 0L
+        writer.execute {
+            try {
+                openNewClipLocked(id)
+            } catch (t: Throwable) {
+                Log.w(TAG, "Retry clip not started: ${t.javaClass.simpleName}", t)
+            } finally {
+                if (pendingBeginId == id) pendingBeginId = null
+            }
+        }
+        return id
     }
 
     fun begin(context: Context): String {
         appContext = context.applicationContext
         var created = ""
         runWriter {
+            openNewClipLocked(UUID.randomUUID().toString())
+            created = activeId ?: ""
+        }
+        return created
+    }
+
+    private fun openNewClipLocked(id: String) {
+        run {
             repairAndPurgeLocked(System.currentTimeMillis())
             finalizeOpenLocked(keepOthers = true)
             // A new dictation replaces any clip the user did not keep for Retry.
             retryDir().listFiles()?.forEach { file -> file.delete() }
             sessionClip = null
             peekBytes = 0L
-            val id = UUID.randomUUID().toString()
             val dir = retryDir()
             val wav = File(dir, "$id.wav")
             val stream = FileOutputStream(wav)
@@ -104,12 +149,10 @@ object RetryClipStore {
             writeFailureLogged = false
             uploadFrozen = false
             writeMetaLocked(id, activeCreatedAt, 0L, "open")
-            created = id
         }
-        return created
     }
 
-    fun currentId(): String? = activeId ?: sessionClip?.id
+    fun currentId(): String? = pendingBeginId ?: activeId ?: sessionClip?.id
 
     /** WAV for a pending or in-progress clip, if it already has audio samples. */
     fun clipFile(id: String?): File? {
@@ -154,8 +197,11 @@ object RetryClipStore {
     }
 
     fun append(chunk: ByteArray) {
-        if (chunk.isEmpty() || uploadFrozen) return
-        val id = activeId ?: return
+        if (chunk.isEmpty()) return
+        val pending = pendingBeginId
+        // A queued beginAsync() resets uploadFrozen on the writer; don't drop its first chunks.
+        if (uploadFrozen && pending == null) return
+        val id = pending ?: activeId ?: return
         val copy = chunk.copyOf()
         writer.execute {
             if (uploadFrozen || activeId != id) return@execute

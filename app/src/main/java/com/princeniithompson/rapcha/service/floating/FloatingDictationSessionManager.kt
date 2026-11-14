@@ -295,7 +295,9 @@ class FloatingDictationSessionManager(
         }
 
         try {
-            RetryClipStore.begin(context)
+            // v23: never block the mic tap on the retry-clip writer (it can still be flushing the
+            // previous clip). The clip is opened on the writer thread before the first chunk.
+            RetryClipStore.beginAsync(context)
         } catch (t: Throwable) {
             Log.w(TAG, "Retry clip not started: ${t.javaClass.simpleName}")
         }

@@ -30,6 +30,43 @@ object RenderBudgetEngine {
     const val JANK_WINDOW_NS = 3_000_000_000L // 3 s
     const val JANK_RATIO_TRIGGER = 0.20
 
+    /** v23: 4 GB and 6 GB phones (Galaxy A15/A17 class) start in light mode. */
+    const val WEAK_DEVICE_RAM_BYTES = 6_979_321_856L // 6.5 GB
+    /** v23: fastest core below 2.5 GHz = budget SoC (Helio G99 2.2, Dimensity 6100+ 2.2, Exynos 1330 2.4). */
+    const val WEAK_CPU_MAX_FREQ_KHZ = 2_500_000L
+
+    /** v23: Build.SOC_MODEL prefixes of budget chips with weak GPUs (A15/A17 and similar). */
+    val WEAK_SOC_PREFIXES = listOf(
+        "MT6789", // Helio G99 (A15 4G, A17 4G)
+        "MT6835", // Dimensity 6100+ (A15 5G)
+        "MT6833", "MT6853", "MT6877", "MT6768", "MT6769", "MT6785", "MT6765", "MT6762",
+        "S5E8535", // Exynos 1330 (A17 5G, A14 5G)
+        "S5E8825", // Exynos 1280
+        "S5E8835", // Exynos 1380
+        "S5E3830", "S5E9611",
+        "SM6225", "SM6115", "SM4350", "SM4375", "SM4450", "SM6375", "SM6125", "SM6150", "SM7125",
+        "UMS9230", "T606", "T610", "T612", "T616", "T618"
+    )
+
+    fun isWeakSoc(socModel: String?): Boolean {
+        val model = socModel?.trim()?.uppercase() ?: return false
+        if (model.isEmpty()) return false
+        return WEAK_SOC_PREFIXES.any { model.startsWith(it) }
+    }
+
+    /** True for budget hardware that should not run blur + continuous glow by default. */
+    fun isWeakDevice(
+        isLowRamDevice: Boolean,
+        totalRamBytes: Long,
+        socModel: String?,
+        maxCpuFreqKhz: Long
+    ): Boolean {
+        return isLowRamDevice ||
+            (totalRamBytes in 1L..WEAK_DEVICE_RAM_BYTES) ||
+            isWeakSoc(socModel) ||
+            (maxCpuFreqKhz in 1L until WEAK_CPU_MAX_FREQ_KHZ)
+    }
+
     fun shouldUseLowPower(
         preference: RenderModePreference,
         isLowRamDevice: Boolean,
@@ -37,12 +74,14 @@ object RenderBudgetEngine {
         memoryClassMb: Int,
         trimMemoryLowOrCritical: Boolean,
         isPowerSaveMode: Boolean,
-        jankDetected: Boolean
+        jankDetected: Boolean,
+        weakDevice: Boolean = false
     ): Boolean {
         return when (preference) {
             RenderModePreference.ALWAYS_FULL -> false
             RenderModePreference.ALWAYS_LIGHT -> true
             RenderModePreference.AUTO -> {
+                weakDevice ||
                 isLowRamDevice ||
                     (totalRamBytes in 1L until LOW_RAM_BYTES_THRESHOLD) ||
                     (memoryClassMb in 1..LOW_MEMORY_CLASS_MB) ||
@@ -137,6 +176,42 @@ object RenderBudget {
     @Volatile
     private var appContext: Context? = null
 
+    @Volatile
+    private var weakDeviceCache: Boolean? = null
+
+    @Volatile
+    private var weakDeviceDetail: String = ""
+
+    private fun readMaxCpuFreqKhz(): Long {
+        var max = 0L
+        try {
+            val cpus = java.io.File("/sys/devices/system/cpu").listFiles { f ->
+                f.name.matches(Regex("cpu[0-9]+"))
+            } ?: return 0L
+            for (cpu in cpus) {
+                val f = java.io.File(cpu, "cpufreq/cpuinfo_max_freq")
+                val v = try { f.readText().trim().toLongOrNull() ?: 0L } catch (_: Throwable) { 0L }
+                if (v > max) max = v
+            }
+        } catch (_: Throwable) {
+        }
+        return max
+    }
+
+    private fun weakDevice(isLowRam: Boolean, totalBytes: Long): Boolean {
+        weakDeviceCache?.let { return it }
+        val soc = if (android.os.Build.VERSION.SDK_INT >= 31) {
+            try { android.os.Build.SOC_MODEL } catch (_: Throwable) { null }
+        } else {
+            null
+        } ?: android.os.Build.HARDWARE
+        val freq = readMaxCpuFreqKhz()
+        val weak = RenderBudgetEngine.isWeakDevice(isLowRam, totalBytes, soc, freq)
+        weakDeviceDetail = "soc=$soc max_cpu_khz=$freq"
+        weakDeviceCache = weak
+        return weak
+    }
+
     fun init(context: Context) {
         val app = context.applicationContext ?: context
         appContext = app
@@ -207,6 +282,7 @@ object RenderBudget {
         val memoryClass = try { am?.memoryClass ?: 0 } catch (_: Throwable) { 0 }
         val powerSave = try { pm?.isPowerSaveMode == true } catch (_: Throwable) { false }
 
+        val weak = weakDevice(isLowRam, totalBytes)
         val shouldLowPower = RenderBudgetEngine.shouldUseLowPower(
             preference = _preference.value,
             isLowRamDevice = isLowRam,
@@ -214,7 +290,8 @@ object RenderBudget {
             memoryClassMb = memoryClass,
             trimMemoryLowOrCritical = trimMemoryLowOrCritical,
             isPowerSaveMode = powerSave,
-            jankDetected = jankDetected
+            jankDetected = jankDetected,
+            weakDevice = weak
         )
 
         val previous = _lowPower.value
@@ -227,7 +304,7 @@ object RenderBudget {
             BubbleHealthLog.record(
                 context = app,
                 type = DiagnosticType.LOW_POWER_RENDER,
-                message = "enabled=$shouldLowPower pref=${_preference.value.stored} reason=$reason low_ram=$isLowRam total_mb=${totalBytes / (1024 * 1024)} mem_class=$memoryClass power_save=$powerSave trim=$trimMemoryLowOrCritical jank=$jankDetected"
+                message = "enabled=$shouldLowPower pref=${_preference.value.stored} reason=$reason low_ram=$isLowRam total_mb=${totalBytes / (1024 * 1024)} mem_class=$memoryClass power_save=$powerSave trim=$trimMemoryLowOrCritical jank=$jankDetected weak_device=$weak $weakDeviceDetail"
             )
         }
     }

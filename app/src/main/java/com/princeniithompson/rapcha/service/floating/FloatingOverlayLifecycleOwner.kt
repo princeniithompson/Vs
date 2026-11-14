@@ -47,11 +47,29 @@ class FloatingOverlayLifecycleOwner : LifecycleOwner, SavedStateRegistryOwner, V
     }
 
     fun onPause() {
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+        if (lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+        }
     }
 
     fun onStop() {
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        if (lifecycleRegistry.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        }
+    }
+
+    /**
+     * v23: while the bubble window is GONE, drop to CREATED. Compose's window recomposer pauses
+     * its frame clock below STARTED, so hidden infinite glow/pulse animations stop costing frames.
+     * Back to RESUMED when the window becomes VISIBLE. Main thread only.
+     */
+    fun setRendering(active: Boolean) {
+        val current = lifecycleRegistry.currentState
+        if (current == Lifecycle.State.DESTROYED || current == Lifecycle.State.INITIALIZED) return
+        val target = if (active) Lifecycle.State.RESUMED else Lifecycle.State.CREATED
+        if (current != target) {
+            lifecycleRegistry.currentState = target
+        }
     }
 
     fun onDestroy() {
