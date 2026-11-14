@@ -37,14 +37,21 @@ fun FloatingDockedLifebuoy(
     onDrag: (Float, Float) -> Unit = { _, _ -> },
     onDragEnd: () -> Unit = {},
     spinning: Boolean = false,
+    bubbleVisible: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    val spin by rememberInfiniteTransition(label = "ring").animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(2500, easing = LinearEasing), RepeatMode.Restart),
-        label = "spin"
-    )
+    val spin = if (spinning && bubbleVisible) {
+        val transition = rememberInfiniteTransition(label = "ring")
+        val animatedSpin by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(tween(2500, easing = LinearEasing), RepeatMode.Restart),
+            label = "spin"
+        )
+        animatedSpin
+    } else {
+        0f
+    }
     Box(
         modifier = modifier
             .padding(end = 4.dp)

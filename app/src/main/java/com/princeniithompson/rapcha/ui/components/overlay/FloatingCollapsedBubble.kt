@@ -23,7 +23,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Icon
+import com.princeniithompson.rapcha.service.A11yRepairKind
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -62,6 +64,10 @@ fun FloatingCollapsedBubble(
     isSnappedToRight: Boolean = true,
     isScanMode: Boolean = false,
     isContextLoaded: Boolean = false,
+    bubbleVisible: Boolean = true,
+    lowPower: Boolean = false,
+    repairKind: A11yRepairKind = A11yRepairKind.NONE,
+    onRepairClick: () -> Unit = {},
     onClick: () -> Unit,
     onLongPress: () -> Unit = {},
     onScanTriggered: () -> Unit = {},
@@ -73,17 +79,23 @@ fun FloatingCollapsedBubble(
     val palette = rememberDynamicAuroraPalette()
     val isNetworkProblem by com.princeniithompson.rapcha.service.FloatingBubbleManager.isNetworkProblem.collectAsState()
     val isClipboardFallback by com.princeniithompson.rapcha.service.FloatingBubbleManager.isClipboardFallbackIndicator.collectAsState()
-    val infiniteTransition = rememberInfiniteTransition(label = "collapsedGlow")
 
-    val pulse by infiniteTransition.animateFloat(
-        initialValue = 0.85f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse"
-    )
+    val animatePulse = bubbleVisible && (!lowPower || isRecording || isScanMode)
+    val pulse = if (animatePulse) {
+        val infiniteTransition = rememberInfiniteTransition(label = "collapsedGlow")
+        val animatedPulse by infiniteTransition.animateFloat(
+            initialValue = 0.85f,
+            targetValue = 1.15f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(if (lowPower) 1800 else 1200, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pulse"
+        )
+        animatedPulse
+    } else {
+        1f
+    }
 
     val baseBubbleSize = BubbleChromeGeometry.CIRCLE_SIZE_DP.dp
 
@@ -147,7 +159,9 @@ fun FloatingCollapsedBubble(
                                 if (isDragging) {
                                     onDragEnd()
                                 } else if (!isLongPressTriggered) {
-                                    if (isScanMode) {
+                                    if (repairKind != A11yRepairKind.NONE) {
+                                        onRepairClick()
+                                    } else if (isScanMode) {
                                         // Tap in Scan Mode -> immediately trigger screen scan
                                         onScanTriggered()
                                     } else {
@@ -260,20 +274,68 @@ fun FloatingCollapsedBubble(
                         )
                     }
                 }
+                if (repairKind != A11yRepairKind.NONE) {
+                    val repairTint = if (repairKind == A11yRepairKind.PERMISSION_REVOKED) {
+                        Color(0xFFFF3B30)
+                    } else {
+                        Color(0xFFD29922)
+                    }
+                    Canvas(modifier = Modifier.size(animatedBubbleSize)) {
+                        val center = Offset(size.width / 2f, size.height / 2f)
+                        val radius = size.minDimension / 2f - 2.dp.toPx()
+                        drawCircle(
+                            color = repairTint.copy(alpha = 0.28f),
+                            radius = radius * 1.08f,
+                            center = center
+                        )
+                        drawCircle(
+                            color = repairTint,
+                            radius = radius,
+                            center = center,
+                            style = Stroke(width = 2.5.dp.toPx())
+                        )
+                    }
+                }
                 Box(
                     modifier = Modifier.size(animatedImageSize),
                     contentAlignment = Alignment.Center
                 ) {
                     Image(
                         painter = painterResource(id = R.drawable.ic_lifebuoy_ring),
-                        contentDescription = "Floating voice bubble",
+                        contentDescription = if (repairKind != A11yRepairKind.NONE) {
+                            "Rapcha needs accessibility repair. Tap to fix."
+                        } else {
+                            "Floating voice bubble"
+                        },
                         alpha = animatedAlpha,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
 
-                // 3. AI Context Loaded Badge (Neon Cyan Sparkle Ring on top-right)
-                if (isContextLoaded) {
+                if (repairKind != A11yRepairKind.NONE) {
+                    val badgeColor = if (repairKind == A11yRepairKind.PERMISSION_REVOKED) {
+                        Color(0xFFFF3B30)
+                    } else {
+                        Color(0xFFD29922)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = (-2).dp, y = 2.dp)
+                            .size(18.dp)
+                            .background(Color(0xFF1A1412), CircleShape)
+                            .border(1.5.dp, badgeColor, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.WarningAmber,
+                            contentDescription = "Repair accessibility",
+                            tint = badgeColor,
+                            modifier = Modifier.size(11.dp)
+                        )
+                    }
+                } else if (isContextLoaded) {
+                    // 3. AI Context Loaded Badge (Neon Cyan Sparkle Ring on top-right)
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)

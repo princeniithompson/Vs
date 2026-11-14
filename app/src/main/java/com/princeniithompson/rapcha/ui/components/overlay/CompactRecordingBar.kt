@@ -112,33 +112,58 @@ fun CompactRecordingBar(
     onDragStart: () -> Unit = {},
     onDrag: (Float, Float) -> Unit = { _, _ -> },
     onDragEnd: () -> Unit = {},
+    bubbleVisible: Boolean = true,
+    lowPower: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "compact_pill_glow_anim")
-    val phase1 by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2800, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "phase1"
-    )
-    val phase2 by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 4200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "phase2"
-    )
-    val spin by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(2500, easing = LinearEasing), RepeatMode.Restart),
-        label = "spin"
-    )
+    var phase1 = 0f
+    var phase2 = 0f
+    var spin = 0f
+    if (bubbleVisible) {
+        val infiniteTransition = rememberInfiniteTransition(label = "compact_pill_glow_anim")
+        if (lowPower) {
+            val animPhase1 by infiniteTransition.animateFloat(
+                initialValue = 0f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 4000, easing = LinearEasing),
+                    repeatMode = RepeatMode.Restart
+                ),
+                label = "phase1"
+            )
+            phase1 = animPhase1
+            phase2 = (animPhase1 + 0.35f) % 1f
+            spin = if (processing) animPhase1 * 360f else 0f
+        } else {
+            val animPhase1 by infiniteTransition.animateFloat(
+                initialValue = 0f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 2800, easing = LinearEasing),
+                    repeatMode = RepeatMode.Restart
+                ),
+                label = "phase1"
+            )
+            val animPhase2 by infiniteTransition.animateFloat(
+                initialValue = 0f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 4200, easing = LinearEasing),
+                    repeatMode = RepeatMode.Restart
+                ),
+                label = "phase2"
+            )
+            val animSpin by infiniteTransition.animateFloat(
+                initialValue = 0f,
+                targetValue = 360f,
+                animationSpec = infiniteRepeatable(tween(2500, easing = LinearEasing), RepeatMode.Restart),
+                label = "spin"
+            )
+            phase1 = animPhase1
+            phase2 = animPhase2
+            spin = animSpin
+        }
+    }
 
     val simulatedTalking = (0.45f + 0.35f * kotlin.math.abs(kotlin.math.sin(phase1.toDouble() * 2 * PI)) + 0.2f * kotlin.math.abs(kotlin.math.cos(phase2.toDouble() * 1.5 * PI))).toFloat()
     val effectiveAmp = if (audioAmplitude > 0.05f) {
@@ -238,12 +263,12 @@ fun CompactRecordingBar(
                 },
             contentAlignment = Alignment.Center
         ) {
-            // Layer B: Blurred Glow Layer from Engine (with Android 12+ RenderEffect blur & fallback)
+            // Layer B: Blurred Glow Layer from Engine (with Android 12+ RenderEffect blur & pre-blurred low-power fallback)
             Canvas(
                 modifier = Modifier
                     .matchParentSize()
                     .then(
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        if (!lowPower && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                             Modifier.graphicsLayer {
                                 val blurPx = size.height * 0.35f
                                 if (blurPx > 0f) {
@@ -262,12 +287,12 @@ fun CompactRecordingBar(
                 if (w <= 0f || h <= 0f) return@Canvas
 
                 // Ambient halo behind glow
-                val haloRadius = w * 0.65f
+                val haloRadius = w * (if (lowPower) 0.72f else 0.65f)
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            palette.primaryLight.copy(alpha = 0.22f * glowBrightness),
-                            palette.secondary.copy(alpha = 0.10f * glowBrightness),
+                            palette.primaryLight.copy(alpha = (if (lowPower) 0.30f else 0.22f) * glowBrightness),
+                            palette.secondary.copy(alpha = (if (lowPower) 0.16f else 0.10f) * glowBrightness),
                             Color.Transparent
                         ),
                         center = Offset(w / 2f, h * 0.60f),
@@ -277,18 +302,36 @@ fun CompactRecordingBar(
                     radius = haloRadius
                 )
 
-                // Shared Glow Engine Renderer
-                renderGlowAnimation(
-                    styleId = glowStyleId,
-                    palette = palette,
-                    effectiveAmp = baseAmp,
-                    glowBrightness = glowBrightness,
-                    phase1 = phase1,
-                    phase2 = phase2,
-                    completionMorphProgress = 0f,
-                    entranceProgress = 1f,
-                    waitingLoopProgress = 0f
-                )
+                if (lowPower) {
+                    // Pre-blurred radial glow sweep without expensive RenderEffect GPU pass
+                    val shift = (kotlin.math.sin(phase1 * 2.0 * PI) * w * 0.18).toFloat()
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                palette.primaryVibrant.copy(alpha = 0.42f * glowBrightness),
+                                palette.primaryLight.copy(alpha = 0.18f * glowBrightness),
+                                Color.Transparent
+                            ),
+                            center = Offset(w * 0.5f + shift, h * 0.62f),
+                            radius = w * 0.52f
+                        ),
+                        center = Offset(w * 0.5f + shift, h * 0.62f),
+                        radius = w * 0.52f
+                    )
+                } else {
+                    // Shared Glow Engine Renderer
+                    renderGlowAnimation(
+                        styleId = glowStyleId,
+                        palette = palette,
+                        effectiveAmp = baseAmp,
+                        glowBrightness = glowBrightness,
+                        phase1 = phase1,
+                        phase2 = phase2,
+                        completionMorphProgress = 0f,
+                        entranceProgress = 1f,
+                        waitingLoopProgress = 0f
+                    )
+                }
 
                 // Soft dark scrim centered behind text for >= 4.5:1 contrast
                 drawCircle(
