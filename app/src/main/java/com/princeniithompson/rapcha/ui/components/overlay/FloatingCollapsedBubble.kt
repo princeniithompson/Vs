@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Icon
 import com.princeniithompson.rapcha.service.A11yRepairKind
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -80,10 +82,14 @@ fun FloatingCollapsedBubble(
     val isNetworkProblem by com.princeniithompson.rapcha.service.FloatingBubbleManager.isNetworkProblem.collectAsState()
     val isClipboardFallback by com.princeniithompson.rapcha.service.FloatingBubbleManager.isClipboardFallbackIndicator.collectAsState()
 
-    val animatePulse = bubbleVisible && (!lowPower || isRecording || isScanMode)
-    val pulse = if (animatePulse) {
+    // v23: the pulse is only drawn while recording, in scan mode, or on the clipboard-fallback
+    // ring. v22 ran it on every idle frame even when nothing used it. The value is now read only
+    // in the draw/layer phase (no recomposition per frame). Same timings and look.
+    val pulseDrawn = isRecording || isScanMode || (isClipboardFallback && !lowPower)
+    val animatePulse = bubbleVisible && pulseDrawn && (!lowPower || isRecording || isScanMode)
+    val pulseState: State<Float> = if (animatePulse) {
         val infiniteTransition = rememberInfiniteTransition(label = "collapsedGlow")
-        val animatedPulse by infiniteTransition.animateFloat(
+        infiniteTransition.animateFloat(
             initialValue = 0.85f,
             targetValue = 1.15f,
             animationSpec = infiniteRepeatable(
@@ -92,9 +98,8 @@ fun FloatingCollapsedBubble(
             ),
             label = "pulse"
         )
-        animatedPulse
     } else {
-        1f
+        StaticPulse
     }
 
     val baseBubbleSize = BubbleChromeGeometry.CIRCLE_SIZE_DP.dp
@@ -241,7 +246,11 @@ fun FloatingCollapsedBubble(
                     tint = Color(0xFF00E5FF),
                     modifier = Modifier
                         .size(30.dp)
-                        .scale(pulse)
+                        .graphicsLayer {
+                            val p = pulseState.value
+                            scaleX = p
+                            scaleY = p
+                        }
                 )
             } else {
                 // 2. Standard Lifebuoy Bubble
@@ -253,7 +262,12 @@ fun FloatingCollapsedBubble(
                     }
                     Box(
                         modifier = Modifier
-                            .size(animatedBubbleSize * 0.95f * pulse)
+                            .size(animatedBubbleSize * 0.95f)
+                            .graphicsLayer {
+                                val p = pulseState.value
+                                scaleX = p
+                                scaleY = p
+                            }
                             .background(recordingGlow, CircleShape)
                     )
                 }
@@ -263,7 +277,7 @@ fun FloatingCollapsedBubble(
                         val radius = size.minDimension / 2f - 2.dp.toPx()
                         drawCircle(
                             color = Color(0xFFD29922).copy(alpha = 0.35f),
-                            radius = radius * 1.15f * pulse,
+                            radius = radius * 1.15f * pulseState.value,
                             center = center
                         )
                         drawCircle(
@@ -357,3 +371,6 @@ fun FloatingCollapsedBubble(
         }
     }
 }
+
+/** v23: constant pulse used when no animation is needed (no per-frame state). */
+private val StaticPulse: State<Float> = androidx.compose.runtime.mutableFloatStateOf(1f)

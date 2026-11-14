@@ -116,13 +116,15 @@ fun CompactRecordingBar(
     lowPower: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    var phase1 = 0f
-    var phase2 = 0f
-    var spin = 0f
+    // v23: animation values are read only inside draw/layer lambdas, so the pill redraws each
+    // frame without recomposing the whole bar (same timings, colours and shapes as v22).
+    var phase1: () -> Float = { 0f }
+    var phase2: () -> Float = { 0f }
+    var spin: () -> Float = { 0f }
     if (bubbleVisible) {
         val infiniteTransition = rememberInfiniteTransition(label = "compact_pill_glow_anim")
         if (lowPower) {
-            val animPhase1 by infiniteTransition.animateFloat(
+            val animPhase1 = infiniteTransition.animateFloat(
                 initialValue = 0f,
                 targetValue = 1f,
                 animationSpec = infiniteRepeatable(
@@ -131,11 +133,11 @@ fun CompactRecordingBar(
                 ),
                 label = "phase1"
             )
-            phase1 = animPhase1
-            phase2 = (animPhase1 + 0.35f) % 1f
-            spin = if (processing) animPhase1 * 360f else 0f
+            phase1 = { animPhase1.value }
+            phase2 = { (animPhase1.value + 0.35f) % 1f }
+            spin = if (processing) ({ animPhase1.value * 360f }) else ({ 0f })
         } else {
-            val animPhase1 by infiniteTransition.animateFloat(
+            val animPhase1 = infiniteTransition.animateFloat(
                 initialValue = 0f,
                 targetValue = 1f,
                 animationSpec = infiniteRepeatable(
@@ -144,7 +146,7 @@ fun CompactRecordingBar(
                 ),
                 label = "phase1"
             )
-            val animPhase2 by infiniteTransition.animateFloat(
+            val animPhase2 = infiniteTransition.animateFloat(
                 initialValue = 0f,
                 targetValue = 1f,
                 animationSpec = infiniteRepeatable(
@@ -153,28 +155,29 @@ fun CompactRecordingBar(
                 ),
                 label = "phase2"
             )
-            val animSpin by infiniteTransition.animateFloat(
+            val animSpin = infiniteTransition.animateFloat(
                 initialValue = 0f,
                 targetValue = 360f,
                 animationSpec = infiniteRepeatable(tween(2500, easing = LinearEasing), RepeatMode.Restart),
                 label = "spin"
             )
-            phase1 = animPhase1
-            phase2 = animPhase2
-            spin = animSpin
+            phase1 = { animPhase1.value }
+            phase2 = { animPhase2.value }
+            spin = { animSpin.value }
         }
     }
 
-    val simulatedTalking = (0.45f + 0.35f * kotlin.math.abs(kotlin.math.sin(phase1.toDouble() * 2 * PI)) + 0.2f * kotlin.math.abs(kotlin.math.cos(phase2.toDouble() * 1.5 * PI))).toFloat()
-    val effectiveAmp = if (audioAmplitude > 0.05f) {
-        audioAmplitude.coerceIn(0.15f, 1.0f)
-    } else if (mimicTalkingWhenSilent) {
-        simulatedTalking.coerceIn(0.25f, 0.85f)
-    } else {
-        (0.20f + 0.08f * kotlin.math.sin(phase1.toDouble() * 2 * PI)).toFloat().coerceIn(0.15f, 0.35f)
+    // Same amplitude/brightness formulas as v22, evaluated per frame in the draw phase.
+    val ampFor: (Float, Float) -> Float = { p1, p2 ->
+        val simulatedTalking = (0.45f + 0.35f * kotlin.math.abs(kotlin.math.sin(p1.toDouble() * 2 * PI)) + 0.2f * kotlin.math.abs(kotlin.math.cos(p2.toDouble() * 1.5 * PI))).toFloat()
+        if (audioAmplitude > 0.05f) {
+            audioAmplitude.coerceIn(0.15f, 1.0f)
+        } else if (mimicTalkingWhenSilent) {
+            simulatedTalking.coerceIn(0.25f, 0.85f)
+        } else {
+            (0.20f + 0.08f * kotlin.math.sin(p1.toDouble() * 2 * PI)).toFloat().coerceIn(0.15f, 0.35f)
+        }
     }
-    val baseAmp = effectiveAmp
-    val glowBrightness = 0.45f + 0.55f * baseAmp
 
     val cancelDiameter = BubbleChromeGeometry.CANCEL_DP.dp
     val pillWidth = BubbleChromeGeometry.PILL_WIDTH_DP.dp
@@ -285,6 +288,10 @@ fun CompactRecordingBar(
                 val w = size.width
                 val h = size.height
                 if (w <= 0f || h <= 0f) return@Canvas
+                val ph1 = phase1()
+                val ph2 = phase2()
+                val baseAmp = ampFor(ph1, ph2)
+                val glowBrightness = 0.45f + 0.55f * baseAmp
 
                 // Ambient halo behind glow
                 val haloRadius = w * (if (lowPower) 0.72f else 0.65f)
@@ -304,7 +311,7 @@ fun CompactRecordingBar(
 
                 if (lowPower) {
                     // Pre-blurred radial glow sweep without expensive RenderEffect GPU pass
-                    val shift = (kotlin.math.sin(phase1 * 2.0 * PI) * w * 0.18).toFloat()
+                    val shift = (kotlin.math.sin(ph1 * 2.0 * PI) * w * 0.18).toFloat()
                     drawCircle(
                         brush = Brush.radialGradient(
                             colors = listOf(
@@ -325,8 +332,8 @@ fun CompactRecordingBar(
                         palette = palette,
                         effectiveAmp = baseAmp,
                         glowBrightness = glowBrightness,
-                        phase1 = phase1,
-                        phase2 = phase2,
+                        phase1 = ph1,
+                        phase2 = ph2,
                         completionMorphProgress = 0f,
                         entranceProgress = 1f,
                         waitingLoopProgress = 0f
@@ -474,7 +481,7 @@ fun CompactRecordingBar(
                 contentDescription = "Complete",
                 modifier = Modifier
                     .size(completeDiameter)
-                    .graphicsLayer { if (processing) rotationZ = spin }
+                    .graphicsLayer { if (processing) rotationZ = spin() }
             )
         }
     }

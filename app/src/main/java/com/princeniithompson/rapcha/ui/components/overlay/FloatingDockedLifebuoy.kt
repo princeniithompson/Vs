@@ -40,17 +40,18 @@ fun FloatingDockedLifebuoy(
     bubbleVisible: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    val spin = if (spinning && bubbleVisible) {
+    // v23: rotation is read in the layer lambda only (no recomposition per frame).
+    val spin: () -> Float = if (spinning && bubbleVisible) {
         val transition = rememberInfiniteTransition(label = "ring")
-        val animatedSpin by transition.animateFloat(
+        val animatedSpin = transition.animateFloat(
             initialValue = 0f,
             targetValue = 360f,
             animationSpec = infiniteRepeatable(tween(2500, easing = LinearEasing), RepeatMode.Restart),
             label = "spin"
         )
-        animatedSpin
+        ({ animatedSpin.value })
     } else {
-        0f
+        ({ 0f })
     }
     Box(
         modifier = modifier
@@ -80,7 +81,7 @@ fun FloatingDockedLifebuoy(
             contentDescription = "Lifebuoy voice typing",
             modifier = Modifier
                 .size(46.dp)
-                .graphicsLayer { if (spinning) rotationZ = spin }
+                .graphicsLayer { if (spinning) rotationZ = spin() }
         )
     }
 }

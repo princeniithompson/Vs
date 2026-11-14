@@ -421,12 +421,25 @@ class FloatingOverlayWindowManager(private val context: Context) {
         view.visibility = if (visible) View.VISIBLE else View.GONE
         overlayBubbleVisible.value = visible
         RenderBudget.setOverlayFrameMonitoring(visible)
+        setOverlayRendering(visible)
         if (!visible && reason != null) {
             lastHideReason = reason
         } else if (visible) {
             isConcealing = false
             lastHideReason = null
         }
+    }
+
+    /** v23: pause Compose frames (and every infinite animation) while the window is hidden. */
+    private fun setOverlayRendering(active: Boolean) {
+        val apply = {
+            try {
+                lifecycleOwner.setRendering(active)
+            } catch (t: Throwable) {
+                Log.w(TAG, "Overlay lifecycle change failed: ${t.javaClass.simpleName}")
+            }
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) apply() else mainHandler.post { apply() }
     }
 
     fun resetInactivityTimer(keepShrunk: Boolean = false) {
@@ -643,6 +656,7 @@ class FloatingOverlayWindowManager(private val context: Context) {
         if (root.visibility == View.VISIBLE && root.alpha >= 0.99f && root.scaleX >= 0.99f) {
             overlayBubbleVisible.value = true
             RenderBudget.setOverlayFrameMonitoring(true)
+            setOverlayRendering(true)
             return
         }
         root.animate().cancel()
