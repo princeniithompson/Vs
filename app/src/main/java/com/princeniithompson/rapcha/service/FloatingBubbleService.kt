@@ -168,6 +168,7 @@ class FloatingBubbleService : Service() {
     private var networkWatcher: RetryNetworkWatcher? = null
     private var networkBackNotifiedFor: String? = null
     private var watchdogJob: Job? = null
+    private var detachedRecoverTicks = 0
     private var watchdogState = VisibilityWatchdogDecision.WatchdogState()
     private var screenInteractive = true
     private var screenReceiverRegistered = false
@@ -181,7 +182,22 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    /**
+     * v23: RapchaAccessibilityService binds here (BIND_AUTO_CREATE). A bound service created by
+     * our running accessibility service is not a background foreground-service start, so Android
+     * 12+ cannot refuse it, and the bubble lives as long as the accessibility binding.
+     */
+    inner class LocalBinder : android.os.Binder() {
+        val service: FloatingBubbleService get() = this@FloatingBubbleService
+    }
+
+    private val localBinder = LocalBinder()
+
+    /** True once startForeground succeeded at least once for this service instance. */
+    @Volatile
+    private var promotedToForeground = false
+
+    override fun onBind(intent: Intent?): IBinder = localBinder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!FloatingBubbleManager.isBubbleEnabledSync(this) ||
@@ -197,6 +213,8 @@ class FloatingBubbleService : Service() {
                 com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.STOP_INTENTIONAL
             )
             com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordHideReason(this, reason)
+            // v23: a bound service survives stopSelf(); drop the accessibility binding too.
+            RapchaAccessibilityService.instance?.unbindBubbleService("disabled_or_no_overlay")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -205,10 +223,19 @@ class FloatingBubbleService : Service() {
         if (currentlyRecording) {
             startMicrophoneForeground()
         } else if (!enterSpecialUseForeground()) {
+            // v23: Android 12+ refused the foreground promotion (background start). The overlay
+            // window does not need a foreground service while we hold SYSTEM_ALERT_WINDOW, so keep
+            // running unpromoted and stay START_STICKY instead of stopping ourselves. The recovery
+            // job retries the promotion later; the user can also tap the restore notification.
             BubbleRecoveryJobScheduler.schedule(this, RecoveryJobPolicy.DEFAULT_DELAY_MS)
-            FloatingNotificationManager.postRestoreNotification(this)
-            stopSelf()
-            return START_NOT_STICKY
+            if (!RapchaAccessibilityService.isBubbleBound()) {
+                FloatingNotificationManager.postRestoreNotification(this)
+            }
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
+                context = this,
+                type = DiagnosticType.FGS_FALLBACK,
+                message = "site=start_command action=continue_unpromoted bound=${RapchaAccessibilityService.isBubbleBound()}"
+            )
         }
         BubbleRecoveryJobScheduler.scheduleIfMissing(this, RecoveryJobPolicy.REPEAT_LATENCY_MS)
 
@@ -237,8 +264,12 @@ class FloatingBubbleService : Service() {
                 ACTION_RESTORE -> {
                     FloatingNotificationManager.cancelRestoreNotification(this)
                     rebuildOverlayIfNeeded("action_restore")
+                    // v23: no main-thread getWindows() binder call here; use the state the
+                    // accessibility worker thread already computed, and ask it to re-evaluate.
+                    val access = RapchaAccessibilityService.instance
+                    access?.requestEvaluation()
                     val imeUp = FloatingBubbleManager.isKeyboardVisible.value ||
-                        RapchaAccessibilityService.instance?.isImeVisibleNow() == true
+                        access?.isImeVisibleCached() == true
                     if (imeUp) {
                         FloatingBubbleManager.notifyKeyboardVisibility(true)
                     }
@@ -263,36 +294,46 @@ class FloatingBubbleService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        AppLogRepository.init(this)
+        // v23: one shared background initializer (logs, diagnostics, render budget, retry clips)
+        // started once per process. Nothing here touches the disk on the main thread.
+        com.princeniithompson.rapcha.RapchaApplication.ensureBackgroundInit(this)
         com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.markServiceRunning(this, true)
         if (!enterSpecialUseForeground()) {
+            // v23: keep running unpromoted (overlay works with SYSTEM_ALERT_WINDOW alone).
+            // Never stopSelf here: that also threw away START_STICKY.
             BubbleRecoveryJobScheduler.schedule(this, RecoveryJobPolicy.DEFAULT_DELAY_MS)
-            FloatingNotificationManager.postRestoreNotification(this)
-            stopSelf()
-            return
         }
         BubbleRecoveryJobScheduler.scheduleIfMissing(this, RecoveryJobPolicy.REPEAT_LATENCY_MS)
-        Log.d(TAG, "FloatingBubbleService onCreate")
-        com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.startMonitoring(this)
-        com.princeniithompson.rapcha.service.floating.RenderBudget.init(this)
-        if (com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.consumeUncleanShutdownPossible(this)) {
-            val killReason = com.princeniithompson.rapcha.diagnostics.ProcessExitDiagnostics.lastUncleanKillReason(this)
-            if (killReason != null) {
-                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastRestartReason(
-                    this,
-                    "Restarted after $killReason"
-                )
-                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
-                    context = this,
-                    type = DiagnosticType.RESTARTED_AFTER_KILL,
-                    message = "exit_reason=$killReason"
+        Log.d(TAG, "FloatingBubbleService onCreate promoted=$promotedToForeground")
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                if (com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.consumeUncleanShutdownPossible(this@FloatingBubbleService)) {
+                    val killReason = com.princeniithompson.rapcha.diagnostics.ProcessExitDiagnostics.lastUncleanKillReason(this@FloatingBubbleService)
+                    if (killReason != null) {
+                        com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastRestartReason(
+                            this@FloatingBubbleService,
+                            "Restarted after $killReason"
+                        )
+                        com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
+                            context = this@FloatingBubbleService,
+                            type = DiagnosticType.RESTARTED_AFTER_KILL,
+                            message = "exit_reason=$killReason"
+                        )
+                    }
+                }
+                // Heavy repository loads run here, after the overlay window is created below.
+                CustomVocabularyRepository.init(this@FloatingBubbleService)
+                HistoryRepository.init(this@FloatingBubbleService)
+            } catch (t: Throwable) {
+                Log.w(TAG, "Background service init failed: ${t.javaClass.simpleName}", t)
+                AppLogRepository.logEvent(
+                    DiagnosticSource.BUBBLE,
+                    DiagnosticType.WARNING,
+                    "service_async_init_failed kind=${t.javaClass.simpleName} detail=${t.message?.take(120)}"
                 )
             }
         }
-        CustomVocabularyRepository.init(this)
-        HistoryRepository.init(this)
         FloatingBubbleManager.refreshLiveTwoStep(this)
-        RetryClipStore.init(this)
         FloatingBubbleManager.onOfflineRetry = { onRetryClicked() }
         FloatingBubbleManager.onOfflineDiscard = { onDiscardClicked() }
 
@@ -386,16 +427,34 @@ class FloatingBubbleService : Service() {
 
         try {
             initOverlayWindow()
-            offlineRetry.restorePending(this)
-            RetryClipStore.currentId()?.let { clipId ->
-                if (offlineRetry.isSticky()) linkPendingHistory(clipId)
-            }
-            if (FloatingBubbleManager.offlineRetry.value != null && FloatingBubbleManager.isKeyboardVisible.value) {
-                overlayWindowManager.expandPanel()
-            }
             networkWatcher = RetryNetworkWatcher(this) { onNetworkBack() }.also { it.start() }
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing overlay window", e)
+        }
+        // v23: pending offline-retry clips are read from disk off the main thread, after the
+        // overlay window already exists.
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                offlineRetry.restorePending(this@FloatingBubbleService)
+                RetryClipStore.currentId()?.let { clipId ->
+                    if (offlineRetry.isSticky()) linkPendingHistory(clipId)
+                }
+                withContext(Dispatchers.Main) {
+                    if (::overlayWindowManager.isInitialized &&
+                        FloatingBubbleManager.offlineRetry.value != null &&
+                        FloatingBubbleManager.isKeyboardVisible.value
+                    ) {
+                        overlayWindowManager.expandPanel()
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "Offline retry restore failed", t)
+                AppLogRepository.logEvent(
+                    DiagnosticSource.BUBBLE,
+                    DiagnosticType.WARNING,
+                    "retry_restore_failed kind=${t.javaClass.simpleName}"
+                )
+            }
         }
         registerScreenReceiver()
         startWatchdogs()
@@ -479,7 +538,13 @@ class FloatingBubbleService : Service() {
                 registerReceiver(screenReceiver, filter)
             }
             screenReceiverRegistered = true
-        } catch (_: Throwable) {}
+        } catch (t: Throwable) {
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
+                context = this,
+                type = DiagnosticType.WARNING,
+                message = "bubble_screen_receiver_failed kind=${t.javaClass.simpleName}"
+            )
+        }
     }
 
     private fun startWatchdogs() {
@@ -524,10 +589,19 @@ class FloatingBubbleService : Service() {
                             } else if (!overlayWindowManager.isAttached()) {
                                 overlayWindowManager.attachWithRetry("watchdog_recover")
                             }
+                            // v23: rebuilding the whole Compose overlay is expensive on low-end
+                            // phones. Only do it when the window has really been dead for more
+                            // than two watchdog ticks in a row, not on every visibility mismatch.
                             if (!overlayWindowManager.isAttached()) {
-                                overlayWindowManager.onDestroy()
-                                overlayWindowManager = FloatingOverlayWindowManager(this@FloatingBubbleService)
-                                initOverlayWindow()
+                                detachedRecoverTicks++
+                                if (detachedRecoverTicks > 2) {
+                                    detachedRecoverTicks = 0
+                                    overlayWindowManager.onDestroy()
+                                    overlayWindowManager = FloatingOverlayWindowManager(this@FloatingBubbleService)
+                                    initOverlayWindow()
+                                }
+                            } else {
+                                detachedRecoverTicks = 0
                             }
                             overlayWindowManager.restoreOverlayVisibility(
                                 FloatingBubbleManager.isKeyboardVisible.value ||
@@ -619,6 +693,7 @@ class FloatingBubbleService : Service() {
         )
         return try {
             startForegroundForPlan(notification, plan)
+            promotedToForeground = true
             true
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to startForeground(plan=$plan)", e)

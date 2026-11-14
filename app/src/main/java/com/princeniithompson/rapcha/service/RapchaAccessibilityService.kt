@@ -50,6 +50,86 @@ open class RapchaAccessibilityService : AccessibilityService() {
         @Volatile
         var lastEventElapsedMs: Long = 0L
             internal set
+
+        @Volatile
+        private var bubbleBound = false
+
+        /** v23: true while this accessibility service holds a binding to FloatingBubbleService. */
+        fun isBubbleBound(): Boolean = bubbleBound
+    }
+
+    private var bubbleConnection: android.content.ServiceConnection? = null
+
+    /**
+     * v23: bind FloatingBubbleService from this (running, system-bound) accessibility service.
+     * Unlike startForegroundService from the background, Android 12+ never refuses this, and the
+     * bubble service then lives as long as this binding. Idempotent; main thread.
+     */
+    fun bindBubbleService(source: String): Boolean {
+        if (bubbleConnection != null) return true
+        if (!FloatingBubbleManager.isBubbleEnabledSync(this) || !FloatingBubbleManager.canDrawOverlays(this)) {
+            return false
+        }
+        val connection = object : android.content.ServiceConnection {
+            override fun onServiceConnected(name: android.content.ComponentName?, service: android.os.IBinder?) {
+                Log.d(TAG, "Bubble service bound ($source)")
+            }
+
+            override fun onServiceDisconnected(name: android.content.ComponentName?) {
+                Log.w(TAG, "Bubble service disconnected")
+            }
+
+            override fun onBindingDied(name: android.content.ComponentName?) {
+                // The binding cannot recover by itself; drop it and bind again shortly.
+                BubbleHealthLog.record(this@RapchaAccessibilityService, DiagnosticType.WARNING, "bubble_binding_died")
+                mainHandler.post {
+                    unbindBubbleService("binding_died")
+                    if (instance === this@RapchaAccessibilityService) {
+                        bindBubbleService("rebind_after_death")
+                    }
+                }
+            }
+        }
+        val ok = try {
+            bindService(
+                Intent(this, FloatingBubbleService::class.java),
+                connection,
+                Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT
+            )
+        } catch (t: Throwable) {
+            BubbleHealthLog.record(
+                this,
+                DiagnosticType.FGS_REFUSED,
+                "site=a11y_bind source=$source kind=${t.javaClass.simpleName} detail=${t.message?.take(120)}"
+            )
+            false
+        }
+        if (ok) {
+            bubbleConnection = connection
+            bubbleBound = true
+        } else {
+            try { unbindService(connection) } catch (_: Throwable) {}
+        }
+        return ok
+    }
+
+    fun unbindBubbleService(reason: String) {
+        val connection = bubbleConnection ?: return
+        bubbleConnection = null
+        bubbleBound = false
+        try {
+            unbindService(connection)
+        } catch (t: Throwable) {
+            Log.w(TAG, "unbindBubbleService($reason) failed: ${t.javaClass.simpleName}")
+        }
+    }
+
+    /** v23: keyboard state already computed on the eval thread; no binder call on the caller. */
+    fun isImeVisibleCached(): Boolean = lastImeWindowPresent || lastReportedKeyboardVisible == true
+
+    /** v23: ask the eval thread for a fresh keyboard/focus evaluation (non-blocking). */
+    fun requestEvaluation() {
+        scheduleCoalescedEvaluation(delayMs = 0L)
     }
 
     @Volatile
@@ -262,6 +342,7 @@ open class RapchaAccessibilityService : AccessibilityService() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error registering screen receiver: ${e.message}")
+            BubbleHealthLog.record(this, DiagnosticType.WARNING, "a11y_screen_receiver_failed kind=${e.javaClass.simpleName}")
         }
         receiversRegistered = true
     }
@@ -854,6 +935,7 @@ open class RapchaAccessibilityService : AccessibilityService() {
             instance = null
             FloatingBubbleManager.setAccessibilityConnected(false)
         }
+        unbindBubbleService("a11y_teardown")
         if (receiversRegistered) {
             try { unregisterReceiver(packageReceiver) } catch (_: Exception) {}
             try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}

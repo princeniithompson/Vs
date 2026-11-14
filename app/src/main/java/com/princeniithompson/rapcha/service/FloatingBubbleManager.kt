@@ -391,7 +391,30 @@ object FloatingBubbleManager {
             )
             return false
         }
-        if (!bypassThrottle && FloatingBubbleService.instance == null && !respawnThrottle.tryAcquire()) {
+        // v23 (Android 12+ background-start fix): when our accessibility service is connected,
+        // bind the bubble service from it first. A bind from a running accessibility service is not
+        // a background foreground-service start, so it cannot be refused, and the bubble then lives
+        // as long as the accessibility binding. The foreground promotion below is a bonus.
+        val bound = RapchaAccessibilityService.instance?.bindBubbleService(source) == true
+        val uiForeground = isUiForeground(app)
+        val decision = FgsStartupDecision.startRoute(
+            sdkInt = Build.VERSION.SDK_INT,
+            boundByAccessibility = bound,
+            uiForeground = uiForeground,
+            exemptSource = FgsStartupDecision.isExemptSource(source)
+        )
+        if (decision != FgsStartupDecision.StartRoute.START_FOREGROUND) {
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
+                context = app,
+                type = DiagnosticType.FGS_FALLBACK,
+                message = "source=$source route=$decision bound=$bound ui_foreground=$uiForeground"
+            )
+        }
+        if (decision == FgsStartupDecision.StartRoute.BIND_ONLY) {
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastRestartReason(app, "Bound ($source)")
+            return true
+        }
+        if (!bound && !bypassThrottle && FloatingBubbleService.instance == null && !respawnThrottle.tryAcquire()) {
             Log.d(TAG, "Throttled duplicate startBubbleService(source=$source)")
             return false
         }
@@ -407,6 +430,15 @@ object FloatingBubbleManager {
             com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastRestartReason(app, "Started ($source)")
             true
         } catch (e: Throwable) {
+            if (bound) {
+                // The bubble is alive through the accessibility binding; nothing to recover.
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
+                    context = app,
+                    type = DiagnosticType.FGS_FALLBACK,
+                    message = "source=$source route=bound_unpromoted kind=${e.javaClass.simpleName}"
+                )
+                return true
+            }
             val refusalClass = e.javaClass.simpleName
             val kind = when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
@@ -435,6 +467,9 @@ object FloatingBubbleManager {
                 context,
                 com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.STOP_INTENTIONAL
             )
+            // v23: also drop the accessibility binding, otherwise stopService() leaves the
+            // bound service (and the bubble) alive.
+            RapchaAccessibilityService.instance?.unbindBubbleService("stop_bubble_service")
             val intent = Intent(context, FloatingBubbleService::class.java)
             context.stopService(intent)
         } catch (e: Exception) {

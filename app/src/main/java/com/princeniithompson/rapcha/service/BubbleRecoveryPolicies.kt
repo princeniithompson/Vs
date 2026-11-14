@@ -164,6 +164,35 @@ object FgsStartupDecision {
         }
     }
 
+    /** v23: how FloatingBubbleManager.startBubbleService should start the bubble service. */
+    enum class StartRoute {
+        /** startForegroundService (foreground-allowed context, or no accessibility binding). */
+        START_FOREGROUND,
+        /** Accessibility service already bound the bubble; skip the refused background FGS start. */
+        BIND_ONLY
+    }
+
+    /** Sources Android lets start a foreground service from the background (boot, update, user UI). */
+    fun isExemptSource(source: String): Boolean {
+        val s = source.lowercase()
+        return s == "boot" || s == "update" || s == "locked_boot" ||
+            s.startsWith("user_") || s.startsWith("keep_awake") || s.startsWith("notification")
+    }
+
+    fun startRoute(
+        sdkInt: Int,
+        boundByAccessibility: Boolean,
+        uiForeground: Boolean,
+        exemptSource: Boolean
+    ): StartRoute {
+        return when {
+            !boundByAccessibility -> StartRoute.START_FOREGROUND
+            sdkInt < 31 -> StartRoute.START_FOREGROUND
+            uiForeground || exemptSource -> StartRoute.START_FOREGROUND
+            else -> StartRoute.BIND_ONLY
+        }
+    }
+
     fun fallbackPlan(sdkInt: Int, failedPlan: FgsPlan): FgsPlan? {
         return when (failedPlan) {
             FgsPlan.SPECIAL_USE_AND_MICROPHONE -> FgsPlan.SPECIAL_USE_ONLY
