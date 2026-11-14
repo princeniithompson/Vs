@@ -71,10 +71,29 @@ object HistoryRepository {
     private val _historyItems = MutableStateFlow<List<HistoryItem>>(emptyList())
     val historyItems: StateFlow<List<HistoryItem>> = _historyItems.asStateFlow()
 
+    /** v23: history is capped so the JSON blob (and every rewrite of it) stays bounded. */
+    const val MAX_HISTORY_ITEMS = 1000
+
+    /** v23: one ordered background writer; the caller (often the main thread) never serialises JSON. */
+    private val saveExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "rapcha-history-writer").apply { isDaemon = true }
+    }
+
+    /**
+     * Synchronized so a background warm-up and a main-thread caller can never both load,
+     * and the second caller simply waits for the first (usually already finished).
+     */
+    @Synchronized
     fun init(context: Context) {
         if (prefs == null) {
-            prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            loadHistory()
+            // Let any queued write land before (re)loading.
+            try {
+                saveExecutor.submit {}.get(5, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (_: Exception) {
+            }
+            val sp = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            loadHistory(sp)
+            prefs = sp
         }
     }
 
@@ -93,8 +112,7 @@ object HistoryRepository {
                trimmed == "Google AI Studio"
     }
 
-    private fun loadHistory() {
-        val sp = prefs ?: return
+    private fun loadHistory(sp: SharedPreferences) {
         val rawJson = sp.getString(KEY_HISTORY, null)
         if (rawJson.isNullOrBlank()) {
             _historyItems.value = emptyList()
@@ -104,11 +122,17 @@ object HistoryRepository {
         try {
             val jsonArray = JSONArray(rawJson)
             val list = mutableListOf<HistoryItem>()
+            var droppedAny = false
             for (i in 0 until jsonArray.length()) {
+                if (list.size >= MAX_HISTORY_ITEMS) {
+                    droppedAny = true
+                    break
+                }
                 val obj = jsonArray.getJSONObject(i)
                 val text = obj.getString("text")
                 // Filter out any legacy mock sample entries from previous builds
                 if (isMockSampleText(text)) {
+                    droppedAny = true
                     continue
                 }
                 val item = HistoryItem(
@@ -124,17 +148,40 @@ object HistoryRepository {
                 list.add(item)
             }
             _historyItems.value = list
-            saveHistory(list, durable = false)
+            // v23: only rewrite the blob when the load actually changed something.
+            if (droppedAny) saveHistory(list, durable = false, sp = sp)
             CustomVocabularyRepository.syncUsageFromHistory(list)
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing history json", e)
             _historyItems.value = emptyList()
-            saveHistory(emptyList())
+            saveHistory(emptyList(), sp = sp)
         }
     }
 
-    private fun saveHistory(list: List<HistoryItem>, durable: Boolean = false) {
-        val sp = prefs ?: return
+    private fun saveHistory(list: List<HistoryItem>, durable: Boolean = false, sp: SharedPreferences? = prefs) {
+        val target = sp ?: return
+        val snapshot = if (list.size > MAX_HISTORY_ITEMS) list.take(MAX_HISTORY_ITEMS) else list.toList()
+        if (snapshot.size != list.size && _historyItems.value === list) {
+            _historyItems.value = snapshot
+        }
+        try {
+            val future = saveExecutor.submit { writeHistory(target, snapshot) }
+            // Durable saves (a finished session) wait briefly when we are already off the main
+            // thread, so a kill right after dictation cannot lose the item.
+            if (durable && android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+                try {
+                    future.get(3, java.util.concurrent.TimeUnit.SECONDS)
+                } catch (_: Exception) {
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "History writer rejected; saving inline", e)
+            writeHistory(target, snapshot)
+        }
+    }
+
+    /** Runs on the history writer thread. commit() off the main thread never blocks QueuedWork. */
+    private fun writeHistory(sp: SharedPreferences, list: List<HistoryItem>) {
         try {
             val jsonArray = JSONArray()
             list.forEach { item ->
@@ -152,8 +199,7 @@ object HistoryRepository {
                 }
                 jsonArray.put(obj)
             }
-            val editor = sp.edit().putString(KEY_HISTORY, jsonArray.toString())
-            if (durable) editor.commit() else editor.apply()
+            sp.edit().putString(KEY_HISTORY, jsonArray.toString()).commit()
         } catch (e: Exception) {
             Log.e(TAG, "Error saving history json", e)
         }

@@ -30,6 +30,16 @@ object AppLogRepository {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** v23: all file writes go through one serial worker (ordered, no interleaved appends). */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+
+    /** v23 caps: memory ring + on-disk rotation so the log can no longer grow forever. */
+    const val MAX_MEMORY_ENTRIES = 3000
+    const val MAX_LOG_FILE_BYTES = 1_500_000L
+    private const val ROTATED_LOGS_FILE_NAME = "diagnostics_history.1.jsonl"
+    private const val MAX_MESSAGE_CHARS = 4000
+
     @Volatile
     private var appContext: Context? = null
     @Volatile
@@ -103,23 +113,34 @@ object AppLogRepository {
         )
     }
 
+    @Synchronized
     fun init(context: Context) {
         if (isInitialized && appContext != null) return
         val app = context.applicationContext ?: context
         appContext = app
-        com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.initContext(app)
-        cachedDeviceSummary = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.deviceExportSummary(app)
         isInitialized = true
+        // v23: device summary and the file load both run off the main thread.
+        scope.launch {
+            try {
+                com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.initContext(app)
+                if (cachedDeviceSummary == null) {
+                    cachedDeviceSummary = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.deviceExportSummary(app)
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "Device summary failed", e)
+            }
+        }
         loadFromDisk()
     }
 
     private fun loadFromDisk() {
-        scope.launch {
+        writeScope.launch {
             val context = appContext ?: return@launch
             try {
-                // 1. Load Diagnostic logs from JSONL
-                val logFile = File(context.filesDir, LOGS_FILE_NAME)
+                // 1. Load Diagnostic logs from JSONL (rotated file first, then the current one)
                 val loadedLogs = mutableListOf<DiagnosticLogEntry>()
+                for (name in listOf(ROTATED_LOGS_FILE_NAME, LOGS_FILE_NAME)) {
+                val logFile = File(context.filesDir, name)
                 if (logFile.exists()) {
                     logFile.bufferedReader().useLines { lines ->
                         lines.forEach { line ->
@@ -142,8 +163,16 @@ object AppLogRepository {
                         }
                     }
                 }
-                // Sort newest first
-                _diagnosticEntries.value = loadedLogs.sortedByDescending { it.timestamp }
+                }
+                // Sort newest first. Merge with anything logged before the load finished
+                // (v22 overwrote those early entries).
+                _diagnosticEntries.update { current ->
+                    val seen = HashSet<String>(current.size)
+                    current.forEach { seen.add(it.id) }
+                    (current + loadedLogs.filter { seen.add(it.id) })
+                        .sortedByDescending { it.timestamp }
+                        .take(MAX_MEMORY_ENTRIES)
+                }
 
                 // 2. Load Notes from JSONL
                 val noteFile = File(context.filesDir, NOTES_FILE_NAME)
@@ -168,7 +197,10 @@ object AppLogRepository {
                         }
                     }
                 }
-                _notes.value = loadedNotes.sortedByDescending { it.timestamp }
+                _notes.update { current ->
+                    val seen = current.map { it.id }.toHashSet()
+                    (current + loadedNotes.filter { seen.add(it.id) }).sortedByDescending { it.timestamp }
+                }
 
                 Log.d(TAG, "Loaded ${loadedLogs.size} diagnostic logs and ${loadedNotes.size} notes from disk")
             } catch (e: Exception) {
@@ -185,19 +217,28 @@ object AppLogRepository {
         val entry = DiagnosticLogEntry(
             source = source,
             type = type,
-            message = message
+            message = if (message.length > MAX_MESSAGE_CHARS) message.take(MAX_MESSAGE_CHARS) else message
         )
 
-        // Update in-memory state (prepend newest)
+        // Update in-memory state (prepend newest), capped ring buffer.
         _diagnosticEntries.update { current ->
-            listOf(entry) + current
+            val next = ArrayList<DiagnosticLogEntry>(minOf(current.size + 1, MAX_MEMORY_ENTRIES))
+            next.add(entry)
+            val keep = minOf(current.size, MAX_MEMORY_ENTRIES - 1)
+            for (i in 0 until keep) next.add(current[i])
+            next
         }
 
-        // Off-thread durable append
-        scope.launch {
+        // Off-thread durable append (serial writer, rotates at ~1.5 MB keeping one old file)
+        writeScope.launch {
             val context = appContext ?: return@launch
             try {
                 val file = File(context.filesDir, LOGS_FILE_NAME)
+                if (file.length() > MAX_LOG_FILE_BYTES) {
+                    val rotated = File(context.filesDir, ROTATED_LOGS_FILE_NAME)
+                    rotated.delete()
+                    if (!file.renameTo(rotated)) file.delete()
+                }
                 val json = JSONObject().apply {
                     put("id", entry.id)
                     put("timestamp", entry.timestamp)
@@ -267,10 +308,11 @@ object AppLogRepository {
         _notes.value = emptyList()
         _liveFrames.value = emptyList()
 
-        scope.launch {
+        writeScope.launch {
             val context = appContext ?: return@launch
             try {
                 File(context.filesDir, LOGS_FILE_NAME).delete()
+                File(context.filesDir, ROTATED_LOGS_FILE_NAME).delete()
                 File(context.filesDir, NOTES_FILE_NAME).delete()
                 Log.d(TAG, "All persisted diagnostics and notes cleared from disk.")
             } catch (e: Exception) {

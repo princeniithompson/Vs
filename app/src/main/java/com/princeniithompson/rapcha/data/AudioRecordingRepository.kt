@@ -54,7 +54,9 @@ object AudioRecordingRepository {
     private var appContext: Context? = null
     private var prefs: SharedPreferences? = null
 
-    private val _isSaveRecordingsEnabled = MutableStateFlow(true)
+    // v23: off by default. RetryClipStore already keeps every session's audio for Retry, so the
+    // optional diagnostic library was writing each recording to disk a second time.
+    private val _isSaveRecordingsEnabled = MutableStateFlow(false)
     val isSaveRecordingsEnabled: StateFlow<Boolean> = _isSaveRecordingsEnabled.asStateFlow()
 
     private val _recordings = MutableStateFlow<List<AudioRecording>>(emptyList())
@@ -73,7 +75,7 @@ object AudioRecordingRepository {
         appContext = appCtx
         val sp = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs = sp
-        _isSaveRecordingsEnabled.value = sp.getBoolean(KEY_SAVE_RECORDINGS, true)
+        _isSaveRecordingsEnabled.value = sp.getBoolean(KEY_SAVE_RECORDINGS, false)
 
         recordingWriter.execute {
             val dir = getRecordingsDir(appCtx)

@@ -35,6 +35,27 @@ object AppDetectionLogRepository {
     private const val MAX_SAVED_LOGS = 200
 
     private var prefs: SharedPreferences? = null
+
+    /** v23: field caps and a debounced, off-main writer (v22 rewrote the whole blob per app switch). */
+    const val MAX_TEXT_CHARS = 300
+    const val MAX_AI_TEXT_CHARS = 1500
+    const val MAX_SCREEN_TEXTS = 8
+    const val SAVE_DEBOUNCE_MS = 2_000L
+    private val saveScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "rapcha-detect-log-writer").apply { isDaemon = true }
+    }
+    private val saveLock = Any()
+    private var pendingSave: java.util.concurrent.ScheduledFuture<*>? = null
+
+    private fun String.capped(max: Int): String = if (length > max) take(max) + "…" else this
+
+    private fun capped(event: AppDetectionEvent): AppDetectionEvent = event.copy(
+        rawWindowTitle = event.rawWindowTitle?.capped(MAX_TEXT_CHARS),
+        packageManagerLabel = event.packageManagerLabel?.capped(MAX_TEXT_CHARS),
+        topScreenTexts = event.topScreenTexts.take(MAX_SCREEN_TEXTS).map { it.capped(MAX_TEXT_CHARS) },
+        aiPromptSent = event.aiPromptSent?.capped(MAX_AI_TEXT_CHARS),
+        aiRawResponse = event.aiRawResponse?.capped(MAX_AI_TEXT_CHARS)
+    )
     private val _events = MutableStateFlow<List<AppDetectionEvent>>(emptyList())
     val events: StateFlow<List<AppDetectionEvent>> = _events.asStateFlow()
 
@@ -45,7 +66,8 @@ object AppDetectionLogRepository {
         }
     }
 
-    fun logEvent(event: AppDetectionEvent) {
+    fun logEvent(rawEvent: AppDetectionEvent) {
+        val event = capped(rawEvent)
         val current = _events.value.toMutableList()
         val lastEvent = current.firstOrNull()
 
@@ -66,7 +88,7 @@ object AppDetectionLogRepository {
             current.removeAt(current.size - 1)
         }
         _events.value = current
-        saveLogs(current)
+        scheduleSave()
         if (com.princeniithompson.rapcha.BuildConfig.DEBUG) {
             Log.d(TAG, "Logged app detection event: app='${event.resolvedAppName}' pkg='${event.rawPackageName}' title='${event.rawWindowTitle}' source='${event.classificationSource}' category='${event.finalCategory}'")
         }
@@ -151,7 +173,32 @@ object AppDetectionLogRepository {
         }
     }
 
+    private fun scheduleSave() {
+        if (prefs == null) return
+        synchronized(saveLock) {
+            if (pendingSave?.isDone == false) return
+            pendingSave = try {
+                saveScheduler.schedule({
+                    synchronized(saveLock) { pendingSave = null }
+                    writeLogs(_events.value)
+                }, SAVE_DEBOUNCE_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+            } catch (e: Exception) {
+                Log.w(TAG, "Detection log save not scheduled", e)
+                null
+            }
+        }
+    }
+
     private fun saveLogs(list: List<AppDetectionEvent>) {
+        try {
+            saveScheduler.execute { writeLogs(list) }
+        } catch (e: Exception) {
+            writeLogs(list)
+        }
+    }
+
+    /** Runs on the writer thread; commit() there never stalls the main thread via QueuedWork. */
+    private fun writeLogs(list: List<AppDetectionEvent>) {
         val sp = prefs ?: return
         try {
             val jsonArray = JSONArray()
@@ -172,7 +219,7 @@ object AppDetectionLogRepository {
                 }
                 jsonArray.put(obj)
             }
-            sp.edit().putString(KEY_LOGS, jsonArray.toString()).apply()
+            sp.edit().putString(KEY_LOGS, jsonArray.toString()).commit()
         } catch (e: Exception) {
             Log.e(TAG, "Failed saving app detection logs", e)
         }
