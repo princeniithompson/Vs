@@ -3,12 +3,16 @@ package com.princeniithompson.rapcha.service
 import android.Manifest
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
@@ -85,8 +89,12 @@ class FloatingBubbleService : Service() {
     companion object {
         private const val TAG = "FloatingBubbleService"
         const val ACTION_RETRY_CLIP = "com.princeniithompson.rapcha.action.RETRY_CLIP"
+        const val ACTION_SHOW = "com.princeniithompson.rapcha.action.SHOW_BUBBLE"
+        const val ACTION_RESTORE = "com.princeniithompson.rapcha.action.RESTORE_BUBBLE"
+        const val ACTION_REPAIR_A11Y = "com.princeniithompson.rapcha.action.REPAIR_A11Y"
         const val EXTRA_CLIP_ID = "retry_clip_id"
         const val EXTRA_FROM_HISTORY = "from_history"
+        const val EXTRA_START_SOURCE = "start_source"
 
         var instance: FloatingBubbleService? = null
             private set
@@ -159,32 +167,128 @@ class FloatingBubbleService : Service() {
     private var connectionLostHapticSent = false
     private var networkWatcher: RetryNetworkWatcher? = null
     private var networkBackNotifiedFor: String? = null
+    private var watchdogJob: Job? = null
+    private var watchdogState = VisibilityWatchdogDecision.WatchdogState()
+    private var screenInteractive = true
+    private var screenReceiverRegistered = false
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> screenInteractive = false
+                Intent.ACTION_SCREEN_ON -> screenInteractive = true
+            }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (!enterSpecialUseForeground()) {
+        if (!FloatingBubbleManager.isBubbleEnabledSync(this) ||
+            !FloatingBubbleManager.canDrawOverlays(this)
+        ) {
+            val reason = if (!FloatingBubbleManager.isBubbleEnabledSync(this)) {
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.HIDE_USER_HIDDEN
+            } else {
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.HIDE_OVERLAY_PERMISSION_MISSING
+            }
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastStopReason(
+                this,
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.STOP_INTENTIONAL
+            )
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordHideReason(this, reason)
             stopSelf()
             return START_NOT_STICKY
         }
-        if (intent?.action == ACTION_RETRY_CLIP && ::sessionManager.isInitialized) {
-            onRetryClicked(
-                clipId = intent.getStringExtra(EXTRA_CLIP_ID),
-                fromHistory = intent.getBooleanExtra(EXTRA_FROM_HISTORY, false)
-            )
+
+        val currentlyRecording = ::sessionManager.isInitialized && sessionManager.isRecording
+        if (currentlyRecording) {
+            startMicrophoneForeground()
+        } else if (!enterSpecialUseForeground()) {
+            BubbleRecoveryJobScheduler.schedule(this, RecoveryJobPolicy.DEFAULT_DELAY_MS)
+            FloatingNotificationManager.postRestoreNotification(this)
+            stopSelf()
+            return START_NOT_STICKY
         }
-        return START_NOT_STICKY
+        BubbleRecoveryJobScheduler.scheduleIfMissing(this, RecoveryJobPolicy.REPEAT_LATENCY_MS)
+
+        val startSource = intent?.getStringExtra(EXTRA_START_SOURCE)
+        if (intent == null) {
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastRestartReason(
+                this,
+                "System START_STICKY restart"
+            )
+            rebuildOverlayIfNeeded("sticky_restart")
+        } else {
+            if (!startSource.isNullOrBlank()) {
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastRestartReason(
+                    this,
+                    "Started ($startSource)"
+                )
+            }
+            when (intent.action) {
+                ACTION_SHOW -> {
+                    FloatingNotificationManager.cancelRestoreNotification(this)
+                    rebuildOverlayIfNeeded("action_show")
+                    if (FloatingBubbleManager.isKeyboardVisible.value || A11yWatchdog.repairKind.value != A11yRepairKind.NONE) {
+                        overlayWindowManager.showImmediately("action_show")
+                    }
+                }
+                ACTION_RESTORE -> {
+                    FloatingNotificationManager.cancelRestoreNotification(this)
+                    rebuildOverlayIfNeeded("action_restore")
+                    val imeUp = FloatingBubbleManager.isKeyboardVisible.value ||
+                        RapchaAccessibilityService.instance?.isImeVisibleNow() == true
+                    if (imeUp) {
+                        FloatingBubbleManager.notifyKeyboardVisibility(true)
+                    }
+                    overlayWindowManager.restoreOverlayVisibility(
+                        isKeyboardOpen = imeUp || A11yWatchdog.repairKind.value != A11yRepairKind.NONE
+                    )
+                }
+                ACTION_REPAIR_A11Y -> {
+                    openRepairDestination()
+                }
+                ACTION_RETRY_CLIP -> if (::sessionManager.isInitialized) {
+                    onRetryClicked(
+                        clipId = intent.getStringExtra(EXTRA_CLIP_ID),
+                        fromHistory = intent.getBooleanExtra(EXTRA_FROM_HISTORY, false)
+                    )
+                }
+            }
+        }
+        return START_STICKY
     }
 
     override fun onCreate() {
         super.onCreate()
         instance = this
+        AppLogRepository.init(this)
+        com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.markServiceRunning(this, true)
         if (!enterSpecialUseForeground()) {
+            BubbleRecoveryJobScheduler.schedule(this, RecoveryJobPolicy.DEFAULT_DELAY_MS)
+            FloatingNotificationManager.postRestoreNotification(this)
             stopSelf()
             return
         }
+        BubbleRecoveryJobScheduler.scheduleIfMissing(this, RecoveryJobPolicy.REPEAT_LATENCY_MS)
         Log.d(TAG, "FloatingBubbleService onCreate")
         com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.startMonitoring(this)
+        com.princeniithompson.rapcha.service.floating.RenderBudget.init(this)
+        if (com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.consumeUncleanShutdownPossible(this)) {
+            val killReason = com.princeniithompson.rapcha.diagnostics.ProcessExitDiagnostics.lastUncleanKillReason(this)
+            if (killReason != null) {
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastRestartReason(
+                    this,
+                    "Restarted after $killReason"
+                )
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
+                    context = this,
+                    type = DiagnosticType.RESTARTED_AFTER_KILL,
+                    message = "exit_reason=$killReason"
+                )
+            }
+        }
         CustomVocabularyRepository.init(this)
         HistoryRepository.init(this)
         FloatingBubbleManager.refreshLiveTwoStep(this)
@@ -281,10 +385,27 @@ class FloatingBubbleService : Service() {
         )
 
         try {
-            overlayWindowManager.initOverlay(
-                onRingClick = { onRingClicked() },
-                onCancelClick = { onCancelClicked() },
-                onPolishClick = { onPolishClicked() },
+            initOverlayWindow()
+            offlineRetry.restorePending(this)
+            RetryClipStore.currentId()?.let { clipId ->
+                if (offlineRetry.isSticky()) linkPendingHistory(clipId)
+            }
+            if (FloatingBubbleManager.offlineRetry.value != null && FloatingBubbleManager.isKeyboardVisible.value) {
+                overlayWindowManager.expandPanel()
+            }
+            networkWatcher = RetryNetworkWatcher(this) { onNetworkBack() }.also { it.start() }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing overlay window", e)
+        }
+        registerScreenReceiver()
+        startWatchdogs()
+    }
+
+    private fun initOverlayWindow() {
+        overlayWindowManager.initOverlay(
+            onRingClick = { onRingClicked() },
+            onCancelClick = { onCancelClicked() },
+            onPolishClick = { onPolishClicked() },
             onCompleteClick = {
                 val twoStep = FloatingBubbleManager.lockedPolishSection.value?.mode ==
                     com.princeniithompson.rapcha.service.floating.SectionPolishMode.TWO_STEP_LIVE
@@ -293,24 +414,194 @@ class FloatingBubbleService : Service() {
                 } else {
                     onConfirmClicked()
                 }
-            }
+            },
+            onRepairClick = { openRepairDestination() }
         )
-        offlineRetry.restorePending(this)
-        RetryClipStore.currentId()?.let { clipId ->
-            if (offlineRetry.isSticky()) linkPendingHistory(clipId)
+    }
+
+    private fun rebuildOverlayIfNeeded(reason: String) {
+        if (!::overlayWindowManager.isInitialized) {
+            overlayWindowManager = FloatingOverlayWindowManager(this)
         }
-        if (FloatingBubbleManager.offlineRetry.value != null && FloatingBubbleManager.isKeyboardVisible.value) {
-            overlayWindowManager.expandPanel()
+        if (overlayWindowManager.overlayView == null) {
+            try {
+                initOverlayWindow()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed rebuilding overlay window ($reason)", e)
+            }
+        } else if (!overlayWindowManager.isAttached()) {
+            overlayWindowManager.attachWithRetry(reason)
         }
-        networkWatcher = RetryNetworkWatcher(this) { onNetworkBack() }.also { it.start() }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error initializing overlay window", e)
+    }
+
+    fun onRecoveryJobPing() {
+        if (!FloatingBubbleManager.isBubbleEnabledSync(this) ||
+            !FloatingBubbleManager.canDrawOverlays(this)
+        ) {
+            return
         }
-        RapchaAccessibilityService.instance?.let { attachToAccessibilityService(it) }
+        serviceScope.launch(Dispatchers.Main) {
+            rebuildOverlayIfNeeded("recovery_job_ping")
+            A11yWatchdog.check(this@FloatingBubbleService)
+        }
+    }
+
+    private fun openRepairDestination() {
+        val destination = if (A11yWatchdog.repairKind.value == A11yRepairKind.PERMISSION_REVOKED) {
+            FloatingNotificationManager.DEST_ACCESSIBILITY_GUIDE
+        } else {
+            FloatingNotificationManager.DEST_KEEP_AWAKE
+        }
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(FloatingNotificationManager.EXTRA_OPEN_DESTINATION, destination)
+        }
+        try {
+            startActivity(intent)
+        } catch (e: Throwable) {
+            Log.w(TAG, "Falling back to system accessibility settings", e)
+            com.princeniithompson.rapcha.ui.protection.DeviceProtectionManager.openAccessibilitySettings(this)
+        }
+    }
+
+    private fun registerScreenReceiver() {
+        if (screenReceiverRegistered) return
+        screenInteractive = (getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive ?: true
+        try {
+            val filter = IntentFilter(Intent.ACTION_SCREEN_OFF).apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(screenReceiver, filter, RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(screenReceiver, filter)
+            }
+            screenReceiverRegistered = true
+        } catch (_: Throwable) {}
+    }
+
+    private fun startWatchdogs() {
+        watchdogJob?.cancel()
+        watchdogJob = serviceScope.launch {
+            var tickCounter = 0
+            while (isActive) {
+                delay(VisibilityWatchdogDecision.WATCHDOG_INTERVAL_MS)
+                tickCounter++
+
+                if (::overlayWindowManager.isInitialized) {
+                    val (nextState, action) = VisibilityWatchdogDecision.onTick(
+                        state = watchdogState,
+                        screenOn = screenInteractive,
+                        bubbleEnabled = FloatingBubbleManager.isBubbleEnabledSync(this@FloatingBubbleService),
+                        componentsInitialized = componentsReady(),
+                        hasOverlayPermission = FloatingBubbleManager.canDrawOverlays(this@FloatingBubbleService),
+                        shouldBeVisible = overlayWindowManager.shouldBeVisible(),
+                        sessionActive = isBubbleSessionActive(),
+                        isAttached = overlayWindowManager.isAttached(),
+                        windowVisibilityVisible = overlayWindowManager.isWindowVisible(),
+                        keyboardVisible = FloatingBubbleManager.isKeyboardVisible.value
+                    )
+                    watchdogState = nextState
+                    if (action == VisibilityWatchdogDecision.TickAction.RECOVER) {
+                        val recoverReason = if (!overlayWindowManager.isAttached()) {
+                            "detached_while_needed"
+                        } else {
+                            "invisible_while_keyboard_up"
+                        }
+                        com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
+                            context = this@FloatingBubbleService,
+                            type = DiagnosticType.WATCHDOG_RECOVER,
+                            message = "reason=$recoverReason session_active=${isBubbleSessionActive()}"
+                        )
+                        if (isBubbleSessionActive()) {
+                            overlayWindowManager.attachWithRetry("watchdog_session")
+                            overlayWindowManager.updateOverlayVisibility(isSessionActive = true)
+                        } else {
+                            if (overlayWindowManager.overlayView == null) {
+                                initOverlayWindow()
+                            } else if (!overlayWindowManager.isAttached()) {
+                                overlayWindowManager.attachWithRetry("watchdog_recover")
+                            }
+                            if (!overlayWindowManager.isAttached()) {
+                                overlayWindowManager.onDestroy()
+                                overlayWindowManager = FloatingOverlayWindowManager(this@FloatingBubbleService)
+                                initOverlayWindow()
+                            }
+                            overlayWindowManager.restoreOverlayVisibility(
+                                FloatingBubbleManager.isKeyboardVisible.value ||
+                                    A11yWatchdog.repairKind.value != A11yRepairKind.NONE
+                            )
+                        }
+                    }
+                }
+
+                if (tickCounter % 2 == 0) {
+                    A11yWatchdog.check(this@FloatingBubbleService)
+                }
+            }
+        }
     }
 
     private fun componentsReady(): Boolean {
         return ::overlayWindowManager.isInitialized && ::sessionManager.isInitialized
+    }
+
+    private fun startForegroundForPlan(notification: android.app.Notification, plan: FgsStartupDecision.FgsPlan) {
+        when (plan) {
+            FgsStartupDecision.FgsPlan.LEGACY_NO_TYPE -> {
+                startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification)
+            }
+            FgsStartupDecision.FgsPlan.TYPE_ZERO -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification, 0)
+                } else {
+                    startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification)
+                }
+            }
+            FgsStartupDecision.FgsPlan.MICROPHONE_ONLY -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(
+                        FloatingNotificationManager.NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                    )
+                } else {
+                    startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification)
+                }
+            }
+            FgsStartupDecision.FgsPlan.SPECIAL_USE_ONLY -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    startForeground(
+                        FloatingNotificationManager.NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                    )
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification, 0)
+                } else {
+                    startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification)
+                }
+            }
+            FgsStartupDecision.FgsPlan.SPECIAL_USE_AND_MICROPHONE -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    startForeground(
+                        FloatingNotificationManager.NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                    )
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(
+                        FloatingNotificationManager.NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                    )
+                } else {
+                    startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification)
+                }
+            }
+        }
     }
 
     /**
@@ -320,64 +611,68 @@ class FloatingBubbleService : Service() {
     private fun enterSpecialUseForeground(): Boolean {
         FloatingNotificationManager.createChannel(this)
         val notification = FloatingNotificationManager.buildNotification(this, "Floating voice bubble is active")
+        val plan = FgsStartupDecision.evaluatePlan(
+            sdkInt = Build.VERSION.SDK_INT,
+            isRecordingStarting = false,
+            hasRecordAudioPermission = false,
+            allowMicrophoneInCurrentState = false
+        )
         return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(
-                    FloatingNotificationManager.NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                )
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification, 0)
-            } else {
-                startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification)
-            }
+            startForegroundForPlan(notification, plan)
             true
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to startForeground", e)
-            AppLogRepository.logEvent(
-                DiagnosticSource.BUBBLE,
-                DiagnosticType.ERROR,
-                "startForeground failed: ${e.javaClass.simpleName}: ${e.message?.take(180)}"
+        } catch (e: Throwable) {
+            Log.e(TAG, "Failed to startForeground(plan=$plan)", e)
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
+                context = this,
+                type = DiagnosticType.FGS_REFUSED,
+                message = "site=special_use plan=$plan kind=${e.javaClass.simpleName} detail=${e.message?.take(140)}"
             )
             false
         }
     }
 
     private fun startMicrophoneForeground(): Boolean {
-        if (!MicrophoneForegroundPolicy.isAllowed(this)) {
+        val hasMicPerm = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        val allowedState = MicrophoneForegroundPolicy.isAllowed(this)
+        if (!hasMicPerm || !allowedState) {
             AppLogRepository.logEvent(
                 DiagnosticSource.BUBBLE,
                 DiagnosticType.WARNING,
-                "microphone startForeground skipped: app is not in an allowed state"
+                "microphone startForeground skipped: perm=$hasMicPerm allowed=$allowedState"
             )
             return false
         }
+        val plan = FgsStartupDecision.evaluatePlan(
+            sdkInt = Build.VERSION.SDK_INT,
+            isRecordingStarting = true,
+            hasRecordAudioPermission = hasMicPerm,
+            allowMicrophoneInCurrentState = allowedState
+        )
         val notification = FloatingNotificationManager.buildNotification(this, "Listening...")
         return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(
-                    FloatingNotificationManager.NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                )
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    FloatingNotificationManager.NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                )
-            } else {
-                startForeground(FloatingNotificationManager.NOTIFICATION_ID, notification)
-            }
+            startForegroundForPlan(notification, plan)
             true
-        } catch (e: Exception) {
-            Log.e(TAG, "microphone startForeground failed", e)
-            AppLogRepository.logEvent(
-                DiagnosticSource.BUBBLE,
-                DiagnosticType.ERROR,
-                "microphone startForeground failed: ${e.javaClass.simpleName}: ${e.message?.take(180)}; recording stopped"
-            )
+        } catch (e: Throwable) {
+            Log.e(TAG, "microphone startForeground failed(plan=$plan)", e)
+            val fallback = FgsStartupDecision.fallbackPlan(Build.VERSION.SDK_INT, plan)
+            if (fallback != null) {
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
+                    context = this,
+                    type = DiagnosticType.FGS_FALLBACK,
+                    message = "from=$plan to=$fallback kind=${e.javaClass.simpleName} detail=${e.message?.take(120)}"
+                )
+                try {
+                    val activeNotif = FloatingNotificationManager.buildNotification(this, "Floating voice bubble is active")
+                    startForegroundForPlan(activeNotif, fallback)
+                } catch (fallbackEx: Throwable) {
+                    com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
+                        context = this,
+                        type = DiagnosticType.FGS_REFUSED,
+                        message = "site=mic_fallback plan=$fallback kind=${fallbackEx.javaClass.simpleName}"
+                    )
+                }
+            }
             false
         }
     }
@@ -957,7 +1252,7 @@ class FloatingBubbleService : Service() {
         )
     }
 
-    private fun isBubbleSessionActive(): Boolean {
+    internal fun isBubbleSessionActive(): Boolean {
         if (!::sessionManager.isInitialized || !::overlayWindowManager.isInitialized) return false
         return sessionManager.isRecording ||
             overlayWindowManager.overlayPendingFinalizing.value ||
@@ -1466,7 +1761,7 @@ class FloatingBubbleService : Service() {
     private fun resetAndCollapse() {
         activeDetectionJob?.cancel()
         activeDetectionJob = null
-        AppDetector.clearCache()
+        AppDetector.clearSessionCache()
 
         FloatingBubbleManager.unlockSessionContext()
         FloatingBubbleManager.unlockSection()
@@ -1516,11 +1811,6 @@ class FloatingBubbleService : Service() {
             FloatingBubbleManager.noteBubbleHideSignal()
             overlayWindowManager.onKeyboardVisibilityChanged(isVisible = false, isSessionActive = false)
         }
-    }
-
-    fun attachToAccessibilityService(accessService: RapchaAccessibilityService) {
-        if (!::overlayWindowManager.isInitialized) return
-        overlayWindowManager.attachToAccessibilityService(accessService)
     }
 
     private fun getEffectiveApiKey(): String {
@@ -1670,9 +1960,55 @@ class FloatingBubbleService : Service() {
         }
     }
 
+    @Suppress("DEPRECATION")
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
+            context = this,
+            type = DiagnosticType.TRIM_MEMORY,
+            message = "level=$level session_active=${isBubbleSessionActive()}"
+        )
+        com.princeniithompson.rapcha.service.floating.RenderBudget.onTrimMemory(this, level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+            level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE
+        ) {
+            AppDetector.clearCache()
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.markUncleanShutdownPossible(this, true)
+        } else if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            AppDetector.clearSessionCache()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "FloatingBubbleService onDestroy")
+
+        watchdogJob?.cancel()
+        watchdogJob = null
+        if (screenReceiverRegistered) {
+            try { unregisterReceiver(screenReceiver) } catch (_: Throwable) {}
+            screenReceiverRegistered = false
+        }
+
+        com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.markServiceRunning(this, false)
+        val stillEnabled = FloatingBubbleManager.isBubbleEnabledSync(this) &&
+            FloatingBubbleManager.canDrawOverlays(this)
+        if (stillEnabled) {
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastStopReason(
+                this,
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.STOP_UNEXPECTED
+            )
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordHideReason(
+                this,
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.HIDE_SERVICE_DESTROYED
+            )
+            BubbleRecoveryJobScheduler.schedule(this, RecoveryJobPolicy.MIN_LATENCY_MS)
+        } else {
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastStopReason(
+                this,
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.STOP_INTENTIONAL
+            )
+        }
 
         activeDetectionJob?.cancel()
         activeDetectionJob = null
@@ -1708,11 +2044,40 @@ class FloatingBubbleService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        Log.d(TAG, "FloatingBubbleService onTaskRemoved: executing deterministic teardown")
-        if (::sessionManager.isInitialized) {
-            stopVoiceTyping()
-            sessionManager.release()
+        val enabled = FloatingBubbleManager.isBubbleEnabledSync(this)
+        val hasOverlay = FloatingBubbleManager.canDrawOverlays(this)
+        val recording = ::sessionManager.isInitialized && sessionManager.isRecording
+        Log.d(TAG, "FloatingBubbleService onTaskRemoved: enabled=$enabled recording=$recording")
+        com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
+            context = this,
+            type = DiagnosticType.TASK_REMOVED,
+            message = "was_recording=$recording keep_alive=$enabled"
+        )
+        if (TaskRemovalPolicy.shouldReleaseSessionOnTaskRemoved(enabled)) {
+            if (::sessionManager.isInitialized) {
+                stopVoiceTyping()
+                sessionManager.release()
+            }
+            FloatingBubbleManager.setNetworkProblem(false)
+            return
         }
-        FloatingBubbleManager.setNetworkProblem(false)
+        if (!recording) {
+            enterSpecialUseForeground()
+        }
+        if (TaskRemovalPolicy.shouldRebuildOverlayOnTaskRemoved(enabled, hasOverlay)) {
+            rebuildOverlayIfNeeded("task_removed")
+            serviceScope.launch(Dispatchers.Main) {
+                delay(300L)
+                if (FloatingBubbleManager.isBubbleEnabledSync(this@FloatingBubbleService) &&
+                    FloatingBubbleManager.canDrawOverlays(this@FloatingBubbleService)
+                ) {
+                    rebuildOverlayIfNeeded("task_removed_settled")
+                }
+            }
+        }
+        BubbleRecoveryJobScheduler.schedule(this, RecoveryJobPolicy.DEFAULT_DELAY_MS)
+        if (!recording && hasOverlay) {
+            FloatingBubbleManager.startBubbleService(this, source = "task_removed_keepalive")
+        }
     }
 }

@@ -211,6 +211,7 @@ object FloatingBubbleManager {
             prefs.edit().putBoolean(KEY_APP_DYNAMIC_COLOR, true).apply()
         }
         initialized = true
+        com.princeniithompson.rapcha.service.floating.RenderBudget.init(context)
         checkPermissions(context)
 
         if (shouldAutoStartBubbleFromInit(
@@ -219,7 +220,14 @@ object FloatingBubbleManager {
                 uiForeground = isUiForeground(context)
             )
         ) {
-            startBubbleService(context)
+            startBubbleService(context, source = "init")
+        } else if (_isBubbleEnabled.value &&
+            canDrawOverlays(context) &&
+            FloatingBubbleService.instance == null &&
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.lastStopReason(context) ==
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.STOP_UNEXPECTED
+        ) {
+            startBubbleService(context, source = "init_recover")
         }
     }
 
@@ -240,12 +248,21 @@ object FloatingBubbleManager {
         return mine?.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
-    fun startEnabledBubble(context: Context) {
+    fun isBubbleEnabledSync(context: Context): Boolean {
+        return try {
+            val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.getBoolean(KEY_BUBBLE_ENABLED, _isBubbleEnabled.value)
+        } catch (_: Throwable) {
+            _isBubbleEnabled.value
+        }
+    }
+
+    fun startEnabledBubble(context: Context, source: String = "start_enabled") {
         if (!initialized) {
             init(context)
         }
         if (_isBubbleEnabled.value && canDrawOverlays(context)) {
-            startBubbleService(context)
+            startBubbleService(context, source = source)
         }
     }
 
@@ -341,35 +358,83 @@ object FloatingBubbleManager {
         }
     }
 
+    private val respawnThrottle = RespawnThrottle()
+
     fun setBubbleEnabled(context: Context, enabled: Boolean) {
         _isBubbleEnabled.value = enabled
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putBoolean(KEY_BUBBLE_ENABLED, enabled).apply()
 
         if (enabled) {
+            respawnThrottle.reset()
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.resetJobSuccessStreak(context)
             if (canDrawOverlays(context)) {
-                startBubbleService(context)
+                startBubbleService(context, source = "user_enable")
             }
         } else {
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastStopReason(
+                context,
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.STOP_INTENTIONAL
+            )
+            BubbleRecoveryJobScheduler.cancel(context)
+            com.princeniithompson.rapcha.service.floating.FloatingNotificationManager.cancelRestoreNotification(context)
             stopBubbleService(context)
         }
     }
 
-    fun startBubbleService(context: Context) {
-        try {
-            val intent = Intent(context, FloatingBubbleService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+    fun startBubbleService(context: Context, source: String = "manual", bypassThrottle: Boolean = false): Boolean {
+        val app = context.applicationContext ?: context
+        if (!canDrawOverlays(app)) {
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordHideReason(
+                app,
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.HIDE_OVERLAY_PERMISSION_MISSING
+            )
+            return false
+        }
+        if (!bypassThrottle && FloatingBubbleService.instance == null && !respawnThrottle.tryAcquire()) {
+            Log.d(TAG, "Throttled duplicate startBubbleService(source=$source)")
+            return false
+        }
+        return try {
+            val intent = Intent(app, FloatingBubbleService::class.java).apply {
+                putExtra(FloatingBubbleService.EXTRA_START_SOURCE, source)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start FloatingBubbleService", e)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                app.startForegroundService(intent)
+            } else {
+                app.startService(intent)
+            }
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastRestartReason(app, "Started ($source)")
+            true
+        } catch (e: Throwable) {
+            val refusalClass = e.javaClass.simpleName
+            val kind = when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                    e is android.app.ForegroundServiceStartNotAllowedException -> "ForegroundServiceStartNotAllowedException"
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+                    e is android.app.BackgroundServiceStartNotAllowedException -> "BackgroundServiceStartNotAllowedException"
+                e is IllegalStateException -> "IllegalStateException"
+                e is SecurityException -> "SecurityException"
+                else -> refusalClass
+            }
+            Log.e(TAG, "Failed to start FloatingBubbleService(source=$source, kind=$kind)", e)
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.record(
+                context = app,
+                type = DiagnosticType.FGS_REFUSED,
+                message = "source=$source kind=$kind detail=${e.message?.take(140)}"
+            )
+            BubbleRecoveryJobScheduler.schedule(app, RecoveryJobPolicy.DEFAULT_DELAY_MS)
+            com.princeniithompson.rapcha.service.floating.FloatingNotificationManager.postRestoreNotification(app)
+            false
         }
     }
 
     fun stopBubbleService(context: Context) {
         try {
+            com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.recordLastStopReason(
+                context,
+                com.princeniithompson.rapcha.diagnostics.BubbleHealthLog.STOP_INTENTIONAL
+            )
             val intent = Intent(context, FloatingBubbleService::class.java)
             context.stopService(intent)
         } catch (e: Exception) {
@@ -555,6 +620,9 @@ object FloatingBubbleManager {
             FloatingBubbleService.instance?.onSensitiveAppEntered(_currentForegroundPackage.value)
         } else if (!isSensitive && wasSensitive) {
             Log.d(TAG, "Smart Safe Mode exited ($triggerReason)")
+            if (_isKeyboardVisible.value) {
+                bubbleSignalAtElapsed = SystemClock.elapsedRealtime()
+            }
             AppLogRepository.logEvent(
                 DiagnosticSource.BUBBLE,
                 DiagnosticType.SAFE_MODE_EXITED,
