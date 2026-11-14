@@ -16,6 +16,8 @@ class RapchaApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         installCrashHandler()
+        // v24: decide Lite mode before anything heavy starts; everything below is gated on it.
+        com.princeniithompson.rapcha.core.LiteMode.decide(this)
         com.princeniithompson.rapcha.core.ApiKeyVault.init(this)
         // v23: everything else (log file load, device/network diagnostics, retry-clip repair,
         // crash publish, exit-reason scan) runs once, on one background thread.
@@ -59,6 +61,7 @@ class RapchaApplication : Application() {
          */
         fun ensureBackgroundInit(context: Context) {
             val app = context.applicationContext ?: context
+            val lite = com.princeniithompson.rapcha.core.LiteMode.decide(app)
             // Cheap and needed before the first overlay frame so low-end phones never start in
             // full-glow mode. Also binds AppLogRepository to the context (no disk I/O).
             AppLogRepository.init(app)
@@ -72,10 +75,11 @@ class RapchaApplication : Application() {
             }
             if (!backgroundInitStarted.compareAndSet(false, true)) return
             val worker = Thread({
-                runStep("network_diagnostics") { NetworkAndDeviceDiagnostics.startMonitoring(app) }
+                // v24 Lite: no network/device monitoring and no exit-reason scan (diagnostics only).
+                if (!lite) runStep("network_diagnostics") { NetworkAndDeviceDiagnostics.startMonitoring(app) }
                 runStep("retry_clips") { com.princeniithompson.rapcha.data.RetryClipStore.init(app) }
                 runStep("crash_publish") { publishPendingCrash(app) }
-                runStep("exit_reasons") { ProcessExitDiagnostics.recordHistoricalExits(app) }
+                if (!lite) runStep("exit_reasons") { ProcessExitDiagnostics.recordHistoricalExits(app) }
             }, "rapcha-startup-init")
             worker.priority = Thread.NORM_PRIORITY - 1
             worker.isDaemon = true

@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.princeniithompson.rapcha.service.FloatingBubbleManager
+import com.princeniithompson.rapcha.service.floating.FloatingNotificationManager
 import com.princeniithompson.rapcha.service.floating.VocabSuggestions
 import com.princeniithompson.rapcha.ui.VoiceTypingScreen
 import com.princeniithompson.rapcha.ui.VoiceTypingViewModel
@@ -23,20 +24,28 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: VoiceTypingViewModel by viewModels()
     private var dictionaryDraft by mutableStateOf<String?>(null)
+    private var openDestination by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val lite = com.princeniithompson.rapcha.core.LiteMode.decide(this)
         com.princeniithompson.rapcha.data.AppLogRepository.init(this)
-        com.princeniithompson.rapcha.data.AudioRecordingRepository.init(this)
+        // v24 Lite: no saved-recordings repair, injection log or app-detection log.
+        if (!lite) com.princeniithompson.rapcha.data.AudioRecordingRepository.init(this)
         com.princeniithompson.rapcha.data.CustomVocabularyRepository.init(this)
         com.princeniithompson.rapcha.data.HistoryRepository.init(this)
-        com.princeniithompson.rapcha.data.InjectionLogRepository.init(this)
-        com.princeniithompson.rapcha.data.AppDetectionLogRepository.init(this)
+        if (!lite) com.princeniithompson.rapcha.data.InjectionLogRepository.init(this)
+        if (!lite) com.princeniithompson.rapcha.data.AppDetectionLogRepository.init(this)
         com.princeniithompson.rapcha.data.OnboardingRepository.init(this)
         FloatingBubbleManager.init(this)
         consumeDictionaryDraft(intent)
         enableEdgeToEdge()
         setContent {
+            if (lite) {
+                // v24 Lite: no haptics anywhere in the app, including onboarding.
+                val rootView = androidx.compose.ui.platform.LocalView.current
+                androidx.compose.runtime.SideEffect { rootView.isHapticFeedbackEnabled = false }
+            }
             val isAppDynamicColor by FloatingBubbleManager.isAppDynamicColorEnabled.collectAsState()
             val selectedTone by FloatingBubbleManager.selectedColorTone.collectAsState()
             val isDeepTheme = selectedTone == com.princeniithompson.rapcha.service.floating.DynamicTonePolicy.DEEP
@@ -53,6 +62,11 @@ class MainActivity : ComponentActivity() {
                         onDictionaryDraftConsumed = {
                             dictionaryDraft = null
                             intent.removeExtra(EXTRA_DICTIONARY_DRAFT)
+                        },
+                        openDestination = openDestination,
+                        onOpenDestinationConsumed = {
+                            openDestination = null
+                            intent.removeExtra(FloatingNotificationManager.EXTRA_OPEN_DESTINATION)
                         }
                     )
                 }
@@ -82,6 +96,10 @@ class MainActivity : ComponentActivity() {
         val draft = intent?.getStringExtra(EXTRA_DICTIONARY_DRAFT)?.trim().orEmpty()
         if (draft.isNotEmpty()) {
             dictionaryDraft = draft
+        }
+        val destination = intent?.getStringExtra(FloatingNotificationManager.EXTRA_OPEN_DESTINATION)?.trim().orEmpty()
+        if (destination.isNotEmpty()) {
+            openDestination = destination
         }
     }
 
