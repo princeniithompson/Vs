@@ -1,0 +1,459 @@
+====================================================
+      RAPCHA DIAGNOSTICS & PROTOCOL MONITOR      
+      Unified Persistent Multi-Day Export           
+====================================================
+Export Date: 2026-11-13 18:57:19
+Device: samsung SM-A175F (a17) | Android 16 (API 36) | phone (sw411dp) | RAM=3638MB low_ram=no | App=bubble-redesign-20(20)
+Current Network: net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+Total Events: 410
+Total Notes: 0
+
+
+----------------------------------------------------
+                DIAGNOSTIC USER NOTES               
+----------------------------------------------------
+(No user notes recorded)
+
+
+----------------------------------------------------
+                 DIAGNOSTIC EVENTS                  
+----------------------------------------------------
+
+
+>>> DATE: Friday, November 13, 2026 <<<
+[2026-11-13 18:34:04] [APP] [DEVICE_INFO] samsung SM-A175F (a17) | Android 16 (API 36) | phone (sw411dp) | RAM=3638MB low_ram=no | App=bubble-redesign-20(20) | net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7655 up_kbps=7655
+[2026-11-13 18:37:31] [APP] [DEVICE_INFO] samsung SM-A175F (a17) | Android 16 (API 36) | phone (sw411dp) | RAM=3638MB low_ram=no | App=bubble-redesign-20(20) | net=NONE online=no validated=no captive=no metered=no airplane=off down_kbps=0 up_kbps=0
+[2026-11-13 18:37:31] [APP] [NET_STATE_CHANGE] transition=STARTUP_OFFLINE net=NONE online=no validated=no captive=no metered=no airplane=off down_kbps=0 up_kbps=0
+[2026-11-13 18:37:31] [APP] [PROCESS_EXIT] process_exit reason=LOW_MEMORY description= timestamp=1794595040289
+[2026-11-13 18:37:31] [APP] [PROCESS_EXIT] process_exit reason=OTHER description=[ISOLATED NOT NEEDED] isolated not needed timestamp=1794595040288
+[2026-11-13 18:37:31] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:37:31] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=57
+[2026-11-13 18:37:33] [BUBBLE] [MAIN_THREAD_STALL] late_ms=537
+[2026-11-13 18:37:43] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:37:47] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:38:10] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=209
+[2026-11-13 18:38:10] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:38:10] [BUBBLE] [BUBBLE_SHOWN] latency_ms=2
+[2026-11-13 18:38:14] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:38:14] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A175F form=phone android=16_sdk36 ram_mb=3638 low_ram=no net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446 section_lock=SMART category=OTHER app=One UI Home override=auto three_step=no quota_ok=yes rpm=0/15 rpd=0/500 stage1=SMART stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 18:38:14] [BUBBLE] [SESSION_START] Mode: SMART, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 18:38:15] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=822 net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:38:20] [BUBBLE] [TRANSCRIPT_FINAL] 5 words, 32 chars, preview="The application is working 100%."
+[2026-11-13 18:38:20] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=4891 code=1000 reason=session_ended net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:38:20] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket closed net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:38:20] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 5s, Chunks: 48, Streamed: 150 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=7 max_interim_gap_ms=2663 finalize_latency_ms=522
+[2026-11-13 18:38:21] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.sec.android.app.launcher
+[2026-11-13 18:38:24] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=60
+[2026-11-13 18:38:24] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:38:24] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 18:38:24] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=100
+[2026-11-13 18:38:49] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=68
+[2026-11-13 18:38:50] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=61
+[2026-11-13 18:38:50] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=61
+[2026-11-13 18:38:50] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=322
+[2026-11-13 18:38:50] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=199
+[2026-11-13 18:38:51] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=118
+[2026-11-13 18:38:51] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=66
+[2026-11-13 18:38:51] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=67
+[2026-11-13 18:38:51] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=59
+[2026-11-13 18:38:52] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:38:52] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 18:38:52] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=88
+[2026-11-13 18:38:52] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=197
+[2026-11-13 18:38:52] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=200
+[2026-11-13 18:38:52] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=96
+[2026-11-13 18:38:53] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=283
+[2026-11-13 18:38:53] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=157
+[2026-11-13 18:38:53] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=63
+[2026-11-13 18:38:58] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:38:58] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A175F form=phone android=16_sdk36 ram_mb=3638 low_ram=no net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446 section_lock=TWO_STEP_LIVE category=AI app=ChatGPT override=auto three_step=yes quota_ok=yes rpm=0/15 rpd=0/500 stage1=SMART stage1_model=models/gemini-3.5-transcribe-live stage2_model=gemini-3.5-flash-lite
+[2026-11-13 18:38:58] [BUBBLE] [SESSION_START] Mode: SMART, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 18:38:58] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=804 net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:38:59] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=52
+[2026-11-13 18:39:13] [BUBBLE] [POLISH_TRACE] prefinal_frozen before=activity_end raw chars=171 sha256=dba9b2259c3a887095bd4cf876694480986a178f6228861a42d5af8ac28a13be
+[2026-11-13 18:39:14] [BUBBLE] [TRANSCRIPT_FINAL] 32 words, 172 chars, preview="So this is a whole different application together, and it wa…"
+[2026-11-13 18:39:14] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=15433 code=1000 reason=session_ended net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:39:14] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket closed net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:39:14] [BUBBLE] [SESSION_END] ended_reason: polished | Duration: 15s, Chunks: 141, Streamed: 440 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=26 max_interim_gap_ms=3535 finalize_latency_ms=697
+[2026-11-13 18:39:14] [BUBBLE] [POLISH_TRACE] stage1_final completed=yes timed_out=no stage1 chars=172 sha256=e04b2d6fc69ebf43e3cf25b9bdf74ee5abf0dbb2c157cf412edb5703436327bf raw_chars=171
+[2026-11-13 18:39:14] [BUBBLE] [POLISH_TRACE] lyra_handoff lyra_input chars=172 sha256=e04b2d6fc69ebf43e3cf25b9bdf74ee5abf0dbb2c157cf412edb5703436327bf matches_stage1=yes
+[2026-11-13 18:39:14] [BUBBLE] [STAGE2_LIVE_START] category=AI model=gemini-3.5-flash-lite stage1_flush=no chars=172 source_chars=172 pieces=1  non_ascii=no
+[2026-11-13 18:39:15] [BUBBLE] [STAGE2_LIVE_SUCCESS] category=AI latency_ms=723 stage1_flush=no chars=172 non_ascii=no model=gemini-3.5-flash-lite model=gemini-3.5-flash-lite http=200 tokens=766 ms=708 net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:39:15] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.openai.chatgpt
+[2026-11-13 18:39:15] [BUBBLE] [DELIVERY] clipboard=skipped halt=NONE verified=unverified field_present=yes
+[2026-11-13 18:39:15] [BUBBLE] [POLISH_TRACE] lyra_review=prompted session=73d02c52-08c4-456b-b9b7-bfe19ab7ef22 mode=three-step app=ChatGPT
+[2026-11-13 18:39:15] [BUBBLE] [POLISH_TRACE] model_complete=yes live_pieces=1 failed_pieces=0 stage1_chars=172 lyra_chars=172 frozen_raw_chars=171 stage1_sha256=e04b2d6fc69ebf43e3cf25b9bdf74ee5abf0dbb2c157cf412edb5703436327bf three_step=yes halt=NONE
+[2026-11-13 18:39:24] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=57
+[2026-11-13 18:39:24] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:39:24] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=0
+[2026-11-13 18:39:38] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=95
+[2026-11-13 18:40:27] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=210
+[2026-11-13 18:40:28] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:40:28] [BUBBLE] [BUBBLE_SHOWN] latency_ms=2
+[2026-11-13 18:40:28] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=51
+[2026-11-13 18:40:29] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:40:29] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 18:40:46] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=765
+[2026-11-13 18:40:46] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=153
+[2026-11-13 18:40:46] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=89
+[2026-11-13 18:40:48] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=115
+[2026-11-13 18:40:48] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:40:48] [BUBBLE] [BUBBLE_SHOWN] latency_ms=3
+[2026-11-13 18:40:57] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=85
+[2026-11-13 18:40:57] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=67
+[2026-11-13 18:40:57] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:40:57] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=11
+[2026-11-13 18:40:57] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=82
+[2026-11-13 18:41:29] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=165
+[2026-11-13 18:41:29] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:41:29] [BUBBLE] [BUBBLE_SHOWN] latency_ms=2
+[2026-11-13 18:41:31] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:41:32] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A175F form=phone android=16_sdk36 ram_mb=3638 low_ram=no net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446 section_lock=SMART category=OTHER app=One UI Home override=auto three_step=no quota_ok=yes rpm=0/15 rpd=1/500 stage1=SMART stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 18:41:32] [BUBBLE] [SESSION_START] Mode: SMART, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 18:41:32] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=714 net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:41:58] [BUBBLE] [TRANSCRIPT_FINAL] 16 words, 108 chars, preview="After turning off the application blocking banking apps like…"
+[2026-11-13 18:41:58] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=25530 code=1000 reason=session_ended net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:41:58] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket closed net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:41:58] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 25s, Chunks: 250, Streamed: 781 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=51 max_interim_gap_ms=1944 finalize_latency_ms=470
+[2026-11-13 18:41:59] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=465
+[2026-11-13 18:41:59] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.sec.android.app.launcher
+[2026-11-13 18:41:59] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=249
+[2026-11-13 18:42:01] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:42:01] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=0
+[2026-11-13 18:42:12] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=1052
+[2026-11-13 18:42:13] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=136
+[2026-11-13 18:42:13] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=156
+[2026-11-13 18:42:13] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=198
+[2026-11-13 18:42:13] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=86
+[2026-11-13 18:42:25] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=50
+[2026-11-13 18:42:25] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=287
+[2026-11-13 18:42:26] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=201
+[2026-11-13 18:42:27] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:42:27] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 18:42:28] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:42:28] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A175F form=phone android=16_sdk36 ram_mb=3638 low_ram=no net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446 section_lock=SMART category=OTHER app=Chrome override=auto three_step=no quota_ok=yes rpm=0/15 rpd=1/500 stage1=SMART stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 18:42:28] [BUBBLE] [SESSION_START] Mode: SMART, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 18:42:29] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=721 net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7446 up_kbps=7446
+[2026-11-13 18:42:41] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=63
+[2026-11-13 18:42:41] [APP] [NET_STATE_CHANGE] transition=OFFLINE->ONLINE prev_net=NONE curr_net=CELLULAR net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=3599 up_kbps=3599
+[2026-11-13 18:42:41] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=50
+[2026-11-13 18:42:41] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:42:55] [BUBBLE] [TRANSCRIPT_FINAL] 26 words, 130 chars, preview="The problem was caused by what is called smart safe mode. I'…"
+[2026-11-13 18:42:55] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=26644 code=1000 reason=session_ended net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:42:55] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket closed net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:42:55] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 26s, Chunks: 263, Streamed: 821 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=51 max_interim_gap_ms=2894 finalize_latency_ms=451
+[2026-11-13 18:42:57] [BUBBLE] [TEXT_INSERTED] method=clipboard package=com.sec.android.app.launcher
+[2026-11-13 18:43:06] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=167
+[2026-11-13 18:43:07] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:43:21] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=83
+[2026-11-13 18:43:22] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:43:22] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=5
+[2026-11-13 18:43:31] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=494
+[2026-11-13 18:43:31] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=139
+[2026-11-13 18:43:32] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=177
+[2026-11-13 18:43:33] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:43:33] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 18:43:37] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=53
+[2026-11-13 18:43:37] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:43:37] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=10
+[2026-11-13 18:43:37] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=133
+[2026-11-13 18:43:43] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=203
+[2026-11-13 18:43:43] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:43:43] [BUBBLE] [BUBBLE_SHOWN] latency_ms=2
+[2026-11-13 18:43:46] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:43:46] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 18:44:02] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=460
+[2026-11-13 18:44:02] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=125
+[2026-11-13 18:44:05] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=385
+[2026-11-13 18:44:06] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:44:06] [BUBBLE] [BUBBLE_SHOWN] latency_ms=5
+[2026-11-13 18:44:06] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=57
+[2026-11-13 18:44:08] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:44:08] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 18:44:09] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:44:09] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 18:44:11] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=191
+[2026-11-13 18:44:11] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=67
+[2026-11-13 18:44:15] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:44:15] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=0
+[2026-11-13 18:44:16] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:44:16] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 18:44:17] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:44:17] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 18:44:18] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:44:18] [BUBBLE] [BUBBLE_SHOWN] latency_ms=2
+[2026-11-13 18:44:23] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:44:23] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=3
+[2026-11-13 18:45:45] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=141
+[2026-11-13 18:45:45] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=65
+[2026-11-13 18:45:45] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=53
+[2026-11-13 18:45:46] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=66
+[2026-11-13 18:45:46] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=60
+[2026-11-13 18:45:46] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=71
+[2026-11-13 18:45:46] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=76
+[2026-11-13 18:45:46] [BUBBLE] [A11Y_EVENT] type=16 processing_ms=58
+[2026-11-13 18:45:47] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=231
+[2026-11-13 18:45:47] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=57
+[2026-11-13 18:45:47] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:45:47] [BUBBLE] [BUBBLE_SHOWN] latency_ms=6
+[2026-11-13 18:45:48] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=71
+[2026-11-13 18:45:50] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=62
+[2026-11-13 18:45:50] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=312
+[2026-11-13 18:45:50] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=63
+[2026-11-13 18:45:52] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=53
+[2026-11-13 18:45:52] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=338
+[2026-11-13 18:45:52] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=71
+[2026-11-13 18:45:53] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=53
+[2026-11-13 18:45:54] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=157
+[2026-11-13 18:45:55] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=168
+[2026-11-13 18:45:56] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:45:56] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=2
+[2026-11-13 18:45:57] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=50
+[2026-11-13 18:46:02] [APP] [SESSION_START] Mode: SMART, Model: models/gemini-3.5-transcribe-live, stage2=non_live device=samsung_SM-A175F form=phone android=16_sdk36 ram_mb=3638 low_ram=no net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:46:03] [APP] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=608 net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:46:08] [APP] [TRANSCRIPT_FINAL] 5 words, 22 chars, preview="So there is a problem."
+[2026-11-13 18:46:08] [APP] [SOCKET_CLOSE] connection_age_ms=4988 code=1000 reason=session_ended net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:46:08] [APP] [SESSION_END] ended_reason: completed | Duration: 5s, Chunks: 45, Streamed: 140 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=6 max_interim_gap_ms=2836 finalize_latency_ms=495
+[2026-11-13 18:46:08] [APP] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket is closed net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:46:23] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=161
+[2026-11-13 18:46:23] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:46:23] [BUBBLE] [BUBBLE_SHOWN] latency_ms=2
+[2026-11-13 18:46:25] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:46:25] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A175F form=phone android=16_sdk36 ram_mb=3638 low_ram=no net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648 section_lock=SMART category=OTHER app=One UI Home override=auto three_step=no quota_ok=yes rpm=0/15 rpd=1/500 stage1=SMART stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 18:46:25] [BUBBLE] [SESSION_START] Mode: SMART, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 18:46:26] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=1092 net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:46:31] [BUBBLE] [TRANSCRIPT_FINAL] 13 words, 66 chars, preview="I don't know what caused the fluids and bubble not showing a…"
+[2026-11-13 18:46:31] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=4839 code=1000 reason=session_ended net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:46:31] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket closed net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:46:31] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 5s, Chunks: 51, Streamed: 159 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=8 max_interim_gap_ms=2361 finalize_latency_ms=462
+[2026-11-13 18:46:31] [BUBBLE] [A11Y_EVENT] type=16 processing_ms=465
+[2026-11-13 18:46:32] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.sec.android.app.launcher
+[2026-11-13 18:46:32] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=129
+[2026-11-13 18:46:36] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=116
+[2026-11-13 18:46:36] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:46:36] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=3
+[2026-11-13 18:46:38] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:46:38] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 18:46:40] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:46:40] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=0
+[2026-11-13 18:46:41] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=57
+[2026-11-13 18:48:21] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=173
+[2026-11-13 18:48:22] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=51
+[2026-11-13 18:48:32] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=333
+[2026-11-13 18:48:33] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=154
+[2026-11-13 18:48:33] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=62
+[2026-11-13 18:48:34] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=94
+[2026-11-13 18:48:34] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:48:34] [BUBBLE] [BUBBLE_SHOWN] latency_ms=15
+[2026-11-13 18:48:34] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:48:34] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=5
+[2026-11-13 18:48:42] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=80
+[2026-11-13 18:48:42] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=78
+[2026-11-13 18:48:42] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=77
+[2026-11-13 18:48:42] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=69
+[2026-11-13 18:48:43] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=57
+[2026-11-13 18:48:43] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=107
+[2026-11-13 18:48:43] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=53
+[2026-11-13 18:48:47] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=93
+[2026-11-13 18:48:49] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=167
+[2026-11-13 18:48:49] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=107
+[2026-11-13 18:48:50] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=55
+[2026-11-13 18:48:50] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=95
+[2026-11-13 18:48:53] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=80
+[2026-11-13 18:48:57] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=102
+[2026-11-13 18:48:57] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=82
+[2026-11-13 18:49:11] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=487
+[2026-11-13 18:49:11] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=64
+[2026-11-13 18:49:12] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=52
+[2026-11-13 18:49:13] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=125
+[2026-11-13 18:49:14] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:49:14] [BUBBLE] [BUBBLE_SHOWN] latency_ms=5
+[2026-11-13 18:49:17] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=57
+[2026-11-13 18:49:17] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:49:17] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=11
+[2026-11-13 18:49:17] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=54
+[2026-11-13 18:49:19] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=154
+[2026-11-13 18:49:19] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:49:19] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 18:49:23] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:49:23] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 18:49:29] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=608
+[2026-11-13 18:49:29] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=62
+[2026-11-13 18:49:32] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=166
+[2026-11-13 18:49:33] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:49:33] [BUBBLE] [BUBBLE_SHOWN] latency_ms=3
+[2026-11-13 18:49:35] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=64
+[2026-11-13 18:49:35] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:49:35] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=2
+[2026-11-13 18:49:35] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=58
+[2026-11-13 18:49:46] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=143
+[2026-11-13 18:49:46] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:49:46] [BUBBLE] [BUBBLE_SHOWN] latency_ms=0
+[2026-11-13 18:49:47] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:49:47] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A175F form=phone android=16_sdk36 ram_mb=3638 low_ram=no net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648 section_lock=SMART category=OTHER app=One UI Home override=auto three_step=no quota_ok=yes rpm=0/15 rpd=1/500 stage1=SMART stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 18:49:47] [BUBBLE] [SESSION_START] Mode: SMART, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 18:49:48] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=787 net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:50:15] [BUBBLE] [TRANSCRIPT_FINAL] 44 words, 237 chars, preview="I have noticed that the application has a problem whereby I …"
+[2026-11-13 18:50:15] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=26496 code=1000 reason=session_ended net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:50:15] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket is closed net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:50:15] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 26s, Chunks: 259, Streamed: 809 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=51 max_interim_gap_ms=2610 finalize_latency_ms=602
+[2026-11-13 18:50:16] [BUBBLE] [A11Y_EVENT] type=16 processing_ms=670
+[2026-11-13 18:50:16] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.sec.android.app.launcher
+[2026-11-13 18:50:17] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=267
+[2026-11-13 18:50:20] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:50:20] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 18:50:22] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=66
+[2026-11-13 18:50:26] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=121
+[2026-11-13 18:50:27] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:50:27] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 18:50:29] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:50:29] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 18:50:37] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=563
+[2026-11-13 18:50:37] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=190
+[2026-11-13 18:50:38] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=162
+[2026-11-13 18:50:39] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:50:39] [BUBBLE] [BUBBLE_SHOWN] latency_ms=2
+[2026-11-13 18:50:40] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:50:40] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A175F form=phone android=16_sdk36 ram_mb=3638 low_ram=no net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648 section_lock=SMART category=OTHER app=Chrome override=auto three_step=no quota_ok=yes rpm=0/15 rpd=1/500 stage1=SMART stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 18:50:40] [BUBBLE] [SESSION_START] Mode: SMART, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 18:50:41] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=690 net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:50:51] [BUBBLE] [TRANSCRIPT_FINAL] 12 words, 68 chars, preview="The application needs to be optimized so it runs on low-end …"
+[2026-11-13 18:50:51] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=9541 code=1000 reason=session_ended net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:50:51] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket closed net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=7648 up_kbps=7648
+[2026-11-13 18:50:51] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 9s, Chunks: 90, Streamed: 281 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=15 max_interim_gap_ms=3046 finalize_latency_ms=560
+[2026-11-13 18:50:51] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.android.chrome
+[2026-11-13 18:50:51] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=90
+[2026-11-13 18:50:55] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:50:55] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=0
+[2026-11-13 18:51:06] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=86
+[2026-11-13 18:51:06] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=196
+[2026-11-13 18:51:06] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=114
+[2026-11-13 18:51:07] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=617
+[2026-11-13 18:51:07] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=282
+[2026-11-13 18:51:07] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=83
+[2026-11-13 18:51:07] [BUBBLE] [MAIN_THREAD_STALL] late_ms=1211
+[2026-11-13 18:51:39] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=167
+[2026-11-13 18:51:42] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=210
+[2026-11-13 18:51:42] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=92
+[2026-11-13 18:51:42] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=200
+[2026-11-13 18:51:42] [BUBBLE] [A11Y_EVENT] type=8192 processing_ms=73
+[2026-11-13 18:51:42] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=50
+[2026-11-13 18:51:42] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:51:42] [BUBBLE] [BUBBLE_SHOWN] latency_ms=3
+[2026-11-13 18:52:17] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=185
+[2026-11-13 18:52:17] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:52:17] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 18:52:24] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=181
+[2026-11-13 18:52:24] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:52:24] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 18:52:24] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=57
+[2026-11-13 18:52:24] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:52:24] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=2
+[2026-11-13 18:52:25] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=85
+[2026-11-13 18:52:25] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=60
+[2026-11-13 18:52:26] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=576
+[2026-11-13 18:52:26] [BUBBLE] [MAIN_THREAD_STALL] late_ms=722
+[2026-11-13 18:52:27] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=55
+[2026-11-13 18:52:31] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=122
+[2026-11-13 18:52:32] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:52:32] [BUBBLE] [BUBBLE_SHOWN] latency_ms=0
+[2026-11-13 18:52:35] [BUBBLE] [A11Y_EVENT] type=8192 processing_ms=104
+[2026-11-13 18:52:36] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=75
+[2026-11-13 18:52:37] [BUBBLE] [A11Y_EVENT] type=8192 processing_ms=104
+[2026-11-13 18:52:40] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=153
+[2026-11-13 18:52:52] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:52:52] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=2
+[2026-11-13 18:52:55] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:52:55] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 18:52:56] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:52:56] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=0
+[2026-11-13 18:52:57] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:52:58] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 18:52:59] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:52:59] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 18:53:14] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=78
+[2026-11-13 18:53:17] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=98
+[2026-11-13 18:53:27] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=85
+[2026-11-13 18:53:27] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=55
+[2026-11-13 18:53:32] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=82
+[2026-11-13 18:53:32] [BUBBLE] [A11Y_EVENT] type=8192 processing_ms=289
+[2026-11-13 18:53:32] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=95
+[2026-11-13 18:53:33] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:53:33] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 18:53:36] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=56
+[2026-11-13 18:53:37] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=607
+[2026-11-13 18:53:37] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:53:37] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 18:53:39] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:53:39] [BUBBLE] [BUBBLE_SHOWN] latency_ms=0
+[2026-11-13 18:53:43] [BUBBLE] [A11Y_EVENT] type=16 processing_ms=92
+[2026-11-13 18:54:00] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:54:00] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 18:54:27] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=77
+[2026-11-13 18:55:04] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=154
+[2026-11-13 18:55:07] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=127
+[2026-11-13 18:55:17] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=89
+[2026-11-13 18:55:17] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=67
+[2026-11-13 18:55:17] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:55:17] [BUBBLE] [BUBBLE_SHOWN] latency_ms=4
+[2026-11-13 18:55:21] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:55:21] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=2
+[2026-11-13 18:55:23] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=52
+[2026-11-13 18:55:24] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=96
+[2026-11-13 18:55:53] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=155
+[2026-11-13 18:55:53] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:55:53] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 18:55:55] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:55:55] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 18:56:04] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:56:04] [BUBBLE] [BUBBLE_SHOWN] latency_ms=6
+[2026-11-13 18:56:04] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=1284
+[2026-11-13 18:56:07] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:56:07] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=2
+[2026-11-13 18:56:15] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=717
+[2026-11-13 18:56:15] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=154
+[2026-11-13 18:56:15] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=95
+[2026-11-13 18:56:15] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=52
+[2026-11-13 18:56:15] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=227
+[2026-11-13 18:56:15] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=136
+[2026-11-13 18:56:15] [BUBBLE] [MAIN_THREAD_STALL] late_ms=694
+[2026-11-13 18:56:20] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=102
+[2026-11-13 18:56:21] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=211
+[2026-11-13 18:56:22] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=54
+[2026-11-13 18:56:26] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=179
+[2026-11-13 18:56:32] [BUBBLE] [MAIN_THREAD_STALL] late_ms=722
+[2026-11-13 18:56:33] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 18:56:33] [BUBBLE] [BUBBLE_SHOWN] latency_ms=4
+[2026-11-13 18:56:33] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=464
+[2026-11-13 18:56:33] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=493
+[2026-11-13 18:56:34] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 18:56:34] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=2
+[2026-11-13 18:56:37] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=54
+[2026-11-13 18:57:13] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=50
+[2026-11-13 18:57:15] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=146
+
+
+----------------------------------------------------
+                     LYRA_REVIEW                     
+----------------------------------------------------
+up=0 down=0 unrated=1
+
+
+session_id: 73d02c52-08c4-456b-b9b7-bfe19ab7ef22
+time: 2026-11-13 18:39:13
+app: ChatGPT
+mode: three-step
+rating: unrated
+tags: 
+comment: 
+raw_available: yes
+Raw transcript:
+So this is a whole different application together and it was able to identify this is chat GPT and it is working perfectly but I don't know if three step is going to work.
+3.5 Smart:
+So this is a whole different application together, and it was able to identify this is ChatGPT and it is working perfectly, but I don't know if three-step is going to work.
+Lyra 3.5 final:
+So this is a whole different application together, and it was able to identify this is ChatGPT and it is working perfectly, but I don't know if three-step is going to work.
+JSON {"session_id":"73d02c52-08c4-456b-b9b7-bfe19ab7ef22","timestamp_ms":1794595153663,"app":"ChatGPT","mode":"three-step","rating":"unrated","tags":[],"comment":"","raw_available":true,"raw_note":"","raw":"So this is a whole different application together and it was able to identify this is chat GPT and it is working perfectly but I don't know if three step is going to work.","smart":"So this is a whole different application together, and it was able to identify this is ChatGPT and it is working perfectly, but I don't know if three-step is going to work.","lyra":"So this is a whole different application together, and it was able to identify this is ChatGPT and it is working perfectly, but I don't know if three-step is going to work.","compare_from":"raw"}
+
+
+==================== END OF EXPORT ====================

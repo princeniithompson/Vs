@@ -106,55 +106,55 @@ fun HomeScreen(
 
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
-    Box(
+    Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
+        // Fixed Sticky Top Header Bar
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .background(MaterialTheme.colorScheme.background)
+                .padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            IconButton(
+                onClick = onOpenMenu,
+                modifier = Modifier.align(Alignment.CenterStart)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Menu,
+                    contentDescription = "Open Settings Menu",
+                    tint = MaterialTheme.colorScheme.onBackground
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.princeniithompson.rapcha.R.drawable.ic_lifebuoy_ring),
+                    contentDescription = "Rapcha Logo",
+                    modifier = Modifier
+                        .size(34.dp)
+                        .padding(end = 8.dp)
+                )
+                Text(
+                    text = "Rapcha",
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 90.dp)
         ) {
-            // 1. Top Header Bar
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    IconButton(
-                        onClick = onOpenMenu,
-                        modifier = Modifier.align(Alignment.CenterStart)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Menu,
-                            contentDescription = "Open Settings Menu",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier.align(Alignment.Center)
-                    ) {
-                        androidx.compose.foundation.Image(
-                            painter = androidx.compose.ui.res.painterResource(id = com.princeniithompson.rapcha.R.drawable.ic_lifebuoy_ring),
-                            contentDescription = "Rapcha Logo",
-                            modifier = Modifier
-                                .size(34.dp)
-                                .padding(end = 8.dp)
-                        )
-                        Text(
-                            text = "Rapcha",
-                            color = MaterialTheme.colorScheme.onBackground,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
 
             // 2. Top Carousel: Voice-Typing Bubble (Page 0) + Real Stats Cards (Pages 1, 2, 3)
             item {
@@ -163,21 +163,174 @@ fun HomeScreen(
             }
 
             item {
+                var showConfirmDialog by remember { mutableStateOf(false) }
+                var clearedBackupItems by remember { mutableStateOf<List<HistoryItem>?>(null) }
+                var snackbarMessage by remember { mutableStateOf<String?>(null) }
+
+                // 5-second undo timer coroutine
+                LaunchedEffect(clearedBackupItems) {
+                    if (clearedBackupItems != null) {
+                        delay(5000L)
+                        clearedBackupItems = null
+                        snackbarMessage = null
+                    }
+                }
+
                 Row(
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    FilterChip(
-                        selected = !unratedOnly,
-                        onClick = { unratedOnly = false },
-                        label = { Text("All") }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilterChip(
+                            selected = !unratedOnly,
+                            onClick = { unratedOnly = false },
+                            label = { Text("All") }
+                        )
+                        FilterChip(
+                            selected = unratedOnly,
+                            onClick = { unratedOnly = true },
+                            label = { Text(if (unratedCount > 0) "Unrated $unratedCount" else "Unrated") }
+                        )
+                    }
+
+                    // Only show the reset/refresh button when on the Unrated page AND there are unrated items
+                    if (unratedOnly && unratedCount > 0) {
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = { showConfirmDialog = true },
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("clear_unrated_button"),
+                            shape = RoundedCornerShape(18.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (isDark) Color(0xFF334155) else Color(0xFFCBD5E1)
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Refresh,
+                                contentDescription = "Clear Unrated",
+                                modifier = Modifier.size(15.dp),
+                                tint = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Reset",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = if (isDark) Color(0xFFCBD5E1) else Color(0xFF475569)
+                            )
+                        }
+                    }
+                }
+
+                // Premium confirmation dialog in simple 10-year-old language
+                if (showConfirmDialog) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { showConfirmDialog = false },
+                        shape = RoundedCornerShape(24.dp),
+                        containerColor = if (isDark) Color(0xFF1E1D2B) else Color.White,
+                        title = {
+                            Text(
+                                text = "Clear Unrated History?",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
+                            )
+                        },
+                        text = {
+                            Text(
+                                text = "Are you sure you want to do this? All unrated dictations on this page will be removed.",
+                                fontSize = 14.5.sp,
+                                lineHeight = 21.sp,
+                                color = if (isDark) Color(0xFF94A3B8) else Color(0xFF475569)
+                            )
+                        },
+                        confirmButton = {
+                            androidx.compose.material3.Button(
+                                onClick = {
+                                    showConfirmDialog = false
+                                    val removed = HistoryRepository.clearUnratedHistory()
+                                    if (removed.isNotEmpty()) {
+                                        clearedBackupItems = removed
+                                        snackbarMessage = "Cleared unrated history"
+                                    }
+                                },
+                                shape = RoundedCornerShape(16.dp),
+                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Text("Yes, clear it", fontWeight = FontWeight.SemiBold)
+                            }
+                        },
+                        dismissButton = {
+                            androidx.compose.material3.TextButton(
+                                onClick = { showConfirmDialog = false }
+                            ) {
+                                Text(
+                                    text = "Cancel",
+                                    color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B),
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
                     )
-                    FilterChip(
-                        selected = unratedOnly,
-                        onClick = { unratedOnly = true },
-                        label = { Text(if (unratedCount > 0) "Unrated $unratedCount" else "Unrated") }
-                    )
+                }
+
+                // 5-second Undo Android-style Notification Snackbar at bottom
+                if (snackbarMessage != null && clearedBackupItems != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 8.dp)
+                    ) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isDark) Color(0xFF262433) else Color(0xFF1E293B)
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = snackbarMessage ?: "Cleared unrated history",
+                                    fontSize = 13.5.sp,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Normal
+                                )
+                                androidx.compose.material3.TextButton(
+                                    onClick = {
+                                        clearedBackupItems?.let { items ->
+                                            HistoryRepository.restoreHistoryItems(items)
+                                        }
+                                        clearedBackupItems = null
+                                        snackbarMessage = null
+                                    }
+                                ) {
+                                    Text(
+                                        text = "UNDO",
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primaryContainer
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -218,6 +371,7 @@ fun HomeScreen(
                         HistoryCardItem(
                             item = item,
                             isDark = isDark,
+                            showFullBreakdown = unratedOnly,
                             onCopy = {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                 val clip = android.content.ClipData.newPlainText("Transcription", item.text)
@@ -476,6 +630,7 @@ private fun HistoryCardItem(
     onShare: () -> Unit,
     onDelete: () -> Unit,
     onRetry: () -> Unit,
+    showFullBreakdown: Boolean = false,
     isDark: Boolean = false
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -497,13 +652,13 @@ private fun HistoryCardItem(
                 .fillMaxWidth()
                 .padding(20.dp)
         ) {
-            // 1. Transcribed Text
+            // 1. Transcribed Text (Show only final output on "All" tab; show full stages on "Unrated" tab)
             val comparison = item.session?.takeIf {
                 (it.pipeline == com.princeniithompson.rapcha.data.SessionPipeline.TWO_STEP ||
                     it.pipeline == com.princeniithompson.rapcha.data.SessionPipeline.THREE_STEP) &&
                     it.stages.isNotEmpty()
             }
-            if (comparison == null) {
+            if (!showFullBreakdown || comparison == null) {
                 Text(
                     text = item.text,
                     fontSize = 15.sp,
@@ -518,8 +673,13 @@ private fun HistoryCardItem(
             Spacer(modifier = Modifier.height(12.dp))
 
             // 2. Timestamp and App Indicator (e.g. 4:25 PM · Google AI Studio)
+            val displayAppContext = if (!showFullBreakdown) {
+                item.appContext.removeSuffix(" · Three-step").removeSuffix(" · Two-step")
+            } else {
+                item.appContext
+            }
             Text(
-                text = "${item.getFormattedTime()} · ${item.appContext}",
+                text = "${item.getFormattedTime()} · $displayAppContext",
                 fontSize = 12.sp,
                 color = if (isDark) Color(0xFF94A3B8) else Color(0xFF718096),
                 fontWeight = FontWeight.Medium

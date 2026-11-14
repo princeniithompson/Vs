@@ -116,6 +116,7 @@ fun DictionaryScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
+                    .background(MaterialTheme.colorScheme.background)
                     .padding(horizontal = 14.dp),
                 contentAlignment = Alignment.Center
             ) {

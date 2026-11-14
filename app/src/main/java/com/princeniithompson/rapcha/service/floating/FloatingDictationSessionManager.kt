@@ -60,6 +60,16 @@ class FloatingDictationSessionManager(
             if (startedAtElapsed <= 0L) return 0
             return ((nowElapsed - startedAtElapsed).coerceAtLeast(0L) / 1000L).toInt()
         }
+
+        internal fun reconcileFinalTranscript(accumulated: String, endpointFinal: String): String {
+            val acc = accumulated.trim()
+            val fin = endpointFinal.trim()
+            if (fin.isEmpty()) return acc
+            if (acc.isEmpty()) return fin
+            if (fin == acc || acc.endsWith(fin)) return acc
+            if (fin.startsWith(acc) || fin.length >= acc.length) return fin
+            return TranscriptSeam.append(acc, fin)
+        }
     }
 
     private var sessionStartedAtElapsed = 0L
@@ -585,8 +595,10 @@ class FloatingDictationSessionManager(
             }
             val finalText = ws?.endActivityAndAwaitFinal().orEmpty().trim()
             val timedOut = ws?.endpointTimedOut != false
-            if (finalizedTranscript.isEmpty() && finalText.isNotEmpty()) {
-                finalizedTranscript.append(finalText)
+            val reconciled = reconcileFinalTranscript(finalizedTranscript.toString(), finalText)
+            if (reconciled.isNotEmpty()) {
+                finalizedTranscript.clear()
+                finalizedTranscript.append(reconciled)
             }
             interimTranscript = ""
             val text = getFullTranscriptText().ifBlank { finalText }

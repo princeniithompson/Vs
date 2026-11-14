@@ -184,6 +184,7 @@ class FloatingBubbleService : Service() {
             return
         }
         Log.d(TAG, "FloatingBubbleService onCreate")
+        com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.startMonitoring(this)
         CustomVocabularyRepository.init(this)
         HistoryRepository.init(this)
         FloatingBubbleManager.refreshLiveTwoStep(this)
@@ -468,10 +469,18 @@ class FloatingBubbleService : Service() {
         val keyboard = access?.isImeVisibleNow() == true
         val field = access?.hasFocusedEditableField() == true
         val recording = ::sessionManager.isInitialized && sessionManager.isRecording
+        val netTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag(this)
+        val outcome = when {
+            FloatingBubbleManager.isCurrentAppSensitive.value -> "blocked_sensitive_app"
+            FloatingBubbleManager.offlineRetry.value != null && !recording -> "opened_offline_retry"
+            decideRingTap(recording, keyboard, field) == RingTap.HIDE -> "hid_no_keyboard"
+            startsRecordingOnTap(recording, keyboard, field) -> "starting_session"
+            else -> "already_recording"
+        }
         AppLogRepository.logEvent(
             DiagnosticSource.BUBBLE,
             DiagnosticType.BUBBLE_TAP,
-            "keyboard=$keyboard field=$field recording=$recording"
+            "keyboard=$keyboard field=$field recording=$recording outcome=$outcome $netTag"
         )
         if (FloatingBubbleManager.isCurrentAppSensitive.value) {
             return
@@ -504,6 +513,11 @@ class FloatingBubbleService : Service() {
         fgsDowngradeJob = null
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.WARNING,
+                "session_blocked reason=missing_record_audio_permission"
+            )
             Toast.makeText(this, "Microphone permission required. Please grant it in Rapcha.", Toast.LENGTH_LONG).show()
             val appIntent = Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -514,7 +528,15 @@ class FloatingBubbleService : Service() {
 
         val apiKey = getEffectiveApiKey()
         if (ApiConfig.isPlaceholder(apiKey)) {
+            AppLogRepository.logEvent(
+                DiagnosticSource.BUBBLE,
+                DiagnosticType.WARNING,
+                "session_blocked reason=missing_api_key"
+            )
             Toast.makeText(this, "Gemini API key is required. Please set it in Rapcha app first.", Toast.LENGTH_LONG).show()
+            if (::overlayWindowManager.isInitialized) {
+                overlayWindowManager.collapsePanel()
+            }
             return
         }
 
@@ -526,6 +548,16 @@ class FloatingBubbleService : Service() {
                 stopVoiceTyping(endedReason = "microphone_foreground_denied")
             }
             return
+        }
+
+        val offlineReason = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.checkOfflineOrAirplaneReason(this)
+        if (offlineReason != null) {
+            com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.recordNetworkFailure(
+                source = DiagnosticSource.BUBBLE,
+                stage = "session_start",
+                reason = "starting_while_$offlineReason",
+                context = this
+            )
         }
 
         overlayWindowManager.expandToFullSize()
@@ -596,7 +628,14 @@ class FloatingBubbleService : Service() {
             allowLiveHint = false
         )
         val aiApp = HybridPolishPolicy.isAiTarget(target.stage2Category, target.polishCategory)
-        val plan = ThreeStepPolicy.resolve(override, aiApp, threeStepEnabled, savedSmartMode)
+        val quotaStatus = com.princeniithompson.rapcha.service.floating.PolishQuotaMonitor.status(this)
+        val plan = ThreeStepPolicy.resolve(
+            override = override,
+            aiApp = aiApp,
+            threeStepEnabled = threeStepEnabled,
+            savedSmartMode = savedSmartMode,
+            quotaAvailable = quotaStatus.available
+        )
         val mode = plan.mode
         val liveCategory = HybridPolishPolicy.liveCategory(target.stage2Category, aiApp)
         val instruction = if (mode == SectionPolishMode.TWO_STEP_LIVE) {
@@ -618,18 +657,18 @@ class FloatingBubbleService : Service() {
             threeStep = plan.threeStep
         )
         FloatingBubbleManager.lockSection(section)
+        val stage2ModelTag = com.princeniithompson.rapcha.service.floating.Stage2PolishRoute.model(
+            mode == SectionPolishMode.TWO_STEP_LIVE,
+            quotaStatus.available
+        ) ?: "none"
+        val deviceTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.compactDeviceTag(this)
+        val netTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag(this)
         AppLogRepository.logEvent(
             DiagnosticSource.BUBBLE,
             DiagnosticType.SESSION_START,
-            "build=${com.princeniithompson.rapcha.BuildConfig.VERSION_NAME} code=${com.princeniithompson.rapcha.BuildConfig.VERSION_CODE} commit=${com.princeniithompson.rapcha.BuildConfig.GIT_COMMIT} section_lock=${mode.name} category=${section.stage2Category.name} app=${section.appName} override=${override.storedValue()} three_step=${if (plan.threeStep) "yes" else "no"} stage1=${plan.stage1.name} stage1_model=${GeminiLiveWebSocketClient.DEFAULT_MODEL} stage2_model=${com.princeniithompson.rapcha.config.RapchaConfig.STAGE2_LIVE_MODEL}"
+            "build=${com.princeniithompson.rapcha.BuildConfig.VERSION_NAME} code=${com.princeniithompson.rapcha.BuildConfig.VERSION_CODE} commit=${com.princeniithompson.rapcha.BuildConfig.GIT_COMMIT} $deviceTag $netTag section_lock=${mode.name} category=${section.stage2Category.name} app=${section.appName} override=${override.storedValue()} three_step=${if (plan.threeStep) "yes" else "no"} quota_ok=${if (quotaStatus.available) "yes" else "cooldown:${quotaStatus.reason.name}:${quotaStatus.cooldownRemainingMs / 1000L}s"} rpm=${quotaStatus.rpmUsed}/${quotaStatus.rpmLimit} rpd=${quotaStatus.rpdUsed}/${quotaStatus.rpdLimit} stage1=${plan.stage1.name} stage1_model=${GeminiLiveWebSocketClient.DEFAULT_MODEL} stage2_model=$stage2ModelTag"
         )
-        if (mode == SectionPolishMode.TWO_STEP_LIVE) {
-            serviceScope.launch(Dispatchers.IO) {
-                Stage2WarmLine.prewarm(apiKey, instruction)
-            }
-        } else {
-            Stage2WarmLine.close()
-        }
+        Stage2WarmLine.close()
 
         FloatingBubbleManager.setRecordingState(true)
         FloatingHapticManager.trigger(this, FloatingHapticType.TRANSCRIPTION_START)
@@ -756,10 +795,15 @@ class FloatingBubbleService : Service() {
             DictationAlerts.cancel(this, DictationAlerts.RETRY_READY_NOTIFICATION_ID)
             networkBackNotifiedFor = null
         }
+        val retryApiKey = getEffectiveApiKey()
+        if (ApiConfig.isPlaceholder(retryApiKey)) {
+            Toast.makeText(this, "Gemini API key is required. Please set it in Rapcha app first.", Toast.LENGTH_LONG).show()
+            return
+        }
         serviceScope.launch {
             offlineRetry.runRetry(
                 context = this@FloatingBubbleService,
-                apiKey = getEffectiveApiKey(),
+                apiKey = retryApiKey,
                 vocabulary = CustomVocabularyRepository.getVocabulary(),
                 prepareClip = {
                     val target = clipId ?: RetryClipStore.currentId()
@@ -1187,7 +1231,9 @@ class FloatingBubbleService : Service() {
                     }
                 }
                 val pieces = com.princeniithompson.rapcha.service.floating.Stage2TranscriptChunker.chunks(rawTranscript)
-                val aiPaste = locked.stage2Category == com.princeniithompson.rapcha.service.floating.Stage2Category.AI
+                val flashLiteClient = com.princeniithompson.rapcha.service.floating.FlashLiteTextPolishClient(
+                    context = this@FloatingBubbleService
+                )
                 var assembled = ""
                 var livePieces = 0
                 var failedPieces = 0
@@ -1204,20 +1250,13 @@ class FloatingBubbleService : Service() {
                             protectedTerms = CustomVocabularyRepository.getVocabulary(),
                             stage1Dropped = stage1Dropped,
                             apiKey = apiKey,
-                            model = LiveTextPolishClient(onPartial = { partial ->
-                                val snapshot = com.princeniithompson.rapcha.service.floating.Stage2TranscriptChunker.join(
-                                    assembled,
-                                    partial
-                                )
-                                serviceScope.launch {
-                                    pasteLatest(snapshot, final = false, clipboardWhenNoField = aiPaste)
-                                }
-                            }),
+                            model = flashLiteClient,
                             systemInstruction = instruction,
                             partIndex = index + 1,
                             partCount = pieces.size,
                             sourceChars = rawTranscript.length,
                             logHeader = index == 0,
+                            modelName = com.princeniithompson.rapcha.config.RapchaConfig.STAGE2_FLASH_LITE_MODEL,
                             log = { type, message ->
                                 AppLogRepository.logEvent(DiagnosticSource.BUBBLE, type, message)
                             }
@@ -1246,19 +1285,13 @@ class FloatingBubbleService : Service() {
                         assembled,
                         pieceText
                     )
-                    pasteLatest(assembled, final = false, clipboardWhenNoField = aiPaste)
                 }
                 val text = if (livePieces == 0 && failedPieces > 0) {
                     AppLogRepository.logEvent(
                         DiagnosticSource.BUBBLE,
                         DiagnosticType.STAGE2_LIVE_FALLBACK,
-                        "fallback=raw model=${LivePolishProtocol.MODEL} category=${locked.stage2Category} pieces=${pieces.size}"
+                        "fallback=stage1_smart model=${com.princeniithompson.rapcha.config.RapchaConfig.STAGE2_FLASH_LITE_MODEL} category=${locked.stage2Category} pieces=${pieces.size} reason=${lastError?.take(120).orEmpty()}"
                     )
-                    Toast.makeText(
-                        this@FloatingBubbleService,
-                        LivePolishOutcome.userLine(lastError),
-                        Toast.LENGTH_LONG
-                    ).show()
                     Stage2LivePolish.rawOnFailure(rawTranscript)
                 } else {
                     if (failedPieces > 0) {
@@ -1491,9 +1524,7 @@ class FloatingBubbleService : Service() {
     }
 
     private fun getEffectiveApiKey(): String {
-        val prefs = getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)
-        val customKey = prefs.getString("custom_api_key", "")?.trim() ?: ""
-        return ApiConfig.getEffectiveKey(customKey)
+        return ApiConfig.resolveApiKey(this)
     }
 
     private fun isBrowserOrContainerPackage(pkg: String): Boolean {

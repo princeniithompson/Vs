@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -58,6 +57,7 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
@@ -417,18 +417,13 @@ fun CompactRecordingBar(
 
         Spacer(modifier = Modifier.width(gap))
 
-        // 3. Right: Circular Lifebuoy Check Button (48dp diameter)
+        // 3. Right: Circular Lifebuoy Complete Button (48dp diameter, hollow center)
         Box(
             modifier = Modifier
                 .size(completeDiameter)
-                .shadow(
-                    elevation = 4.dp,
-                    shape = CircleShape,
-                    ambientColor = Color.Black.copy(alpha = 0.28f),
-                    spotColor = Color.Black.copy(alpha = 0.28f)
-                )
                 .clip(CircleShape)
-                .clickable(onClick = onComplete),
+                .clickable(onClick = onComplete)
+                .testTag("compact_bar_complete_button"),
             contentAlignment = Alignment.Center
         ) {
             Image(
@@ -438,23 +433,6 @@ fun CompactRecordingBar(
                     .size(completeDiameter)
                     .graphicsLayer { if (processing) rotationZ = spin }
             )
-            // Black circular center badge
-            Box(
-                modifier = Modifier
-                    .size(22.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF111116)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Check,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier
-                        .size(13.dp)
-                        .graphicsLayer { if (processing) rotationZ = spin }
-                )
-            }
         }
     }
 }

@@ -46,6 +46,7 @@ object Stage2LivePolish {
         partCount: Int = 1,
         sourceChars: Int = -1,
         logHeader: Boolean = true,
+        modelName: String = com.princeniithompson.rapcha.config.RapchaConfig.STAGE2_FLASH_LITE_MODEL,
         log: (DiagnosticType, String) -> Unit = { _, _ -> },
         nowMs: () -> Long = { System.currentTimeMillis() }
     ): Stage2Paste {
@@ -55,7 +56,7 @@ object Stage2LivePolish {
         if (logHeader) {
             log(
                 DiagnosticType.STAGE2_LIVE_START,
-                "category=$category model=${LivePolishProtocol.MODEL} stage1_flush=${yesNo(stage1Dropped)} chars=${raw.length} source_chars=${if (sourceChars >= 0) sourceChars else raw.length} pieces=$partCount $piece $script"
+                "category=$category model=$modelName stage1_flush=${yesNo(stage1Dropped)} chars=${raw.length} source_chars=${if (sourceChars >= 0) sourceChars else raw.length} pieces=$partCount $piece $script"
             )
         }
         val started = nowMs()
@@ -109,11 +110,11 @@ object Stage2LivePolish {
                 timedOut = false
             )
         }
-        logResult(paste, response, script, log)
+        logResult(paste, response, script, modelName, log)
         return paste
     }
 
-    /** Two-step Live never calls the unary flash models. A failed turn inserts the raw transcript. */
+    /** Two-step Live never calls the unary flash models on failure. A failed turn inserts the raw transcript. */
     fun rawOnFailure(rawTranscript: String): String = rawTranscript
 
     fun nonAsciiHint(text: String): String {
@@ -125,18 +126,29 @@ object Stage2LivePolish {
         paste: Stage2Paste,
         response: LivePolishResponse,
         script: String,
+        modelName: String,
         log: (DiagnosticType, String) -> Unit
     ) {
         val base = "category=${paste.category} latency_ms=${paste.latencyMs} stage1_flush=${yesNo(paste.stage1Flushed)} chars=${paste.text.length} $script"
         val detail = response.trace.ifBlank { "first_token_ms=${response.firstTokenMs}" }
         if (paste.outcome == Stage2Outcome.SUCCESS) {
-            log(DiagnosticType.STAGE2_LIVE_SUCCESS, "$base model=${LivePolishProtocol.MODEL} $detail")
+            log(DiagnosticType.STAGE2_LIVE_SUCCESS, "$base model=$modelName $detail")
+            if (paste.latencyMs >= com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.SLOW_STAGE2_MS) {
+                log(
+                    DiagnosticType.NET_SLOW_WARN,
+                    "stage=stage2_polish latency_ms=${paste.latencyMs} threshold_ms=${com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.SLOW_STAGE2_MS} model=$modelName $detail"
+                )
+            }
             return
         }
         val reason = paste.error?.take(240) ?: "unknown"
         log(
             DiagnosticType.STAGE2_LIVE_FAILED,
-            "$base model=${LivePolishProtocol.MODEL} reason=$reason timed_out=${yesNo(paste.timedOut)} $detail"
+            "$base model=$modelName reason=$reason timed_out=${yesNo(paste.timedOut)} $detail"
+        )
+        log(
+            DiagnosticType.NET_FAILURE,
+            "stage=stage2_polish latency_ms=${paste.latencyMs} model=$modelName timed_out=${yesNo(paste.timedOut)} reason=$reason $detail"
         )
     }
 

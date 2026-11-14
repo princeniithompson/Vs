@@ -183,12 +183,6 @@ fun FloatingCollapsedBubble(
         Box(
             modifier = Modifier
                 .size(animatedBubbleSize)
-                .shadow(
-                    elevation = 4.dp,
-                    shape = CircleShape,
-                    ambientColor = Color.Black.copy(alpha = 0.28f),
-                    spotColor = Color.Black.copy(alpha = 0.28f)
-                )
                 .clip(CircleShape),
             contentAlignment = Alignment.Center
         ) {
@@ -275,13 +269,6 @@ fun FloatingCollapsedBubble(
                         contentDescription = "Floating voice bubble",
                         alpha = animatedAlpha,
                         modifier = Modifier.fillMaxSize()
-                    )
-                    // Dark center disc filling the hole (same color 0xFF111116, 56% of diameter)
-                    Box(
-                        modifier = Modifier
-                            .size(animatedImageSize * 0.56f)
-                            .clip(CircleShape)
-                            .background(Color(0xFF111116))
                     )
                 }
 

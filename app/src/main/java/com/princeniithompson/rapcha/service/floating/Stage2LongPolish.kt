@@ -8,7 +8,7 @@ import com.princeniithompson.rapcha.config.RapchaConfig
  * split into sentence-sized turns, and each turn is given time to speak.
  */
 object Stage2TranscriptChunker {
-    const val MAX_CHARS: Int = 1_400
+    const val MAX_CHARS: Int = 24_000
 
     fun chunks(raw: String): List<String> {
         val text = raw.trim()

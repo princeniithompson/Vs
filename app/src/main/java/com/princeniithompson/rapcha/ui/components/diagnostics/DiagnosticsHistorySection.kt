@@ -205,6 +205,11 @@ fun DiagnosticEntryRow(entry: DiagnosticLogEntry, timeFormat: SimpleDateFormat) 
         DiagnosticType.STAGE2_LIVE_FALLBACK -> Triple(DiagnosticsPalette.amberSoft, DiagnosticsPalette.amber, "LIVE2_RAW")
         DiagnosticType.POLISH_TRACE -> Triple(Color(0xFFE0E7FF), Color(0xFF4338CA), "TRACE")
         DiagnosticType.DELIVERY -> Triple(DiagnosticsPalette.amberSoft, DiagnosticsPalette.amber, "DELIVER")
+        DiagnosticType.DEVICE_INFO -> Triple(Color(0xFFDBEAFE), Color(0xFF1D4ED8), "DEVICE")
+        DiagnosticType.NET_STATE_CHANGE -> Triple(Color(0xFFE0F2FE), Color(0xFF0369A1), "NET_CHANGE")
+        DiagnosticType.NET_AIRPLANE_MODE -> Triple(DiagnosticsPalette.amberSoft, DiagnosticsPalette.amber, "AIRPLANE")
+        DiagnosticType.NET_SLOW_WARN -> Triple(DiagnosticsPalette.amberSoft, DiagnosticsPalette.amber, "NET_SLOW")
+        DiagnosticType.NET_FAILURE -> Triple(DiagnosticsPalette.redSoft, DiagnosticsPalette.red, "NET_FAIL")
     }
 
     val messageColor = if (
@@ -212,7 +217,8 @@ fun DiagnosticEntryRow(entry: DiagnosticLogEntry, timeFormat: SimpleDateFormat) 
         entry.type == DiagnosticType.POLISH_FAILED ||
         entry.type == DiagnosticType.CRASH ||
         entry.type == DiagnosticType.RETRY_FAILED ||
-        entry.type == DiagnosticType.STAGE2_LIVE_FAILED
+        entry.type == DiagnosticType.STAGE2_LIVE_FAILED ||
+        entry.type == DiagnosticType.NET_FAILURE
     ) {
         DiagnosticsPalette.red
     } else {

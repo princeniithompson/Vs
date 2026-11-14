@@ -171,6 +171,8 @@ class GeminiLiveWebSocketClient(
     private var committedPieces = 0
     private var maxPieceMs = 0L
     private var socketsOpened = 0
+    private var handshakeStartedMs = 0L
+    private var companionHandshakeStartedMs = 0L
     private var sawInterimPast223 = false
     private var companionSocket: WebSocket? = null
     private val companionReady = AtomicBoolean(false)
@@ -292,6 +294,7 @@ class GeminiLiveWebSocketClient(
             onLog(LogLevel.INFO, TAG, "Reconnecting WebSocket (attempt $attemptNum/$MAX_RECONNECT_ATTEMPTS) to $WS_BASE_URL ($activeModel)...", null)
         }
 
+        handshakeStartedMs = clock()
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (isExplicitlyClosed.get()) {
@@ -301,10 +304,18 @@ class GeminiLiveWebSocketClient(
                     return
                 }
 
+                val handshakeMs = (clock() - handshakeStartedMs).coerceAtLeast(0L)
+                val netTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag()
                 val currentLiveCount = activeSocketCount.incrementAndGet()
                 socketsOpened += 1
                 planner.onConnectionOpened(clock())
-                logDiag(DiagnosticType.SOCKET_OPEN, "connection_age_ms=0 sockets=$socketsOpened")
+                logDiag(DiagnosticType.SOCKET_OPEN, "connection_age_ms=0 sockets=$socketsOpened handshake_ms=$handshakeMs $netTag")
+                if (handshakeMs >= com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.SLOW_WS_HANDSHAKE_MS) {
+                    logDiag(
+                        DiagnosticType.NET_SLOW_WARN,
+                        "stage=stage1_ws_handshake latency_ms=$handshakeMs sockets=$socketsOpened $netTag"
+                    )
+                }
                 activeTurnText.clear()
                 if (!activityEnded.get()) {
                     activityStarted.set(false)
@@ -352,6 +363,11 @@ class GeminiLiveWebSocketClient(
                     onLog(LogLevel.INFO, TAG, "WebSocket closed cleanly (code: $code, reason: $reasonDetail)", null)
                     notifyStateChanged(ConnectionState.Idle)
                 } else {
+                    val netTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag()
+                    logDiag(
+                        DiagnosticType.SOCKET_CLOSE,
+                        "connection_age_ms=${planner.connectionAge(clock())} remote=yes code=$code reason=${reasonDetail.replace(' ', '_').take(80)} $netTag"
+                    )
                     handleDisconnectOrFailure("WebSocket closed (code: $code, reason: $reasonDetail)", null)
                 }
             }
@@ -365,6 +381,11 @@ class GeminiLiveWebSocketClient(
 
                 val primaryMsg = t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
                 val endedReason = DictationEndedReason.fromMessage(primaryMsg)
+                val netTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag()
+                logDiag(
+                    DiagnosticType.NET_FAILURE,
+                    "stage=stage1_ws attempt=${reconnectAttempts.get()} exception=${t.javaClass.simpleName} http=${response?.code ?: 0} ended_reason=$endedReason session_active=${isSessionActive()} reason=${primaryMsg.replace('\n', ' ').take(140)} $netTag"
+                )
 
                 val errorDetails = buildString {
                     append("ended_reason: $endedReason | WebSocket failure: ")
@@ -916,13 +937,14 @@ class GeminiLiveWebSocketClient(
     }
 
     private fun logMonitorEvent(event: InterimPreviewMonitor.Event) {
+        val netTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag()
         val (type, message) = when (event) {
             is InterimPreviewMonitor.Event.Stall -> DiagnosticType.INTERIM_STALL to
-                "no interimInputTranscription or inputTranscription for ${event.gapMs}ms while speech audio was streaming"
+                "no interimInputTranscription or inputTranscription for ${event.gapMs}ms while speech audio was streaming $netTag"
             is InterimPreviewMonitor.Event.Resumed -> DiagnosticType.INTERIM_RESUMED to
-                "live transcription resumed after ${event.gapMs}ms"
+                "live transcription resumed after ${event.gapMs}ms $netTag"
             is InterimPreviewMonitor.Event.Heartbeat -> DiagnosticType.SESSION_HEARTBEAT to
-                "interim_count=${event.interimCount} last_interim_age_ms=${event.lastInterimAgeMs} bytes_sent=${event.bytesSent} socket=${event.socketState}"
+                "interim_count=${event.interimCount} last_interim_age_ms=${event.lastInterimAgeMs} bytes_sent=${event.bytesSent} socket=${event.socketState} $netTag"
         }
         AppLogRepository.logEvent(diagnosticSource, type, message)
     }
@@ -1348,6 +1370,7 @@ class GeminiLiveWebSocketClient(
             Log.w(TAG, "Could not open the next live socket: ${e.message}")
             return
         }
+        companionHandshakeStartedMs = clock()
         companionSocket = client.newWebSocket(request, object : WebSocketListener() {
             private val opened = AtomicBoolean(false)
 
@@ -1357,10 +1380,18 @@ class GeminiLiveWebSocketClient(
                     companionOpening.set(false)
                     return
                 }
+                val handshakeMs = (clock() - companionHandshakeStartedMs).coerceAtLeast(0L)
+                val netTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag()
                 opened.set(true)
                 activeSocketCount.incrementAndGet()
                 socketsOpened += 1
-                logDiag(DiagnosticType.SOCKET_OPEN, "connection_age_ms=0 sockets=$socketsOpened")
+                logDiag(DiagnosticType.SOCKET_OPEN, "connection_age_ms=0 sockets=$socketsOpened companion=yes handshake_ms=$handshakeMs $netTag")
+                if (handshakeMs >= com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.SLOW_WS_HANDSHAKE_MS) {
+                    logDiag(
+                        DiagnosticType.NET_SLOW_WARN,
+                        "stage=stage1_companion_ws_handshake latency_ms=$handshakeMs sockets=$socketsOpened $netTag"
+                    )
+                }
                 sendSetup(webSocket)
             }
 
@@ -1386,9 +1417,14 @@ class GeminiLiveWebSocketClient(
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 val promoted = this@GeminiLiveWebSocketClient.webSocket === webSocket
                 if (opened.compareAndSet(true, false)) releaseActiveSocket()
+                val netTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag()
+                val detail = t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
+                logDiag(
+                    DiagnosticType.NET_FAILURE,
+                    "stage=stage1_companion_ws promoted=$promoted exception=${t.javaClass.simpleName} http=${response?.code ?: 0} reason=${detail.replace('\n', ' ').take(140)} $netTag"
+                )
                 if (promoted) {
-                    val message = t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
-                    handleDisconnectOrFailure("WebSocket failure: $message", t)
+                    handleDisconnectOrFailure("WebSocket failure: $detail", t)
                     return
                 }
                 companionReady.set(false)
@@ -1472,7 +1508,8 @@ class GeminiLiveWebSocketClient(
     private fun closeQuietly(socket: WebSocket?, ageMs: Long) {
         if (socket == null) return
         if (ageMs > 0L) {
-            logDiag(DiagnosticType.SOCKET_CLOSE, "connection_age_ms=$ageMs")
+            val netTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag()
+            logDiag(DiagnosticType.SOCKET_CLOSE, "connection_age_ms=$ageMs code=1000 reason=session_ended $netTag")
         }
         try {
             val count = releaseActiveSocket()

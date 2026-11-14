@@ -10,10 +10,13 @@ import org.junit.Test
 class Stage2LongPolishTest {
 
     @Test
-    fun `a long transcript is split and a short one stays one turn`() {
+    fun `a very long transcript is split above 24k chars and a normal one stays one turn`() {
         assertEquals(listOf("Send the note."), Stage2TranscriptChunker.chunks("Send the note."))
+        val medium = "Please polish this paragraph for the students. ".repeat(80).trim()
+        assertEquals(1, Stage2TranscriptChunker.chunks(medium).size)
+
         val sentence = "Please polish this paragraph for the students. "
-        val raw = sentence.repeat(80).trim()
+        val raw = sentence.repeat(700).trim()
         assertTrue(raw.length > Stage2TranscriptChunker.MAX_CHARS)
         val parts = Stage2TranscriptChunker.chunks(raw)
         assertTrue(parts.size > 1)

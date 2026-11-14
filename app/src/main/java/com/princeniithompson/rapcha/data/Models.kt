@@ -79,7 +79,12 @@ enum class DiagnosticType {
     STAGE2_LIVE_FAILED,
     STAGE2_LIVE_FALLBACK,
     POLISH_TRACE,
-    DELIVERY
+    DELIVERY,
+    DEVICE_INFO,
+    NET_STATE_CHANGE,
+    NET_AIRPLANE_MODE,
+    NET_SLOW_WARN,
+    NET_FAILURE
 }
 
 data class DiagnosticLogEntry(

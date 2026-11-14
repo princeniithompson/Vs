@@ -34,9 +34,13 @@ object RapchaConfig {
     const val TRANSCRIBE_MODEL: String = "gemini-3.5-transcribe"
 
     /**
-     * Stage-2 model when Live two-step is on. Text turn on the same
-     * BidiGenerateContent socket as transcription. The Polish button calls this
-     * model directly. It is not a unary flash model.
+     * Primary Stage-2 text polish model when Three-Step / Two-Step AI polish is active.
+     * Monitored against 15 RPM / 250K TPM / 500 RPD limits via PolishQuotaMonitor.
+     */
+    const val STAGE2_FLASH_LITE_MODEL: String = POLISH_PRIMARY_MODEL
+
+    /**
+     * Legacy/Diagnostic Stage-2 Live socket model.
      */
     const val STAGE2_LIVE_MODEL: String = "models/gemini-3.8-live"
 
@@ -54,7 +58,7 @@ object RapchaConfig {
     const val STAGE2_LIVE_TIMEOUT_MS: Long = 6_000L
 
     /** Return accumulated transcript this long after the last chunk if turnComplete is late. */
-    const val STAGE2_LIVE_IDLE_MS: Long = 700L
+    const val STAGE2_LIVE_IDLE_MS: Long = 3_500L
 
     /** Absolute cap while transcript chunks are still arriving. Not an empty wait. */
     const val STAGE2_LIVE_HARD_CAP_MS: Long = 12_000L

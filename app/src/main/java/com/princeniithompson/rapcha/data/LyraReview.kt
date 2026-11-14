@@ -143,7 +143,7 @@ object VoiceSessionBuilder {
         val lyra = lyraText?.trim().orEmpty()
         val lyraOk = aiLyra && lyra.isNotEmpty() && !sensitive && (!threeStep || smartCompleted)
         if (lyra.isNotEmpty() && !sensitive && (!threeStep || smartCompleted)) {
-            stages += TranscriptStage("lyra", if (aiLyra) "Lyra 3.8 final" else "3.8 Live final", lyra)
+            stages += TranscriptStage("lyra", if (aiLyra) "Lyra 3.5 final" else "Stage-2 final", lyra)
         }
         val note = when {
             threeStep && !smartCompleted -> LyraReviewPolicy.SMART_INCOMPLETE_NOTE
@@ -204,7 +204,7 @@ object VoiceSessionBuilder {
         val lyra = lyraText?.trim().orEmpty()
         val lyraProduced = usedLiveModel && aiLyra && lyra.isNotEmpty()
         if (usedLiveModel && lyra.isNotEmpty()) {
-            val label = if (aiLyra) "Lyra 3.8 final" else "3.8 Live final"
+            val label = if (aiLyra) "Lyra 3.5 final" else "Stage-2 final"
             stages += TranscriptStage("lyra", label, lyra)
         }
         val rawNote = if (usedLiveModel && lyra.isEmpty()) LyraReviewPolicy.LYRA_MISSING_NOTE else null

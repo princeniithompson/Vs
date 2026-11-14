@@ -1,0 +1,248 @@
+====================================================
+      RAPCHA DIAGNOSTICS & PROTOCOL MONITOR      
+      Unified Persistent Multi-Day Export           
+====================================================
+Export Date: 2026-11-13 15:19:04
+Device: samsung SM-A155F (a15) | Android 16 (API 36) | phone (sw384dp) | RAM=3669MB low_ram=no | App=bubble-redesign-20(20)
+Current Network: net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+Total Events: 215
+Total Notes: 0
+
+
+----------------------------------------------------
+                DIAGNOSTIC USER NOTES               
+----------------------------------------------------
+(No user notes recorded)
+
+
+----------------------------------------------------
+                 DIAGNOSTIC EVENTS                  
+----------------------------------------------------
+
+
+>>> DATE: Friday, November 13, 2026 <<<
+[2026-11-13 14:56:41] [APP] [DEVICE_INFO] samsung SM-A155F (a15) | Android 16 (API 36) | phone (sw384dp) | RAM=3669MB low_ram=no | App=bubble-redesign-20(20) | net=CELLULAR online=yes validated=yes captive=no metered=yes airplane=off down_kbps=4813 up_kbps=4813
+[2026-11-13 14:58:49] [APP] [NET_STATE_CHANGE] transition=CELLULAR->WIFI prev_net=CELLULAR curr_net=WIFI net=WIFI online=yes validated=yes captive=no metered=no airplane=off down_kbps=30000 up_kbps=12000
+[2026-11-13 14:59:04] [APP] [NET_STATE_CHANGE] transition=ONLINE->OFFLINE prev_net=WIFI curr_net=NONE net=NONE online=no validated=no captive=no metered=no airplane=off down_kbps=0 up_kbps=0
+[2026-11-13 14:59:30] [APP] [DEVICE_INFO] samsung SM-A155F (a15) | Android 16 (API 36) | phone (sw384dp) | RAM=3669MB low_ram=no | App=bubble-redesign-20(20) | net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 14:59:30] [APP] [PROCESS_EXIT] process_exit reason=OTHER description=[ISOLATED NOT NEEDED] isolated not needed timestamp=1794581949529
+[2026-11-13 14:59:30] [APP] [PROCESS_EXIT] process_exit reason=LOW_MEMORY description= timestamp=1794581949530
+[2026-11-13 15:02:55] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:03:00] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=68
+[2026-11-13 15:03:29] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=147
+[2026-11-13 15:03:29] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=52
+[2026-11-13 15:03:29] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:03:29] [BUBBLE] [BUBBLE_SHOWN] latency_ms=3
+[2026-11-13 15:03:38] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:03:38] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=2
+[2026-11-13 15:03:40] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=54
+[2026-11-13 15:03:40] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:03:40] [BUBBLE] [BUBBLE_SHOWN] latency_ms=0
+[2026-11-13 15:03:43] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:03:43] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A155F form=phone android=16_sdk36 ram_mb=3669 low_ram=no net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000 section_lock=SMART category=OTHER app=One UI Home override=auto three_step=no quota_ok=yes rpm=0/15 rpd=0/500 stage1=VERBATIM stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 15:03:43] [BUBBLE] [SESSION_START] Mode: VERBATIM, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 15:03:44] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=1118 net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:03:58] [BUBBLE] [TRANSCRIPT_FINAL] 11 words, 58 chars, preview="So the flow is working and text injection is also working."
+[2026-11-13 15:03:58] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=13105 code=1000 reason=session_ended net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:03:58] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket is closed net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:03:58] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 13s, Chunks: 129, Streamed: 403 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=22 max_interim_gap_ms=4684 finalize_latency_ms=714
+[2026-11-13 15:03:58] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=503
+[2026-11-13 15:03:59] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.sec.android.app.launcher
+[2026-11-13 15:04:06] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=89
+[2026-11-13 15:04:25] [BUBBLE] [A11Y_EVENT] type=8192 processing_ms=93
+[2026-11-13 15:04:25] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:04:25] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=22
+[2026-11-13 15:04:25] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=90
+[2026-11-13 15:04:46] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=202
+[2026-11-13 15:04:47] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=50
+[2026-11-13 15:04:50] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=159
+[2026-11-13 15:04:54] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:04:54] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 15:04:55] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:04:55] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A155F form=phone android=16_sdk36 ram_mb=3669 low_ram=no net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000 section_lock=SMART category=MESSAGE app=WhatsApp Business override=auto three_step=no quota_ok=yes rpm=0/15 rpd=0/500 stage1=VERBATIM stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 15:04:55] [BUBBLE] [SESSION_START] Mode: VERBATIM, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 15:04:56] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=1039 net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:05:00] [BUBBLE] [TRANSCRIPT_FINAL] 7 words, 32 chars, preview="Okay, I will be there very soon."
+[2026-11-13 15:05:00] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=4351 code=1000 reason=session_ended net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:05:00] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket closed net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:05:00] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 4s, Chunks: 40, Streamed: 125 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=5 max_interim_gap_ms=3405 finalize_latency_ms=606
+[2026-11-13 15:05:01] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.whatsapp.w4b
+[2026-11-13 15:05:15] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=56
+[2026-11-13 15:05:16] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=366
+[2026-11-13 15:05:16] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:05:16] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=8
+[2026-11-13 15:06:27] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=89
+[2026-11-13 15:06:33] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=83
+[2026-11-13 15:06:42] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=68
+[2026-11-13 15:06:42] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:06:42] [BUBBLE] [BUBBLE_SHOWN] latency_ms=3
+[2026-11-13 15:06:51] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:06:51] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=4
+[2026-11-13 15:06:52] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:06:52] [BUBBLE] [BUBBLE_SHOWN] latency_ms=2
+[2026-11-13 15:06:55] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=76
+[2026-11-13 15:06:55] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:06:55] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=3
+[2026-11-13 15:06:55] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=96
+[2026-11-13 15:07:02] [BUBBLE] [A11Y_EVENT] type=8 processing_ms=56
+[2026-11-13 15:07:02] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:07:02] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 15:07:10] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:07:10] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=2
+[2026-11-13 15:07:10] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=81
+[2026-11-13 15:07:16] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=135
+[2026-11-13 15:07:16] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:07:16] [BUBBLE] [BUBBLE_SHOWN] latency_ms=2
+[2026-11-13 15:07:35] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:07:35] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=18
+[2026-11-13 15:07:35] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=163
+[2026-11-13 15:08:01] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=147
+[2026-11-13 15:08:01] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:08:01] [BUBBLE] [BUBBLE_SHOWN] latency_ms=3
+[2026-11-13 15:08:05] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:08:05] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=4
+[2026-11-13 15:08:08] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=156
+[2026-11-13 15:08:08] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:08:08] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 15:08:10] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=51
+[2026-11-13 15:08:12] [BUBBLE] [A11Y_EVENT] type=8192 processing_ms=80
+[2026-11-13 15:08:57] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:08:57] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A155F form=phone android=16_sdk36 ram_mb=3669 low_ram=no net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000 section_lock=SMART category=MESSAGE app=WhatsApp Business override=auto three_step=no quota_ok=yes rpm=0/15 rpd=0/500 stage1=VERBATIM stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 15:08:57] [BUBBLE] [SESSION_START] Mode: VERBATIM, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 15:08:58] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=1096 net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:09:03] [BUBBLE] [TRANSCRIPT_FINAL] 10 words, 49 chars, preview="So, the flow turbo is not showing in some places."
+[2026-11-13 15:09:03] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=5282 code=1000 reason=session_ended net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:09:03] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 5s, Chunks: 50, Streamed: 156 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=8 max_interim_gap_ms=2716 finalize_latency_ms=654
+[2026-11-13 15:09:03] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket is closed net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:09:04] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.whatsapp.w4b
+[2026-11-13 15:09:20] [BUBBLE] [A11Y_EVENT] type=16 processing_ms=50
+[2026-11-13 15:09:31] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:09:31] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A155F form=phone android=16_sdk36 ram_mb=3669 low_ram=no net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000 section_lock=SMART category=MESSAGE app=WhatsApp Business override=auto three_step=no quota_ok=yes rpm=0/15 rpd=0/500 stage1=VERBATIM stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 15:09:31] [BUBBLE] [SESSION_START] Mode: VERBATIM, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 15:09:32] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=1011 net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:09:37] [BUBBLE] [TRANSCRIPT_FINAL] 10 words, 53 chars, preview="Look, this soda bubble is not showing in some places."
+[2026-11-13 15:09:37] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=4996 code=1000 reason=session_ended net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:09:37] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket is closed net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:09:37] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 5s, Chunks: 50, Streamed: 156 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=7 max_interim_gap_ms=2665 finalize_latency_ms=699
+[2026-11-13 15:09:38] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.whatsapp.w4b
+[2026-11-13 15:09:54] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=268
+[2026-11-13 15:09:54] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:09:54] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=2
+[2026-11-13 15:10:27] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=93
+[2026-11-13 15:10:27] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:10:27] [BUBBLE] [BUBBLE_SHOWN] latency_ms=0
+[2026-11-13 15:11:01] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:11:01] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A155F form=phone android=16_sdk36 ram_mb=3669 low_ram=no net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000 section_lock=SMART category=OTHER app=One UI Home override=auto three_step=no quota_ok=yes rpm=0/15 rpd=0/500 stage1=VERBATIM stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 15:11:01] [BUBBLE] [SESSION_START] Mode: VERBATIM, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 15:11:02] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=982 net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:11:19] [BUBBLE] [TRANSCRIPT_FINAL] 34 words, 187 chars, preview="The floating bubble the floating bubble is not showing in so…"
+[2026-11-13 15:11:19] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=17061 code=1000 reason=session_ended net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:11:19] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 17s, Chunks: 169, Streamed: 528 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=31 max_interim_gap_ms=3056 finalize_latency_ms=677
+[2026-11-13 15:11:19] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket is closed net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:11:19] [BUBBLE] [A11Y_EVENT] type=16 processing_ms=57
+[2026-11-13 15:11:21] [BUBBLE] [MAIN_THREAD_STALL] late_ms=1155
+[2026-11-13 15:11:21] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.sec.android.app.launcher
+[2026-11-13 15:11:30] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=218
+[2026-11-13 15:11:35] [BUBBLE] [A11Y_EVENT] type=8192 processing_ms=61
+[2026-11-13 15:11:35] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:11:35] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=8
+[2026-11-13 15:11:55] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=59
+[2026-11-13 15:12:06] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=188
+[2026-11-13 15:12:06] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=53
+[2026-11-13 15:12:06] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:12:06] [BUBBLE] [BUBBLE_SHOWN] latency_ms=3
+[2026-11-13 15:12:08] [BUBBLE] [A11Y_EVENT] type=8192 processing_ms=52
+[2026-11-13 15:12:09] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=52
+[2026-11-13 15:12:10] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=53
+[2026-11-13 15:12:13] [BUBBLE] [A11Y_EVENT] type=8192 processing_ms=113
+[2026-11-13 15:12:13] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=50
+[2026-11-13 15:12:16] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:12:16] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=0
+[2026-11-13 15:12:17] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:12:17] [BUBBLE] [BUBBLE_SHOWN] latency_ms=0
+[2026-11-13 15:12:19] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:12:19] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A155F form=phone android=16_sdk36 ram_mb=3669 low_ram=no net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000 section_lock=SMART category=MESSAGE app=WhatsApp Business override=auto three_step=no quota_ok=yes rpm=0/15 rpd=0/500 stage1=SMART stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 15:12:19] [BUBBLE] [SESSION_START] Mode: SMART, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 15:12:20] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=1144 net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:12:43] [BUBBLE] [TRANSCRIPT_FINAL] 46 words, 270 chars, preview="Sometimes the floating bubble does not show up, and this bui…"
+[2026-11-13 15:12:43] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=22520 code=1000 reason=session_ended net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:12:43] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket closed net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:12:43] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 22s, Chunks: 222, Streamed: 693 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=42 max_interim_gap_ms=3494 finalize_latency_ms=765
+[2026-11-13 15:12:43] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.whatsapp.w4b
+[2026-11-13 15:13:04] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:13:04] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=8
+[2026-11-13 15:13:06] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=223
+[2026-11-13 15:13:24] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=97
+[2026-11-13 15:13:24] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=59
+[2026-11-13 15:13:25] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=153
+[2026-11-13 15:13:25] [BUBBLE] [A11Y_EVENT] type=32 processing_ms=62
+[2026-11-13 15:13:26] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=52
+[2026-11-13 15:13:28] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=110
+[2026-11-13 15:13:29] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:13:29] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 15:13:35] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:13:35] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A155F form=phone android=16_sdk36 ram_mb=3669 low_ram=no net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000 section_lock=SMART category=OTHER app=One UI Home override=auto three_step=no quota_ok=yes rpm=0/15 rpd=0/500 stage1=SMART stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 15:13:35] [BUBBLE] [SESSION_START] Mode: SMART, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 15:13:36] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=1152 net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:13:40] [BUBBLE] [TRANSCRIPT_FINAL] 2 words, 14 chars, preview="Google Photos."
+[2026-11-13 15:13:40] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=4435 code=1000 reason=session_ended net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:13:40] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket closed net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:13:40] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 4s, Chunks: 34, Streamed: 106 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=4 max_interim_gap_ms=4719 finalize_latency_ms=1401
+[2026-11-13 15:13:41] [BUBBLE] [A11Y_EVENT] type=16 processing_ms=555
+[2026-11-13 15:13:41] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.sec.android.app.launcher
+[2026-11-13 15:13:41] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=62
+[2026-11-13 15:13:50] [BUBBLE] [A11Y_EVENT] type=16 processing_ms=67
+[2026-11-13 15:13:50] [BUBBLE] [A11Y_EVENT] type=16 processing_ms=79
+[2026-11-13 15:13:53] [BUBBLE] [A11Y_EVENT] type=8192 processing_ms=147
+[2026-11-13 15:13:53] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:13:53] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=20
+[2026-11-13 15:13:53] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=228
+[2026-11-13 15:14:46] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=222
+[2026-11-13 15:14:54] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=103
+[2026-11-13 15:14:54] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:14:54] [BUBBLE] [BUBBLE_SHOWN] latency_ms=3
+[2026-11-13 15:14:56] [BUBBLE] [A11Y_EVENT] type=8192 processing_ms=83
+[2026-11-13 15:15:01] [BUBBLE] [BUBBLE_TAP] keyboard=true field=true recording=false outcome=starting_session net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:15:01] [BUBBLE] [SESSION_START] build=bubble-redesign-20 code=20 commit=imported device=samsung_SM-A155F form=phone android=16_sdk36 ram_mb=3669 low_ram=no net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000 section_lock=SMART category=MESSAGE app=WhatsApp Business override=auto three_step=no quota_ok=yes rpm=0/15 rpd=0/500 stage1=SMART stage1_model=models/gemini-3.5-transcribe-live stage2_model=none
+[2026-11-13 15:15:01] [BUBBLE] [SESSION_START] Mode: SMART, Model: models/gemini-3.5-transcribe-live
+[2026-11-13 15:15:02] [BUBBLE] [SOCKET_OPEN] connection_age_ms=0 sockets=1 handshake_ms=761 net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:15:24] [BUBBLE] [TRANSCRIPT_FINAL] 28 words, 147 chars, preview="It is going to write perfectly, and even when I make mistake…"
+[2026-11-13 15:15:24] [BUBBLE] [SOCKET_CLOSE] connection_age_ms=22141 code=1000 reason=session_ended net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:15:24] [BUBBLE] [SESSION_END] ended_reason: completed | Duration: 22s, Chunks: 215, Streamed: 671 KB | pieces=1 max_piece_s=0 interim_past_223s=no sockets=1 fresh_mode=no | interim_count=41 max_interim_gap_ms=3012 finalize_latency_ms=707
+[2026-11-13 15:15:24] [BUBBLE] [NET_FAILURE] stage=stage1_ws attempt=10 exception=SocketException http=0 ended_reason=connection_drop session_active=false reason=Socket closed net=WIFI online=yes validated=yes captive=no metered=yes airplane=off down_kbps=60000 up_kbps=12000
+[2026-11-13 15:15:25] [BUBBLE] [TEXT_INSERTED] method=commitText package=com.whatsapp.w4b
+[2026-11-13 15:15:48] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:15:48] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=0
+[2026-11-13 15:15:50] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=87
+[2026-11-13 15:15:51] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:15:51] [BUBBLE] [BUBBLE_SHOWN] latency_ms=3
+[2026-11-13 15:15:52] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=62
+[2026-11-13 15:15:52] [BUBBLE] [A11Y_EVENT] type=8192 processing_ms=77
+[2026-11-13 15:16:01] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:16:01] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+[2026-11-13 15:16:28] [BUBBLE] [A11Y_EVENT] type=4194304 processing_ms=155
+[2026-11-13 15:18:32] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=103
+[2026-11-13 15:18:33] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:18:33] [BUBBLE] [BUBBLE_SHOWN] latency_ms=2
+[2026-11-13 15:18:42] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:18:42] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=2
+[2026-11-13 15:18:45] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=74
+[2026-11-13 15:18:45] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:18:45] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 15:18:48] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:18:48] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=2
+[2026-11-13 15:18:50] [BUBBLE] [A11Y_EVENT] type=1 processing_ms=66
+[2026-11-13 15:18:50] [BUBBLE] [KEYBOARD_SHOWN] ime=true
+[2026-11-13 15:18:50] [BUBBLE] [BUBBLE_SHOWN] latency_ms=1
+[2026-11-13 15:18:51] [BUBBLE] [KEYBOARD_HIDDEN] ime=false
+[2026-11-13 15:18:51] [BUBBLE] [BUBBLE_HIDDEN] latency_ms=1
+
+
+----------------------------------------------------
+                     LYRA_REVIEW                     
+----------------------------------------------------
+up=0 down=0 unrated=0
+(No Lyra sessions)
+
+
+==================== END OF EXPORT ====================

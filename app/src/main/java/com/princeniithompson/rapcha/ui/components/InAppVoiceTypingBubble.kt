@@ -110,15 +110,23 @@ fun InAppVoiceTypingBubble(
 
     val onStartDictation = {
         if (!isRecording) {
-            val hasPermission = androidx.core.content.ContextCompat.checkSelfPermission(
-                context,
-                android.Manifest.permission.RECORD_AUDIO
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-
-            if (hasPermission) {
-                viewModel.startRecording()
+            if (!viewModel.isApiKeyConfigured()) {
+                Toast.makeText(
+                    context,
+                    "Gemini API key is required. Add your key in Settings or Diagnostics.",
+                    Toast.LENGTH_LONG
+                ).show()
             } else {
-                permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                val hasPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                    context,
+                    android.Manifest.permission.RECORD_AUDIO
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+                if (hasPermission) {
+                    viewModel.startRecording()
+                } else {
+                    permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                }
             }
         }
     }

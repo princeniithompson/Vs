@@ -95,10 +95,36 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         com.princeniithompson.rapcha.service.FloatingBubbleManager.setFinishingStyle(getApplication(), styleId)
     }
 
+    val signedInGoogleEmail: StateFlow<String> = com.princeniithompson.rapcha.core.ApiKeyVault.googleEmailFlow
+    val provisionedApiKey: StateFlow<String> = com.princeniithompson.rapcha.core.ApiKeyVault.userApiKeyFlow
+
+    private val prefsKeyListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { sharedPrefs, key ->
+        if (key == com.princeniithompson.rapcha.core.ApiKeyVault.KEY_CUSTOM_API_KEY) {
+            val latest = sharedPrefs.getString(key, "")?.trim().orEmpty()
+            if (_customApiKey.value != latest) {
+                _customApiKey.value = latest
+            }
+        }
+    }
+
     init {
-        val savedKey = prefs.getString(KEY_CUSTOM_API_KEY, "") ?: ""
-        if (savedKey.isNotBlank()) {
-            _customApiKey.value = savedKey
+        com.princeniithompson.rapcha.core.ApiKeyVault.init(application)
+        val savedKey = prefs.getString(KEY_CUSTOM_API_KEY, "")?.trim().orEmpty()
+        val vaultKey = com.princeniithompson.rapcha.core.ApiKeyVault.currentUserApiKey.trim()
+        val initialKey = when {
+            savedKey.isNotBlank() && !com.princeniithompson.rapcha.core.ApiConfig.isPlaceholder(savedKey) -> savedKey
+            vaultKey.isNotBlank() && !com.princeniithompson.rapcha.core.ApiConfig.isPlaceholder(vaultKey) -> vaultKey
+            else -> ""
+        }
+        _customApiKey.value = initialKey
+        prefs.registerOnSharedPreferenceChangeListener(prefsKeyListener)
+        viewModelScope.launch {
+            com.princeniithompson.rapcha.core.ApiKeyVault.userApiKeyFlow.collect { key ->
+                val clean = key.trim()
+                if (clean != _customApiKey.value) {
+                    _customApiKey.value = clean
+                }
+            }
         }
         com.princeniithompson.rapcha.data.AppLogRepository.init(application)
         com.princeniithompson.rapcha.service.FloatingBubbleManager.init(application)
@@ -328,9 +354,69 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
     fun setCustomApiKey(key: String) {
         val trimmed = key.trim()
-        _customApiKey.value = trimmed
-        prefs.edit().putString(KEY_CUSTOM_API_KEY, trimmed).apply()
-        addLog(LogLevel.INFO, TAG, "Custom API key updated")
+        if (com.princeniithompson.rapcha.core.ApiConfig.isPlaceholder(trimmed)) {
+            _customApiKey.value = ""
+            prefs.edit().remove(KEY_CUSTOM_API_KEY).apply()
+            com.princeniithompson.rapcha.core.ApiKeyVault.clearInMemoryKeyNow()
+            viewModelScope.launch {
+                com.princeniithompson.rapcha.core.ApiKeyVault.clearUserKeyOnly(getApplication())
+            }
+            addLog(LogLevel.INFO, TAG, "Custom API key cleared")
+        } else {
+            _customApiKey.value = trimmed
+            prefs.edit().putString(KEY_CUSTOM_API_KEY, trimmed).apply()
+            viewModelScope.launch {
+                com.princeniithompson.rapcha.core.ApiKeyVault.syncManualKey(getApplication(), trimmed)
+            }
+            addLog(LogLevel.INFO, TAG, "API key updated")
+        }
+    }
+
+    fun tryAutoInjectFromClipboard(): Boolean {
+        if (isApiKeyConfigured()) return false
+        return try {
+            val app = getApplication<Application>()
+            val cm = app.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
+            val clip = cm.primaryClip ?: return false
+            var extracted: String? = null
+            for (i in 0 until clip.itemCount) {
+                val txt = clip.getItemAt(i)?.coerceToText(app)?.toString()?.trim().orEmpty()
+                extracted = com.princeniithompson.rapcha.core.ApiKeyFormat.extractFirstGeminiKey(txt)
+                if (extracted != null) break
+            }
+            val found = extracted ?: return false
+            setCustomApiKey(found)
+            try {
+                val masked = "\u2022".repeat(found.length.coerceIn(24, 40))
+                val maskedClip = ClipData.newPlainText("API Key", masked).apply {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        description.extras = android.os.PersistableBundle().apply {
+                            putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+                        }
+                    }
+                }
+                cm.setPrimaryClip(maskedClip)
+            } catch (_: Throwable) {
+            }
+            addLog(LogLevel.INFO, TAG, "API key automatically injected from clipboard")
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    fun hasProvisionedPersonalKey(): Boolean {
+        return com.princeniithompson.rapcha.core.ApiKeyVault.hasUserApiKey() ||
+            !com.princeniithompson.rapcha.core.ApiConfig.isPlaceholder(_customApiKey.value)
+    }
+
+    fun clearProvisionedCredentialsForAccountSwitch() {
+        _customApiKey.value = ""
+        prefs.edit().remove(KEY_CUSTOM_API_KEY).apply()
+        com.princeniithompson.rapcha.core.ApiKeyVault.clearInMemoryKeyNow()
+        viewModelScope.launch {
+            com.princeniithompson.rapcha.core.ApiKeyVault.clearUserCredentials(getApplication())
+        }
     }
 
     fun setSelectedModel(model: String) {
@@ -380,6 +466,22 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
     fun startRecording() {
         if (_isRecording.value) return
 
+        val requiredApiKey = effectiveApiKey
+        if (com.princeniithompson.rapcha.core.ApiConfig.isPlaceholder(requiredApiKey)) {
+            addLog(LogLevel.ERROR, TAG, "Blocked recording: Gemini API key is required.")
+            com.princeniithompson.rapcha.data.AppLogRepository.updateLiveStats {
+                it.copy(
+                    source = com.princeniithompson.rapcha.data.DiagnosticSource.APP,
+                    lastError = "Gemini API key is required."
+                )
+            }
+            com.princeniithompson.rapcha.data.AppLogRepository.updateConnectionState(
+                ConnectionState.Error("Gemini API key is required. Add your key in Settings or Diagnostics."),
+                com.princeniithompson.rapcha.data.DiagnosticSource.APP
+            )
+            return
+        }
+
         sessionEndLogged.set(false)
         connectionLostHapticSent = false
         inAppStage1Dropped = false
@@ -417,11 +519,24 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         val smartForSession = effectiveSmartMode
         val modeLabel = if (smartForSession) "SMART" else "VERBATIM"
         val stage2Label = if (_liveTwoStepPolish.value) "live" else "non_live"
-        addLog(LogLevel.INFO, TAG, "Starting voice typing session ($modeLabel mode, stage2=$stage2Label). Key configured: ${isApiKeyConfigured()}")
+        val appCtx = getApplication<Application>()
+        com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.initContext(appCtx)
+        val offlineReason = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.checkOfflineOrAirplaneReason(appCtx)
+        if (offlineReason != null) {
+            com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.recordNetworkFailure(
+                source = com.princeniithompson.rapcha.data.DiagnosticSource.APP,
+                stage = "session_start",
+                reason = "starting_while_$offlineReason",
+                context = appCtx
+            )
+        }
+        val deviceTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.compactDeviceTag(appCtx)
+        val netTag = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag(appCtx)
+        addLog(LogLevel.INFO, TAG, "Starting voice typing session ($modeLabel mode, stage2=$stage2Label). Key configured: ${isApiKeyConfigured()} | $netTag")
         com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
             com.princeniithompson.rapcha.data.DiagnosticSource.APP,
             com.princeniithompson.rapcha.data.DiagnosticType.SESSION_START,
-            "Mode: $modeLabel, Model: ${_selectedModel.value}, stage2=$stage2Label"
+            "Mode: $modeLabel, Model: ${_selectedModel.value}, stage2=$stage2Label $deviceTag $netTag"
         )
 
         // 1. Immediately start AudioRecord on Dispatchers.IO to capture speech without clipping
@@ -571,7 +686,8 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
         } else {
             currentTranscript()
         }
-        if (raw.isBlank() || !_liveTwoStepPolish.value) return raw
+        val quotaAvailable = com.princeniithompson.rapcha.service.floating.PolishQuotaMonitor.isPrimaryAvailable(getApplication())
+        if (raw.isBlank() || !_liveTwoStepPolish.value || !quotaAvailable || !isApiKeyConfigured()) return raw
         val dropped = inAppStage1Dropped
         inAppStage1Dropped = false
         return try {
@@ -582,7 +698,8 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
                     protectedTerms = com.princeniithompson.rapcha.data.CustomVocabularyRepository.getVocabulary(),
                     stage1Dropped = dropped,
                     apiKey = effectiveApiKey,
-                    model = LiveTextPolishClient(),
+                    model = com.princeniithompson.rapcha.service.floating.FlashLiteTextPolishClient(getApplication()),
+                    modelName = com.princeniithompson.rapcha.config.RapchaConfig.STAGE2_FLASH_LITE_MODEL,
                     log = { type, message ->
                         com.princeniithompson.rapcha.data.AppLogRepository.logEvent(
                             DiagnosticSource.APP,
@@ -719,6 +836,10 @@ class VoiceTypingViewModel(application: Application) : AndroidViewModel(applicat
 
     override fun onCleared() {
         super.onCleared()
+        try {
+            prefs.unregisterOnSharedPreferenceChangeListener(prefsKeyListener)
+        } catch (_: Throwable) {
+        }
         audioRecorder.stop()
         webSocketClient.disconnect()
         durationJob?.cancel()

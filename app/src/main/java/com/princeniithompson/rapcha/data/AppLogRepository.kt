@@ -32,7 +32,15 @@ object AppLogRepository {
 
     @Volatile
     private var appContext: Context? = null
+    @Volatile
+    private var cachedDeviceSummary: String? = null
     private var isInitialized = false
+
+    fun setDeviceSummary(summary: String) {
+        if (summary.isNotBlank()) {
+            cachedDeviceSummary = summary
+        }
+    }
 
     // Multi-day persistent log entries (newest first for display)
     private val _diagnosticEntries = MutableStateFlow<List<DiagnosticLogEntry>>(emptyList())
@@ -97,7 +105,10 @@ object AppLogRepository {
 
     fun init(context: Context) {
         if (isInitialized && appContext != null) return
-        appContext = context.applicationContext
+        val app = context.applicationContext ?: context
+        appContext = app
+        com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.initContext(app)
+        cachedDeviceSummary = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.deviceExportSummary(app)
         isInitialized = true
         loadFromDisk()
     }
@@ -277,6 +288,9 @@ object AppLogRepository {
 
         val entries = _diagnosticEntries.value.sortedBy { it.timestamp }
         val allNotes = _notes.value.sortedBy { it.timestamp }
+        val deviceLine = cachedDeviceSummary
+            ?: com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.deviceExportSummary(appContext)
+        val networkLine = com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics.currentTag(appContext)
 
         return buildString {
             append("====================================================\n")
@@ -284,6 +298,8 @@ object AppLogRepository {
             append("      Unified Persistent Multi-Day Export           \n")
             append("====================================================\n")
             append("Export Date: ${sdf.format(Date())}\n")
+            append("Device: $deviceLine\n")
+            append("Current Network: $networkLine\n")
             append("Total Events: ${entries.size}\n")
             append("Total Notes: ${allNotes.size}\n\n")
 

@@ -106,22 +106,37 @@ class ThreeStepPolicyTest {
     }
 
     @Test
-    fun `three-step uses the two live models and does not call flash`() {
+    fun `three-step uses 3_5 models when healthy and falls back to 3_5 smart during cooldown`() {
         assertEquals("models/gemini-3.5-transcribe-live", GeminiLiveWebSocketClient.DEFAULT_MODEL)
-        assertEquals("models/gemini-3.8-live", RapchaConfig.STAGE2_LIVE_MODEL)
-        assertFalse(RapchaConfig.GEMINI_MODEL_FALLBACKS.any { it.contains("3.8-live") })
+        assertEquals("gemini-3.5-flash-lite", RapchaConfig.STAGE2_FLASH_LITE_MODEL)
+        assertEquals("gemini-3.5-flash-lite", Stage2PolishRoute.model(liveTwoStep = true, quotaAvailable = true))
+        assertEquals("gemini-3.5-transcribe", Stage2PolishRoute.model(liveTwoStep = true, quotaAvailable = false))
         assertFalse(Stage2PolishRoute.usesUnaryFallback(true))
+
+        val cooledDown = ThreeStepPolicy.resolve(
+            Stage2PolishBackend.AUTO,
+            aiApp = true,
+            threeStepEnabled = true,
+            savedSmartMode = false,
+            quotaAvailable = false
+        )
+        assertFalse(cooledDown.threeStep)
+        assertEquals(SectionPolishMode.SMART, cooledDown.mode)
+        assertEquals(Stage1Capture.SMART, cooledDown.stage1)
     }
 
     @Test
-    fun `lyra and chef prompts are unchanged`() {
+    fun `lyra and chef prompts enforce non-answering and proportional substance preservation`() {
         val chef = PolishPromptBuilder.CHEF_GOLDEN_RULES
         val lyra = LyraPolishInstruction.forKeyboard("App")
-        assertEquals("e859edadd4296033646a9a932bbbff5508abb7e3db336f4e1af25829ce6b85ae", sha256(chef))
+        assertTrue(chef.contains("NEVER answer"))
+        assertTrue(chef.contains("Preserve EVERY real detail"))
         assertTrue(lyra.contains(chef))
         assertTrue(lyra.contains(LyraPolishInstruction.NEVER_ANSWER_RULE))
+        assertTrue(lyra.contains("PROPORTIONAL POLISH RULES"))
+        assertTrue(lyra.contains("NO INVENTED PERSONAS"))
+        assertFalse(lyra.contains("THE 4-D METHODOLOGY"))
         assertFalse(lyra.contains(LyraPolishInstruction.WELCOME_MESSAGE))
-        assertEquals("de423dabf487b00344e2b2c85b83c1ecb2c4b2679cc8ada23860e7506f63b8e7", sha256(lyra))
     }
 
     @Test

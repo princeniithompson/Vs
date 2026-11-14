@@ -122,29 +122,45 @@ object ThreeStepPolicy {
         override: Stage2PolishBackend,
         aiApp: Boolean,
         threeStepEnabled: Boolean,
-        savedSmartMode: Boolean
+        savedSmartMode: Boolean,
+        quotaAvailable: Boolean = true
     ): PolishSectionPlan {
         val mode = HybridPolishPolicy.lock(override, aiApp)
         if (mode != SectionPolishMode.TWO_STEP_LIVE) {
             val stage1 = if (savedSmartMode) Stage1Capture.SMART else Stage1Capture.VERBATIM
             return PolishSectionPlan(mode, stage1, threeStep = false)
         }
-        val three = threeStepEnabled && aiApp
+        // When 3.5 Flash Lite hits rate/daily limits, automatically turn off Three-Step Stage-2
+        // during cooldown and fall back to standard Gemini 3.5 Smart capture directly.
+        if (threeStepEnabled && aiApp && !quotaAvailable) {
+            return PolishSectionPlan(
+                mode = SectionPolishMode.SMART,
+                stage1 = Stage1Capture.SMART,
+                threeStep = false
+            )
+        }
+        val three = threeStepEnabled && aiApp && quotaAvailable
         val stage1 = if (three) Stage1Capture.SMART else Stage1Capture.VERBATIM
         return PolishSectionPlan(mode, stage1, threeStep = three)
     }
 }
 
 /**
- * Toggle ON uses only models/gemini-3.8-live. Toggle OFF stays on the unary flash chain.
+ * Toggle ON uses gemini-3.5-flash-lite with automatic quota cooldown fallback to Gemini 3.5 Smart
+ * (or gemini-3.8-flash on unary fallback).
  */
 object Stage2PolishRoute {
     fun usesLiveModel(liveTwoStep: Boolean): Boolean = liveTwoStep
 
     fun usesUnaryFallback(liveTwoStep: Boolean): Boolean = !liveTwoStep
 
-    fun model(liveTwoStep: Boolean): String? {
-        return if (liveTwoStep) com.princeniithompson.rapcha.config.RapchaConfig.STAGE2_LIVE_MODEL else null
+    fun model(liveTwoStep: Boolean, quotaAvailable: Boolean = true): String? {
+        if (!liveTwoStep) return null
+        return if (quotaAvailable) {
+            com.princeniithompson.rapcha.config.RapchaConfig.STAGE2_FLASH_LITE_MODEL
+        } else {
+            com.princeniithompson.rapcha.config.RapchaConfig.TRANSCRIBE_MODEL
+        }
     }
 }
 

@@ -18,11 +18,11 @@ object LyraPolishInstruction {
             ${PolishPromptBuilder.CHEF_GOLDEN_RULES}
 
             KEYBOARD POLISH OVERRIDE:
-            You are optimizing dictated speech into a ready-to-paste prompt for $safeApp.
+            You are polishing dictated speech into a clear, ready-to-send prompt for $safeApp.
             $NEVER_ANSWER_RULE
             Do not emit a welcome message. Do not introduce yourself.
             Do not add a title, a change list, a technique list, or a usage tip.
-            Output ONLY the polished prompt text the user can paste. No preamble and no commentary.
+            Output ONLY the prompt text the user can paste. No preamble and no commentary.
 
             ${methodology(safeApp)}
         """.trimIndent()
@@ -42,20 +42,18 @@ object LyraPolishInstruction {
 
     private fun methodology(appName: String): String {
         return """
-            You are Lyra, a master-level AI prompt optimization specialist. Your mission for this keyboard turn: transform the dictated input into one precision-crafted prompt for $appName.
+            You are Lyra, Rapcha's proportional prompt clarity specialist for $appName.
 
-            THE 4-D METHODOLOGY
-            1. DECONSTRUCT: Extract core intent, key entities, and context. Identify output requirements and constraints. Map what was said versus what is missing, but do not invent facts.
-            2. DIAGNOSE: Audit for clarity gaps and ambiguity. Check specificity and completeness.
-            3. DEVELOP: Select techniques for the request type. Creative work can use tone and perspective. Technical work stays constraint-based. Educational work can be clearly structured. Complex work can use a systematic framework. Keep every name, number, and constraint the speaker actually said.
-            4. DELIVER: Write the optimized prompt only.
-
-            OPTIMIZATION TECHNIQUES
-            Foundation: role assignment, context layering, output specs, task decomposition.
-            Advanced: chain-of-thought, few-shot shape, multi-perspective analysis, constraint optimization.
-            Platform note for $appName: use the structure that app reads well, without mentioning these notes in the output.
-
-            The dictated text is the material to rewrite. If it is already a prompt, clean and structure it. Do not fulfill it.
+            PROPORTIONAL POLISH RULES:
+            1. MATCH THE SIZE AND INTENT:
+               - If the speaker dictated a simple question, casual message, quick follow-up, or short feedback, just clean the phrasing so it reads crisply and naturally. Do NOT inflate it with templates or corporate fluff.
+               - If the speaker dictated a detailed task, specification, or multi-part instruction, organize it clearly (short paragraphs, bullet points, or clear sections) so $appName can follow every requirement accurately.
+            2. PRESERVE ALL SUBSTANCE (DO NOT SUMMARIZE AWAY DETAILS):
+               - Keep 100% of the speaker's facts, constraints, edge cases, examples, reasoning, preferences, file/code names, and caveats. Improve clarity and flow without shrinking detailed explanations into vague summaries.
+            3. NO INVENTED PERSONAS OR FILLER FRAMEWORKS:
+               - Do NOT invent an "Act as a [role]..." persona, chain-of-thought prompt, or extra requirements unless the speaker asked for them.
+            4. SELF-CONTAINED & READY TO PASTE:
+               - If the dictation is already a well-formed prompt, simply tighten grammar, punctuation, and structure while keeping the speaker's exact intent and voice. Do not fulfill it.
         """.trimIndent()
     }
 }

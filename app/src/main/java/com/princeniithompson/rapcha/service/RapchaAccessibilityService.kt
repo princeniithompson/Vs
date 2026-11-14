@@ -122,27 +122,28 @@ open class RapchaAccessibilityService : AccessibilityService() {
             Log.w(TAG, "Error registering package update receiver: ${e.message}")
         }
 
-        val info = serviceInfo ?: AccessibilityServiceInfo()
-        val targetEventTypes = AccessibilityEvent.TYPE_VIEW_FOCUSED or
-                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                AccessibilityEvent.TYPE_WINDOWS_CHANGED or
-                AccessibilityEvent.TYPE_VIEW_CLICKED or
-                AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
-                AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED or
-                AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
+        // Only initialize serviceInfo dynamically when XML metadata was not already loaded,
+        // preventing redundant setServiceInfo() calls from desynchronizing bindInput/unbindInput
+        // session state in InputMethodManagerService while keeping FLAG_INPUT_METHOD_EDITOR active.
+        if (serviceInfo == null) {
+            val info = AccessibilityServiceInfo()
+            val targetEventTypes = AccessibilityEvent.TYPE_VIEW_FOCUSED or
+                    AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                    AccessibilityEvent.TYPE_WINDOWS_CHANGED or
+                    AccessibilityEvent.TYPE_VIEW_CLICKED or
+                    AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
+                    AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED or
+                    AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
 
-        var targetFlags = info.flags or
-                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-                AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
-                AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+            var targetFlags = AccessibilityServiceInfo.DEFAULT or
+                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                    AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                    AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            targetFlags = targetFlags or AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
-        }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                targetFlags = targetFlags or AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR
+            }
 
-        // Only update serviceInfo if configuration actually differs from static XML declarations
-        // to prevent desynchronizing bindInput/unbindInput session state in InputMethodManagerService
-        if (info.flags != targetFlags || info.eventTypes != targetEventTypes || info.feedbackType != AccessibilityServiceInfo.FEEDBACK_GENERIC) {
             info.eventTypes = targetEventTypes
             info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
             info.flags = targetFlags
@@ -421,7 +422,8 @@ open class RapchaAccessibilityService : AccessibilityService() {
         } catch (_: Exception) {
             emptyList()
         }
-        return currentWindows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+        val imePresent = currentWindows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+        return imePresent || hasFocusedEditableField()
     }
 
     fun hasFocusedEditableField(): Boolean {
@@ -458,6 +460,11 @@ open class RapchaAccessibilityService : AccessibilityService() {
             if (window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
                 isImePresent = true
             }
+        }
+
+        if (!isImePresent && hasFocusedEditableField()) {
+            isImePresent = true
+            windowTypesSeen.append(", [FALLBACK_EDITABLE_FOCUSED]")
         }
 
         if (lastReportedKeyboardVisible != isImePresent) {

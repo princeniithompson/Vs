@@ -50,6 +50,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -63,6 +67,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -70,10 +75,12 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -89,12 +96,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.princeniithompson.rapcha.data.ConnectionState
 import com.princeniithompson.rapcha.data.CustomVocabularyRepository
 import com.princeniithompson.rapcha.ui.components.AudioWaveformVisualizer
@@ -106,6 +120,9 @@ import com.princeniithompson.rapcha.service.FloatingBubbleManager
 import com.princeniithompson.rapcha.ui.screens.DictionaryScreen
 import com.princeniithompson.rapcha.ui.screens.HomeScreen
 import com.princeniithompson.rapcha.ui.screens.onboarding.AccessibilityDisclosureSheet
+import com.princeniithompson.rapcha.ui.screens.onboarding.EmbeddedGoogleAuthBrowserContainer
+import com.princeniithompson.rapcha.ui.screens.onboarding.provisioning.AiStudioAutomationEngine
+import com.princeniithompson.rapcha.ui.screens.onboarding.provisioning.ProvisioningStatus
 import kotlinx.coroutines.launch
 
 enum class MainScreenTab {
@@ -144,7 +161,41 @@ fun VoiceTypingScreen(
     val notes by viewModel.notes.collectAsState()
     val selectedModel by viewModel.selectedModel.collectAsState()
     val customApiKey by viewModel.customApiKey.collectAsState()
+    val provisionedApiKey by viewModel.provisionedApiKey.collectAsState()
+    val signedInGoogleEmail by viewModel.signedInGoogleEmail.collectAsState()
+    val activeApiKey = remember(customApiKey, provisionedApiKey) {
+        customApiKey.ifBlank { provisionedApiKey }.trim()
+    }
+    val apiKeyConfigured = remember(activeApiKey) {
+        !com.princeniithompson.rapcha.core.ApiConfig.isPlaceholder(activeApiKey)
+    }
     val selectedGlowStyleId by viewModel.selectedGlowStyleId.collectAsState()
+
+    val automationEngine = remember { AiStudioAutomationEngine(context) }
+    val provisioningState by automationEngine.state.collectAsState()
+    val activeWebView by automationEngine.activeWebView.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner, automationEngine) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    viewModel.refreshPermissions()
+                    viewModel.tryAutoInjectFromClipboard()
+                    automationEngine.onHostResumed()
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    automationEngine.onHostPaused()
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            automationEngine.tearDownWebView()
+        }
+    }
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     var selectedTab by remember {
@@ -162,6 +213,12 @@ fun VoiceTypingScreen(
     val diagnosticsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showGlowStylesSheet by remember { mutableStateOf(false) }
     val glowStylesSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    LaunchedEffect(showDiagnostics, drawerState.isOpen) {
+        if (showDiagnostics || drawerState.isOpen) {
+            viewModel.tryAutoInjectFromClipboard()
+        }
+    }
 
     androidx.activity.compose.BackHandler(enabled = selectedTab != MainScreenTab.HOME) {
         selectedTab = MainScreenTab.HOME
@@ -219,25 +276,71 @@ fun VoiceTypingScreen(
             viewModel = viewModel,
             onFinishOnboarding = {
                 showOnboardingManual = false
-            }
+            },
+            sharedAutomationEngine = automationEngine
         )
         return
     }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet(
-                modifier = Modifier.verticalScroll(rememberScrollState())
-            ) {
-                Text(
-                    text = "Settings",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp)
+    Box(modifier = modifier.fillMaxSize()) {
+        if (activeWebView != null && (
+                provisioningState.showBrowserToUser ||
+                    provisioningState.status == ProvisioningStatus.PROVISIONING_BACKGROUND ||
+                    provisioningState.status == ProvisioningStatus.SIGNED_IN_HANDOFF ||
+                    provisioningState.status == ProvisioningStatus.SIGNING_IN ||
+                    provisioningState.status == ProvisioningStatus.NEEDS_AUTH_RECONFIRM
                 )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                Spacer(modifier = Modifier.height(8.dp))
+        ) {
+            EmbeddedGoogleAuthBrowserContainer(
+                webView = activeWebView,
+                visible = provisioningState.showBrowserToUser,
+                pageTitle = provisioningState.pageTitle,
+                currentUrl = provisioningState.currentUrl,
+                isLoading = provisioningState.isPageLoading,
+                progress = provisioningState.loadProgress,
+                onClose = { automationEngine.dismissVisibleBrowser() },
+                onRefresh = { automationEngine.reloadCurrentPage() }
+            )
+        }
+
+        ModalNavigationDrawer(
+            drawerState = drawerState,
+            drawerContent = {
+                ModalDrawerSheet(
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = "Settings",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp)
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Accessible Gemini API Key Card (auto-populated when provisioned, editable anytime)
+                    SettingsApiKeyCard(
+                        apiKey = activeApiKey,
+                        apiKeyConfigured = apiKeyConfigured,
+                        signedInEmail = signedInGoogleEmail,
+                        isProvisioning = provisioningState.status == ProvisioningStatus.PROVISIONING_BACKGROUND,
+                        onSaveApiKey = { newKey ->
+                            viewModel.setCustomApiKey(newKey)
+                            Toast.makeText(
+                                context,
+                                if (newKey.isBlank()) "API key cleared" else "Gemini API key saved",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        },
+                        onAutoGetWithGoogle = {
+                            scope.launch {
+                                drawerState.close()
+                                automationEngine.createOrReuseWebView()
+                                automationEngine.startGoogleSignIn()
+                            }
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
 
                 // Welcome Tour / Onboarding Replay Row
                 Row(
@@ -495,11 +598,18 @@ fun VoiceTypingScreen(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Spacer(modifier = Modifier.height(4.dp))
+                            val context = androidx.compose.ui.platform.LocalContext.current
+                            val quotaStatus = remember(threeStepPolish, isRecording) {
+                                com.princeniithompson.rapcha.service.floating.PolishQuotaMonitor.status(context)
+                            }
                             Text(
-                                text = if (threeStepPolish) {
-                                    "On for AI apps: Smart cleanup on gemini-3.5-transcribe-live, then gemini-3.8-live prompt optimization. Force Smart stays one-step. Applies on the next section."
-                                } else {
-                                    "Off: AI Live stays verbatim, then gemini-3.8-live. Turn it on again for the next section."
+                                text = when {
+                                    threeStepPolish && !quotaStatus.available ->
+                                        "Cooldown active (${quotaStatus.reason.label} · ${quotaStatus.rpmUsed}/${quotaStatus.rpmLimit} RPM, ${quotaStatus.rpdUsed}/${quotaStatus.rpdLimit} RPD): using standard Gemini 3.5 Smart fallback until limits reset."
+                                    threeStepPolish ->
+                                        "On for AI apps: Smart cleanup on gemini-3.5-transcribe-live, then gemini-3.5-flash-lite prompt polish (${quotaStatus.rpmUsed}/${quotaStatus.rpmLimit} RPM · ${quotaStatus.rpdUsed}/${quotaStatus.rpdLimit} RPD). Auto-pauses if limits are reached."
+                                    else ->
+                                        "Off: AI Live stays verbatim before Stage-2 polish. Turn it on again for the next section."
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -903,6 +1013,7 @@ fun VoiceTypingScreen(
             }
         }
     }
+    }
 
     // Diagnostics Sheet
     if (showDiagnostics) {
@@ -917,8 +1028,8 @@ fun VoiceTypingScreen(
             recordings = recordings,
             isDictating = isRecording,
             selectedModel = selectedModel,
-            apiKeyConfigured = viewModel.isApiKeyConfigured(),
-            customApiKey = customApiKey,
+            apiKeyConfigured = apiKeyConfigured,
+            customApiKey = activeApiKey,
             isSmartMode = isSmartMode,
             onCustomApiKeyChange = { viewModel.setCustomApiKey(it) },
             onAddNote = { viewModel.addNote(it) },
@@ -959,6 +1070,151 @@ fun VoiceTypingScreen(
             },
             onDismiss = { showGlowStylesSheet = false }
         )
+    }
+}
+
+@Composable
+private fun SettingsApiKeyCard(
+    apiKey: String,
+    apiKeyConfigured: Boolean,
+    signedInEmail: String,
+    isProvisioning: Boolean,
+    onSaveApiKey: (String) -> Unit,
+    onAutoGetWithGoogle: () -> Unit
+) {
+    var draftKey by remember(apiKey) { mutableStateOf(apiKey) }
+    var revealKey by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .testTag("settings_api_key_card"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (apiKeyConfigured) {
+                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+            } else {
+                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
+            }
+        ),
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (apiKeyConfigured) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+            } else {
+                MaterialTheme.colorScheme.error.copy(alpha = 0.45f)
+            }
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Key,
+                        contentDescription = "Gemini API Key",
+                        tint = if (apiKeyConfigured) Color(0xFF059669) else MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = "Gemini API Key",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Text(
+                    text = when {
+                        apiKeyConfigured -> "Connected"
+                        isProvisioning -> "Setting up..."
+                        else -> "Required"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (apiKeyConfigured) Color(0xFF059669) else MaterialTheme.colorScheme.error
+                )
+            }
+
+            if (signedInEmail.isNotBlank()) {
+                Text(
+                    text = "Google: $signedInEmail",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            } else if (!apiKeyConfigured) {
+                Text(
+                    text = "An API key is required for voice typing and polish.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            OutlinedTextField(
+                value = draftKey,
+                onValueChange = { draftKey = it },
+                placeholder = { Text("AIzaSy... or AQ....") },
+                singleLine = true,
+                visualTransformation = if (revealKey) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { revealKey = !revealKey }) {
+                        Icon(
+                            imageVector = if (revealKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                            contentDescription = if (revealKey) "Hide API key" else "Show API key"
+                        )
+                    }
+                },
+                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_api_key_input")
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = { onSaveApiKey(draftKey) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("settings_save_api_key_button")
+                ) {
+                    Text("Save Key")
+                }
+                if (apiKeyConfigured) {
+                    OutlinedButton(
+                        onClick = {
+                            draftKey = ""
+                            onSaveApiKey("")
+                        },
+                        modifier = Modifier.testTag("settings_clear_api_key_button")
+                    ) {
+                        Text("Clear")
+                    }
+                } else {
+                    FilledTonalButton(
+                        onClick = onAutoGetWithGoogle,
+                        modifier = Modifier.testTag("settings_auto_get_key_button")
+                    ) {
+                        Text("Get via Google")
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -56,11 +56,18 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.princeniithompson.rapcha.service.floating.BubbleChromeStyle
@@ -72,6 +79,8 @@ import com.princeniithompson.rapcha.ui.components.overlay.rememberDynamicAuroraP
 import kotlin.math.PI
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private const val STRIKE_NOT_ACTIVE = true
 
 @Composable
 fun RecordingGlowScreen(
@@ -161,47 +170,53 @@ fun RecordingGlowScreen(
         label = "selectionAlpha"
     )
 
-    Box(
+    val stageAccessibilityDesc = if (isShowingSelectedBubble) {
+        "Active bubble"
+    } else {
+        "Not the active bubble, double tap to use"
+    }
+
+    Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
+        // Sticky / Fixed Top Header Bar
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .background(MaterialTheme.colorScheme.background)
+                .padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.princeniithompson.rapcha.R.drawable.ic_lifebuoy_ring),
+                    contentDescription = "Rapcha Logo",
+                    modifier = Modifier
+                        .size(34.dp)
+                        .padding(end = 8.dp)
+                )
+                Text(
+                    text = "Rapcha",
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        // Scrollable Content
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 90.dp)
         ) {
-            // 1. Top Header Bar
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier.align(Alignment.Center)
-                    ) {
-                        androidx.compose.foundation.Image(
-                            painter = androidx.compose.ui.res.painterResource(id = com.princeniithompson.rapcha.R.drawable.ic_lifebuoy_ring),
-                            contentDescription = "Rapcha Logo",
-                            modifier = Modifier
-                                .size(34.dp)
-                                .padding(end = 8.dp)
-                        )
-                        Text(
-                            text = "Rapcha",
-                            color = MaterialTheme.colorScheme.onBackground,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-
-            // 2. SECTION: BUBBLE
+            // 1. SECTION: BUBBLE
             item {
                 Text(
                     text = "Bubble",
@@ -213,7 +228,7 @@ fun RecordingGlowScreen(
                 )
             }
 
-            // 3. STAGE CARD (Preview Carousel with Outer Ring and Check Badge)
+            // 2. STAGE CARD (Preview Carousel with Ring & Top-Left Status Pill)
             item {
                 Column(
                     modifier = Modifier
@@ -225,6 +240,7 @@ fun RecordingGlowScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .semantics { contentDescription = stageAccessibilityDesc }
                             .border(
                                 width = 2.5.dp,
                                 color = MaterialTheme.colorScheme.primary.copy(alpha = selectionAlpha),
@@ -295,24 +311,63 @@ fun RecordingGlowScreen(
                                 }
                             }
 
-                            // Check badge at top-right inside stage card (12dp from edges)
-                            if (selectionAlpha > 0.01f) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .padding(12.dp)
-                                        .size(24.dp)
-                                        .graphicsLayer { alpha = selectionAlpha }
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primary),
-                                    contentAlignment = Alignment.Center
+                            // Top-Left Status Pill (12dp inset from top and left edges)
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .padding(12.dp)
+                                    .height(28.dp)
+                                    .clip(RoundedCornerShape(percent = 50))
+                                    .background(Color.Black.copy(alpha = 0.45f))
+                                    .padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Check,
-                                        contentDescription = "Selected",
-                                        tint = MaterialTheme.colorScheme.onPrimary,
-                                        modifier = Modifier.size(14.dp)
-                                    )
+                                    if (isShowingSelectedBubble) {
+                                        // ACTIVE state: 18dp primary circle with white check icon + "active" text
+                                        Box(
+                                            modifier = Modifier
+                                                .size(18.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primary),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Check,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onPrimary,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+                                        Text(
+                                            text = "active",
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1
+                                        )
+                                    } else {
+                                        // NOT ACTIVE state: 18dp circle-slash icon + "not active" with strike-through
+                                        Icon(
+                                            imageVector = NotAllowedIcon,
+                                            contentDescription = null,
+                                            tint = Color.White.copy(alpha = 0.72f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Text(
+                                            text = "not active",
+                                            color = Color.White.copy(alpha = 0.72f),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            style = TextStyle(
+                                                textDecoration = if (STRIKE_NOT_ACTIVE) TextDecoration.LineThrough else TextDecoration.None
+                                            ),
+                                            maxLines = 1
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -355,7 +410,7 @@ fun RecordingGlowScreen(
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
-            // 4. SECTION: GLOW + FILTER CHIPS ROW
+            // 3. SECTION: GLOW + FILTER CHIPS ROW
             item {
                 Row(
                     modifier = Modifier
@@ -422,7 +477,7 @@ fun RecordingGlowScreen(
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
-            // 5. GLOW GRID (2 Columns, 8 Styles)
+            // 4. GLOW GRID (2 Columns, 8 Styles)
             item {
                 val styles = GlowAnimationCatalogue.styles
                 Column(
@@ -624,6 +679,46 @@ private fun GlowGridTile(
         }
     }
 }
+
+private val NotAllowedIcon: ImageVector
+    get() {
+        if (_notAllowedIcon != null) return _notAllowedIcon!!
+        _notAllowedIcon = ImageVector.Builder(
+            name = "NotAllowed",
+            defaultWidth = 18.dp,
+            defaultHeight = 18.dp,
+            viewportWidth = 18f,
+            viewportHeight = 18f
+        ).apply {
+            path(
+                fill = SolidColor(Color.White),
+                fillAlpha = 0.72f,
+                pathBuilder = {
+                    moveTo(9f, 2f)
+                    curveTo(5.13f, 2f, 2f, 5.13f, 2f, 9f)
+                    curveTo(2f, 12.87f, 5.13f, 16f, 9f, 16f)
+                    curveTo(12.87f, 16f, 16f, 12.87f, 16f, 9f)
+                    curveTo(16f, 5.13f, 12.87f, 2f, 9f, 2f)
+                    close()
+                    moveTo(3.8f, 9f)
+                    curveTo(3.8f, 6.13f, 6.13f, 3.8f, 9f, 3.8f)
+                    curveTo(10.22f, 3.8f, 11.34f, 4.22f, 12.23f, 4.93f)
+                    lineTo(4.93f, 12.23f)
+                    curveTo(4.22f, 11.34f, 3.8f, 10.22f, 3.8f, 9f)
+                    close()
+                    moveTo(9f, 14.2f)
+                    curveTo(7.78f, 14.2f, 6.66f, 13.78f, 5.77f, 13.07f)
+                    lineTo(13.07f, 5.77f)
+                    curveTo(13.78f, 6.66f, 14.2f, 7.78f, 14.2f, 9f)
+                    curveTo(14.2f, 11.87f, 11.87f, 14.2f, 9f, 14.2f)
+                    close()
+                }
+            )
+        }.build()
+        return _notAllowedIcon!!
+    }
+
+private var _notAllowedIcon: ImageVector? = null
 
 private fun getGlowStyleAccentColor(styleId: String, palette: AuroraColorPalette): Color {
     return when (styleId) {

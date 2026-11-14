@@ -39,6 +39,7 @@ object PolishDelivery {
     fun suspiciousPiece(sourceChars: Int, outputChars: Int): Boolean {
         if (sourceChars < 80) return false
         if (outputChars <= 0) return true
+        if (sourceChars >= 400 && outputChars * 4 < sourceChars) return true
         return outputChars < 40 && outputChars * 20 < sourceChars
     }
 

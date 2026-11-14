@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         FloatingBubbleManager.checkPermissions(this)
         viewModel.refreshPermissions()
+        viewModel.tryAutoInjectFromClipboard()
     }
 
     private fun consumeDictionaryDraft(intent: Intent?) {

@@ -41,9 +41,10 @@ class LiveTwoStepFollowUpTest {
     }
 
     @Test
-    fun `toggle on selects gemini-3_8-live and not unary flash`() {
+    fun `toggle on selects gemini-3_5-flash-lite when within quota and falls back to 3_5 smart when cooled down`() {
         assertTrue(Stage2PolishRoute.usesLiveModel(true))
-        assertEquals("models/gemini-3.8-live", Stage2PolishRoute.model(true))
+        assertEquals("gemini-3.5-flash-lite", Stage2PolishRoute.model(true, quotaAvailable = true))
+        assertEquals("gemini-3.5-transcribe", Stage2PolishRoute.model(true, quotaAvailable = false))
         assertFalse(Stage2PolishRoute.usesUnaryFallback(true))
         assertTrue(Stage2PolishRoute.usesUnaryFallback(false))
         assertEquals(12_000L, RapchaConfig.STAGE2_LIVE_SETUP_MS)
@@ -52,9 +53,6 @@ class LiveTwoStepFollowUpTest {
         assertTrue(LivePolishOutcome.userLine("Stage-2 Live polish timed out before setup").contains("before setup"))
         assertFalse(LivePolishOutcome.userLine("Stage-2 Live polish timed out before setup").contains("busy"))
         assertTrue(LivePolishOutcome.userLine("HTTP 503 high demand UNAVAILABLE").contains("busy"))
-        assertFalse(RapchaConfig.GEMINI_MODEL_FALLBACKS.any { it.contains("3.8-live") })
-        assertFalse(Stage2PolishRoute.model(true)!!.contains("flash-lite"))
-        assertFalse(Stage2PolishRoute.model(true)!!.contains("gemini-3.8-flash"))
         assertFalse(Stage2PolishRoute.usesLiveModel(false))
         assertEquals(null, Stage2PolishRoute.model(false))
     }
@@ -118,13 +116,11 @@ class LiveTwoStepFollowUpTest {
                 assertEquals(PolishPromptBuilder.CHEF_GOLDEN_RULES, request.systemInstruction)
                 assertFalse(request.systemInstruction.contains("Lyra"))
                 assertTrue(request.userText.contains("You are Lyra"))
-                assertFalse(request.systemInstruction.contains("gemini-3.5-flash-lite"))
-                LivePolishResponse(null, "Stage-2 Live polish timed out before setup", timedOut = true)
+                LivePolishResponse(null, "Stage-2 polish timed out", timedOut = true)
             },
             log = { type, message ->
                 events.add(type)
-                assertTrue(message.contains("models/gemini-3.8-live"))
-                assertFalse(message.contains("gemini-3.5-flash-lite"))
+                assertTrue(message.contains("gemini-3.5-flash-lite"))
             }
         )
         assertEquals(Stage2Outcome.FALLBACK_RAW, paste.outcome)
@@ -156,9 +152,9 @@ class LiveTwoStepFollowUpTest {
     fun `ai polish uses lyra and never answers or welcomes`() {
         val instruction = PolishPromptBuilder.buildSystemInstruction(AppCategory.AI_CHAT, "Grok Bot")
         assertTrue("missing Lyra", instruction.contains("Lyra"))
-        assertTrue("missing DECONSTRUCT", instruction.contains("DECONSTRUCT"))
+        assertTrue("missing proportional polish", instruction.contains("PROPORTIONAL POLISH RULES"))
         assertTrue("missing never-answer rule", instruction.contains(LyraPolishInstruction.NEVER_ANSWER_RULE))
-        assertTrue("missing prompt-only output rule", instruction.contains("Output ONLY the polished prompt text"))
+        assertTrue("missing prompt-only output rule", instruction.contains("Output ONLY the prompt text"))
         assertTrue("missing app name", instruction.contains("Grok Bot"))
         assertFalse("welcome leaked into the keyboard instruction", instruction.contains(LyraPolishInstruction.WELCOME_MESSAGE))
         assertFalse(instruction.contains("What Changed"))

@@ -66,12 +66,27 @@ fun OnboardingIntroScreen(
                     .fillMaxWidth()
                     .weight(1f)
             ) {
-                Box(modifier = Modifier.fillMaxSize()) {
+                androidx.compose.foundation.layout.BoxWithConstraints(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    val isCompact = maxWidth < 340.dp || maxHeight < 420.dp
+                    val isTabletCard = maxWidth >= 500.dp
+                    val headlineSize = when {
+                        isTabletCard -> 38.sp
+                        isCompact -> 26.sp
+                        else -> 32.sp
+                    }
+                    val headlineLineHeight = when {
+                        isTabletCard -> 48.sp
+                        isCompact -> 34.sp
+                        else -> 42.sp
+                    }
+
                     // Decorative Cream Ribbon Loop at the bottom of the card
                     Canvas(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(260.dp)
+                            .height(if (isCompact) 180.dp else 260.dp)
                             .align(Alignment.BottomCenter)
                     ) {
                         val path = Path().apply {
@@ -98,12 +113,12 @@ fun OnboardingIntroScreen(
                     Text(
                         text = "Rapcha turns your voice into\nperfectly formatted\ntext in every app",
                         fontFamily = EditorialSerifFontFamily,
-                        fontSize = 32.sp,
-                        lineHeight = 42.sp,
+                        fontSize = headlineSize,
+                        lineHeight = headlineLineHeight,
                         fontWeight = FontWeight.Normal,
                         color = OnboardingInkBlack,
                         modifier = Modifier
-                            .padding(horizontal = 24.dp, vertical = 32.dp)
+                            .padding(horizontal = 24.dp, vertical = if (isCompact) 20.dp else 32.dp)
                             .align(Alignment.TopStart)
                     )
                 }

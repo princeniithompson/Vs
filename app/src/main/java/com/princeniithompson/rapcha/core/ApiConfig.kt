@@ -26,50 +26,47 @@ object ApiConfig {
     }
 
     /**
-     * Resolves the active Gemini API key using the strict precedence order:
-     * 1. SharedPreferences custom key (if non-placeholder)
-     * 2. BuildConfig.GEMINI_API_KEY from environment (if non-placeholder)
-     * 3. Otherwise returns empty string ""
+     * Resolves the active Gemini API key using strict precedence:
+     * 1. Encrypted personal user key from ApiKeyVault (provisioned via Google onboarding)
+     * 2. SharedPreferences manual custom_api_key (if non-placeholder)
+     * 3. Otherwise returns empty string "" (user API key is strictly required)
      */
     fun resolveApiKey(context: Context? = null): String {
-        // 1. SharedPreferences custom key
         if (context != null) {
-            val prefs = context.getSharedPreferences("voxstream_settings", Context.MODE_PRIVATE)
-            val customKey = prefs.getString("custom_api_key", null)?.trim().orEmpty()
+            ApiKeyVault.init(context)
+        }
+
+        // 1. User's personal key from ApiKeyVault
+        val vaultKey = ApiKeyVault.currentUserApiKey.trim()
+        if (vaultKey.isNotEmpty() && !isPlaceholder(vaultKey)) {
+            return vaultKey
+        }
+
+        // 2. SharedPreferences manual override key
+        if (context != null) {
+            val prefs = context.getSharedPreferences(ApiKeyVault.SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+            val customKey = prefs.getString(ApiKeyVault.KEY_CUSTOM_API_KEY, null)?.trim().orEmpty()
             if (customKey.isNotEmpty() && !isPlaceholder(customKey)) {
                 return customKey
             }
         }
 
-        // 2. BuildConfig.GEMINI_API_KEY
-        val buildConfigKey = try {
-            BuildConfig.GEMINI_API_KEY.trim()
-        } catch (_: Throwable) {
-            ""
-        }
-        if (buildConfigKey.isNotEmpty() && !isPlaceholder(buildConfigKey)) {
-            return buildConfigKey
-        }
-
-        // 3. Safe fallback: empty string only
+        // 3. No user API key present
         return ""
     }
 
     /**
-     * Backward-compatible resolution method for callers passing a custom key directly.
+     * Backward-compatible resolution method for callers passing a manual custom key.
+     * Prefers an explicit manual key or the user's ApiKeyVault key; returns "" if neither exists.
      */
     fun getEffectiveKey(customKey: String? = null): String {
         val trimmedCustom = customKey?.trim().orEmpty()
         if (trimmedCustom.isNotEmpty() && !isPlaceholder(trimmedCustom)) {
             return trimmedCustom
         }
-        val buildConfigKey = try {
-            BuildConfig.GEMINI_API_KEY.trim()
-        } catch (_: Throwable) {
-            ""
-        }
-        if (buildConfigKey.isNotEmpty() && !isPlaceholder(buildConfigKey)) {
-            return buildConfigKey
+        val vaultKey = ApiKeyVault.currentUserApiKey.trim()
+        if (vaultKey.isNotEmpty() && !isPlaceholder(vaultKey)) {
+            return vaultKey
         }
         return ""
     }

@@ -125,7 +125,8 @@ class FloatingPolishCoordinator {
                             rawTranscript = rawTranscript,
                             category = category,
                             appName = targetAppName,
-                            aiPolishMode = aiMode
+                            aiPolishMode = aiMode,
+                            context = context
                         )
                     }
                 }

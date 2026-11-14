@@ -371,6 +371,31 @@ object HistoryRepository {
         saveHistory(emptyList())
     }
 
+    fun clearUnratedHistory(): List<HistoryItem> {
+        val current = _historyItems.value.toList()
+        val kept = current.filter {
+            val isUnrated = it.session?.reviewable == true && it.session.rating == LyraRating.UNRATED
+            isUnrated.not()
+        }
+        val removed = current.filter {
+            val isUnrated = it.session?.reviewable == true && it.session.rating == LyraRating.UNRATED
+            isUnrated
+        }
+        _historyItems.value = kept
+        saveHistory(kept)
+        return removed
+    }
+
+    fun restoreHistoryItems(items: List<HistoryItem>) {
+        if (items.isEmpty()) return
+        val current = _historyItems.value.toMutableList()
+        current.addAll(items)
+        // Sort descending by timestamp
+        current.sortByDescending { it.timestamp }
+        _historyItems.value = current
+        saveHistory(current)
+    }
+
     fun getTotalWordsSpoken(): Long {
         return _historyItems.value.sumOf { it.wordCount.toLong() }
     }

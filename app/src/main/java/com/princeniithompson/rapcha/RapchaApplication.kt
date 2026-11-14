@@ -6,6 +6,7 @@ import com.princeniithompson.rapcha.data.AppLogRepository
 import com.princeniithompson.rapcha.data.DiagnosticSource
 import com.princeniithompson.rapcha.data.DiagnosticType
 import com.princeniithompson.rapcha.diagnostics.CrashReportStore
+import com.princeniithompson.rapcha.diagnostics.NetworkAndDeviceDiagnostics
 import com.princeniithompson.rapcha.diagnostics.ProcessExitDiagnostics
 
 class RapchaApplication : Application() {
@@ -13,7 +14,9 @@ class RapchaApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         installCrashHandler()
+        com.princeniithompson.rapcha.core.ApiKeyVault.init(this)
         AppLogRepository.init(this)
+        NetworkAndDeviceDiagnostics.startMonitoring(this)
         com.princeniithompson.rapcha.data.RetryClipStore.init(this)
         publishPendingCrash(this)
         ProcessExitDiagnostics.recordHistoricalExits(this)

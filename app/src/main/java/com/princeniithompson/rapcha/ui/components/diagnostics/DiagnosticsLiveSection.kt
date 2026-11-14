@@ -359,7 +359,7 @@ fun DiagnosticsLiveSection(
                                 .padding(top = 10.dp)
                         ) {
                             Text(
-                                text = "Enter your custom Gemini API key or leave blank for default:",
+                                text = "Your Gemini API key (automatically injected after Google sign-in, or enter manually):",
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = Color(0xFF64748B)
                             )
@@ -371,7 +371,7 @@ fun DiagnosticsLiveSection(
                                 OutlinedTextField(
                                     value = tempApiKey,
                                     onValueChange = { tempApiKey = it },
-                                    placeholder = { Text("AIzaSy...") },
+                                    placeholder = { Text("AIzaSy... or AQ....") },
                                     singleLine = true,
                                     modifier = Modifier
                                         .weight(1f)
