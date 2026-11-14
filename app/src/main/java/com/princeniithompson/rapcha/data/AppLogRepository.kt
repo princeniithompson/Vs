@@ -37,6 +37,13 @@ object AppLogRepository {
     /** v23 caps: memory ring + on-disk rotation so the log can no longer grow forever. */
     const val MAX_MEMORY_ENTRIES = 3000
     const val MAX_LOG_FILE_BYTES = 1_500_000L
+    /** v24 Lite: errors and crashes only, in a small file. */
+    const val LITE_MAX_LOG_FILE_BYTES = 64_000L
+    const val LITE_MAX_MEMORY_ENTRIES = 200
+
+    /** v24: Lite keeps only a tiny error log. */
+    fun keepsEvent(lite: Boolean, type: DiagnosticType): Boolean =
+        !lite || type == DiagnosticType.ERROR || type == DiagnosticType.CRASH
     private const val ROTATED_LOGS_FILE_NAME = "diagnostics_history.1.jsonl"
     private const val MAX_MESSAGE_CHARS = 4000
 
@@ -92,6 +99,7 @@ object AppLogRepository {
         transcriptText: String,
         source: DiagnosticSource
     ) {
+        if (com.princeniithompson.rapcha.core.LiteMode.enabled) return
         val summary = TranscriptPrivacy.summary(transcriptText)
         _liveStats.update {
             it.copy(
@@ -119,6 +127,8 @@ object AppLogRepository {
         val app = context.applicationContext ?: context
         appContext = app
         isInitialized = true
+        // v24 Lite: no device summary and no reload of the old diagnostics files.
+        if (com.princeniithompson.rapcha.core.LiteMode.enabled) return
         // v23: device summary and the file load both run off the main thread.
         scope.launch {
             try {
@@ -214,6 +224,10 @@ object AppLogRepository {
      * Appends to persistent JSONL on private storage off the main thread.
      */
     fun logEvent(source: DiagnosticSource, type: DiagnosticType, message: String) {
+        val lite = com.princeniithompson.rapcha.core.LiteMode.enabled
+        if (!keepsEvent(lite, type)) return
+        val maxEntries = if (lite) LITE_MAX_MEMORY_ENTRIES else MAX_MEMORY_ENTRIES
+        val maxFileBytes = if (lite) LITE_MAX_LOG_FILE_BYTES else MAX_LOG_FILE_BYTES
         val entry = DiagnosticLogEntry(
             source = source,
             type = type,
@@ -222,9 +236,9 @@ object AppLogRepository {
 
         // Update in-memory state (prepend newest), capped ring buffer.
         _diagnosticEntries.update { current ->
-            val next = ArrayList<DiagnosticLogEntry>(minOf(current.size + 1, MAX_MEMORY_ENTRIES))
+            val next = ArrayList<DiagnosticLogEntry>(minOf(current.size + 1, maxEntries))
             next.add(entry)
-            val keep = minOf(current.size, MAX_MEMORY_ENTRIES - 1)
+            val keep = minOf(current.size, maxEntries - 1)
             for (i in 0 until keep) next.add(current[i])
             next
         }
@@ -234,7 +248,7 @@ object AppLogRepository {
             val context = appContext ?: return@launch
             try {
                 val file = File(context.filesDir, LOGS_FILE_NAME)
-                if (file.length() > MAX_LOG_FILE_BYTES) {
+                if (file.length() > maxFileBytes) {
                     val rotated = File(context.filesDir, ROTATED_LOGS_FILE_NAME)
                     rotated.delete()
                     if (!file.renameTo(rotated)) file.delete()
@@ -290,6 +304,7 @@ object AppLogRepository {
         payload: String? = null,
         source: DiagnosticSource = DiagnosticSource.APP
     ) {
+        if (com.princeniithompson.rapcha.core.LiteMode.enabled && level != LogLevel.ERROR) return
         val entry = LogEntry(level = level, tag = tag, message = message, payload = payload, source = source)
         _liveFrames.update { current ->
             (current + entry).takeLast(MAX_LIVE_FRAMES)

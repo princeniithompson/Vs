@@ -91,7 +91,7 @@ object AudioRecordingRepository {
     }
 
     fun startRecordingSession(source: DiagnosticSource) {
-        if (!_isSaveRecordingsEnabled.value) return
+        if (!_isSaveRecordingsEnabled.value || com.princeniithompson.rapcha.core.LiteMode.enabled) return
         val context = appContext ?: return
 
         recordingWriter.execute {
@@ -125,7 +125,7 @@ object AudioRecordingRepository {
     }
 
     fun appendAudioChunk(chunk: ByteArray) {
-        if (!_isSaveRecordingsEnabled.value) return
+        if (!_isSaveRecordingsEnabled.value || com.princeniithompson.rapcha.core.LiteMode.enabled) return
 
         recordingWriter.execute {
             try {

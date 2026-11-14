@@ -63,6 +63,8 @@ object InjectionLogRepository {
     }
 
     fun logInjection(event: InjectionEvent) {
+        // v24 Lite: no per-injection diagnostics (each one rewrote a 200-entry prefs blob).
+        if (com.princeniithompson.rapcha.core.LiteMode.enabled) return
         val current = _logs.value.toMutableList()
         current.add(0, event) // Add newest at beginning
         if (current.size > MAX_SAVED_LOGS) {

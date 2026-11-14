@@ -73,6 +73,7 @@ object HistoryRepository {
 
     /** v23: history is capped so the JSON blob (and every rewrite of it) stays bounded. */
     const val MAX_HISTORY_ITEMS = 1000
+    const val LITE_MEMORY_ITEMS = 20
 
     /** v23: one ordered background writer; the caller (often the main thread) never serialises JSON. */
     private val saveExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
@@ -85,6 +86,7 @@ object HistoryRepository {
      */
     @Synchronized
     fun init(context: Context) {
+        if (com.princeniithompson.rapcha.core.LiteMode.enabled) return // v24 Lite: no history
         if (prefs == null) {
             // Let any queued write land before (re)loading.
             try {
@@ -218,6 +220,11 @@ object HistoryRepository {
             durationSeconds = durationSeconds
         )
         current.add(0, newItem) // Add to top
+        if (com.princeniithompson.rapcha.core.LiteMode.enabled) {
+            // v24 Lite: last few results in memory only (init never loads prefs), no vocab learning.
+            _historyItems.value = current.take(LITE_MEMORY_ITEMS)
+            return newItem
+        }
         _historyItems.value = current
         saveHistory(current, durable = false)
         // Discarded silence never reaches here: callers pass the accepted transcript only.
@@ -229,6 +236,7 @@ object HistoryRepository {
      * Convenience method to save a history entry with explicit mode and appName tags.
      */
     fun saveVoiceSession(record: VoiceSessionRecord, durationSeconds: Int = 0): HistoryItem? {
+        if (com.princeniithompson.rapcha.core.LiteMode.enabled) return null // v24 Lite: no history
         val text = record.finalText.trim()
         if (text.isBlank()) return null
         val label = when (record.pipeline) {
@@ -263,6 +271,7 @@ object HistoryRepository {
      * The raw freeze uses this before activityEnd.
      */
     fun commitSession(record: VoiceSessionRecord, durationSeconds: Int = 0): HistoryItem? {
+        if (com.princeniithompson.rapcha.core.LiteMode.enabled) return null // v24 Lite: no history
         val text = record.finalText.trim()
         if (text.isBlank() && record.stages.isEmpty()) return null
         val label = when (record.pipeline) {
