@@ -127,7 +127,7 @@ fun OnboardingSandboxScreen(
 
     LaunchedEffect(stepStage) {
         when (stepStage) {
-            2 -> {
+            2 -> if (!com.princeniithompson.rapcha.core.LiteMode.enabled) {
                 val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
                 launch {
                     while (isActive) {

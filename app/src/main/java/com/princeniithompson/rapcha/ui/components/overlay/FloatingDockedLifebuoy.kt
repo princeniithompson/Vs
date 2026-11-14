@@ -41,7 +41,7 @@ fun FloatingDockedLifebuoy(
     modifier: Modifier = Modifier
 ) {
     // v23: rotation is read in the layer lambda only (no recomposition per frame).
-    val spin: () -> Float = if (spinning && bubbleVisible) {
+    val spin: () -> Float = if (spinning && bubbleVisible && !com.princeniithompson.rapcha.core.LiteMode.enabled) {
         val transition = rememberInfiniteTransition(label = "ring")
         val animatedSpin = transition.animateFloat(
             initialValue = 0f,

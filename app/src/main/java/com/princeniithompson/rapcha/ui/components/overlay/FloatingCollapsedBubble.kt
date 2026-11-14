@@ -86,7 +86,8 @@ fun FloatingCollapsedBubble(
     // ring. v22 ran it on every idle frame even when nothing used it. The value is now read only
     // in the draw/layer phase (no recomposition per frame). Same timings and look.
     val pulseDrawn = isRecording || isScanMode || (isClipboardFallback && !lowPower)
-    val animatePulse = bubbleVisible && pulseDrawn && (!lowPower || isRecording || isScanMode)
+    val animatePulse = bubbleVisible && pulseDrawn && (!lowPower || isRecording || isScanMode) &&
+        !com.princeniithompson.rapcha.core.LiteMode.enabled // v24 Lite: static bubble
     val pulseState: State<Float> = if (animatePulse) {
         val infiniteTransition = rememberInfiniteTransition(label = "collapsedGlow")
         infiniteTransition.animateFloat(

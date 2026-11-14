@@ -35,22 +35,27 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -68,8 +73,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlin.math.absoluteValue
 import android.os.Build
+import androidx.compose.foundation.BorderStroke
 import com.princeniithompson.rapcha.data.HistoryItem
 import com.princeniithompson.rapcha.data.HistoryOverflowMenu
 import com.princeniithompson.rapcha.data.HistoryRepository
@@ -79,6 +88,7 @@ import com.princeniithompson.rapcha.ui.VoiceTypingViewModel
 import com.princeniithompson.rapcha.data.LyraRating
 import com.princeniithompson.rapcha.ui.components.InAppVoiceTypingBubble
 import com.princeniithompson.rapcha.ui.components.LyraHistoryStages
+import com.princeniithompson.rapcha.ui.protection.DeviceProtectionManager
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,9 +96,25 @@ import kotlinx.coroutines.delay
 fun HomeScreen(
     viewModel: VoiceTypingViewModel,
     onOpenMenu: () -> Unit,
+    onOpenKeepAwake: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var resumeTick by remember { mutableIntStateOf(0) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                resumeTick += 1
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val deviceHealthStatus = remember(resumeTick) {
+        DeviceProtectionManager.collectStatus(context)
+    }
+
     val historyItems by HistoryRepository.historyItems.collectAsState()
     var unratedOnly by remember { mutableStateOf(false) }
     val unratedCount = remember(historyItems) {
@@ -148,6 +174,20 @@ fun HomeScreen(
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold
                 )
+                if (com.princeniithompson.rapcha.core.LiteMode.enabled) {
+                    Text(
+                        text = "Lite",
+                        color = Color(0xFF16A34A),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF16A34A).copy(alpha = 0.16f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .testTag("home_lite_badge")
+                    )
+                }
             }
         }
 
@@ -155,6 +195,61 @@ fun HomeScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 90.dp)
         ) {
+            if (deviceHealthStatus.hasAnyRed) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 8.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .minimumInteractiveComponentSize()
+                            .clickable(onClick = onOpenKeepAwake)
+                            .testTag("home_keep_awake_banner"),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFFDC2626).copy(alpha = 0.10f)
+                        ),
+                        border = BorderStroke(1.dp, Color(0xFFDC2626).copy(alpha = 0.35f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.WarningAmber,
+                                contentDescription = "Keep Rapcha Awake warning",
+                                tint = Color(0xFFDC2626),
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Bubble protection needs attention",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Tap to fix battery, permission, or service settings",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            FilledTonalButton(
+                                onClick = onOpenKeepAwake,
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("home_keep_awake_cta")
+                            ) {
+                                Text("Keep Awake", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+            }
 
             // 2. Top Carousel: Voice-Typing Bubble (Page 0) + Real Stats Cards (Pages 1, 2, 3)
             item {
